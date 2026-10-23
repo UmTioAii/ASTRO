@@ -172,6 +172,18 @@ describe("runMultiAgentSession (F3-2)", () => {
     expect(result.steps).toBe(3);
     expect(result.agentsUsed).toEqual(["planner", "coder", "reviewer"]);
 
+    // F3-3: ledger tem 3 entradas com agents diferentes no mesmo run
+    const ledgerEntries = ledger.readAll();
+    expect(ledgerEntries).toHaveLength(3);
+    expect(new Set(ledgerEntries.map((e) => e.agent))).toEqual(new Set(["planner", "coder", "reviewer"]));
+    expect(new Set(ledgerEntries.map((e) => e.run))).toEqual(new Set(["r1"]));
+    // byAgent agrega corretamente
+    const byAgent = ledger.byAgent();
+    expect(Object.keys(byAgent).sort()).toEqual(["coder", "planner", "reviewer"]);
+    expect(byAgent.planner.tokensIn).toBe(10);
+    expect(byAgent.coder.tokensIn).toBe(10);
+    expect(byAgent.reviewer.tokensIn).toBe(10);
+
     const events = audit.readAll();
     const switches = events.filter((e) => e.tipo === "agent.switch");
     expect(switches).toHaveLength(2);
