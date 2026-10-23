@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "testgen-slugify",
+  "category": "testgen",
+  "difficulty": 2,
+  "tags": [
+    "testing",
+    "writing-code"
+  ],
+  "files": [
+    "subject.ts",
+    "subject.test.ts"
+  ]
+}

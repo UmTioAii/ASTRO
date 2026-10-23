@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "feature-sleep",
+  "category": "feature",
+  "difficulty": 1,
+  "tags": [
+    "writing-code"
+  ],
+  "files": [
+    "sleep.ts"
+  ]
+}

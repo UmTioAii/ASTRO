@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "bugfix-async-await",
+  "category": "bugfix",
+  "difficulty": 1,
+  "tags": [
+    "writing-code",
+    "analysis"
+  ],
+  "files": [
+    "src.ts"
+  ]
+}

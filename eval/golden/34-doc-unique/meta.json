@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "doc-unique",
+  "category": "doc",
+  "difficulty": 1,
+  "tags": [
+    "writing-text"
+  ],
+  "files": [
+    "subject.ts"
+  ]
+}
