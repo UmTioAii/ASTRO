@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "bugfix-sum-empty",
+  "category": "bugfix",
+  "difficulty": 1,
+  "tags": [
+    "writing-code",
+    "analysis"
+  ],
+  "files": [
+    "src.ts"
+  ]
+}

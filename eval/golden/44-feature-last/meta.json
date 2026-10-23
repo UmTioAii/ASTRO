@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "feature-last",
+  "category": "feature",
+  "difficulty": 1,
+  "tags": [
+    "writing-code"
+  ],
+  "files": [
+    "list.ts"
+  ]
+}

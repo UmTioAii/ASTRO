@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "feature-truncate",
+  "category": "feature",
+  "difficulty": 1,
+  "tags": [
+    "writing-code"
+  ],
+  "files": [
+    "truncate.ts"
+  ]
+}

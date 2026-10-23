@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "refactor-guard-clauses",
+  "category": "refactor",
+  "difficulty": 2,
+  "tags": [
+    "writing-code",
+    "review"
+  ],
+  "files": [
+    "src.ts"
+  ]
+}
