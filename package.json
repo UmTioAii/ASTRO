@@ -8,7 +8,8 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
-    "eval": "bun src/cli.ts eval"
+    "eval": "bun src/cli.ts eval",
+    "bench:providers": "bun src/cli.ts bench"
   },
   "devDependencies": {
     "@types/bun": "latest",
