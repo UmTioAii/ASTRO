@@ -52,6 +52,11 @@
       "sandbox": false
     }
   },
+  "telemetry": {
+    "enabled": false,
+    "endpoint": "https://telemetry.astro.local/v1/runs",
+    "sampleRate": 1.0
+  },
   "paths": {
     "ledger": ".astro/ledger.jsonl",
     "audit": ".astro/audit.jsonl"
