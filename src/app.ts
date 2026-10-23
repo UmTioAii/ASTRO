@@ -84,8 +84,9 @@ function providerConfigFor(config: AstroConfig, model: ModelEntry): ProviderConf
 /**
  * Instancia o provider do modelo pelo `kind`. Segredos vêm apenas do ambiente
  * (`env[credentialRef]`) ou, no Codex, do arquivo de credenciais em modo leitura.
+ * Exportado para o bench CLI construir providers a partir da config.
  */
-function createProvider(
+export function createProvider(
   config: AstroConfig,
   model: ModelEntry,
   env: Record<string, string | undefined>,
