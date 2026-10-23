@@ -9,11 +9,12 @@ import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
 import type { Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
-import { MaxStepsError, runSession } from "./session";
+import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
 import { runCommandTool } from "./tools/run-command";
 import { writeFileTool } from "./tools/write-file";
+import { handoffTool } from "./tools/handoff";
 import type { Tool } from "./tools/types";
 
 export interface RunOptions {
@@ -32,12 +33,13 @@ export interface RunReport {
   costUsd: number | null;
   ledgerPath: string;
   auditPath: string;
+  agentsUsed?: string[];
 }
 
 const AGENT_NAME = "default";
 const TASK_HASH_LENGTH = 16;
 
-const TOOLS: readonly Tool[] = [readFileTool, writeFileTool, runCommandTool];
+const TOOLS: readonly Tool[] = [readFileTool, writeFileTool, runCommandTool, handoffTool];
 const TOOLS_BY_NAME = new Map(TOOLS.map((tool) => [tool.manifest.name, tool]));
 
 /** Hash curto da tarefa: permite correlacionar execuções sem persistir o prompt. */
@@ -162,35 +164,57 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     payload: { provider: model.provider, credentialRef, quotaDomain },
   });
 
-  const executor = new ToolExecutor({
-    tools: resolveTools(config),
+  const baseTools = resolveTools(config);
+  const baseExecutor = new ToolExecutor({
+    tools: baseTools,
     allow: config.agent.tools,
     audit,
   });
 
   const baseline = ledger.total();
 
-  let result: { final: string; steps: number };
+  let result: { final: string; steps: number; agentsUsed?: string[] };
   try {
-    result = await runSession(
-      {
+    // Se há agents configurados, usa multi-agent session
+    if (config.agents && Object.keys(config.agents).length > 0) {
+      const entryAgent = config.agent.entryAgent ?? "planner";
+      const multiOpts: MultiAgentSessionOptions = {
         run,
-        agent: AGENT_NAME,
         credentialRef,
         quotaDomain,
         cwd,
         provider,
-        model,
-        executor,
+        registry,
+        baseModel: model,
+        baseExecutor,
         ledger,
         audit,
-        maxSteps: config.agent.maxSteps,
-        ...(config.agent.systemPrompt === undefined
-          ? {}
-          : { systemPrompt: config.agent.systemPrompt }),
-      },
-      opts.task,
-    );
+        baseMaxSteps: config.agent.maxSteps,
+        baseSystemPrompt: config.agent.systemPrompt,
+        entryAgent,
+      };
+      result = await runMultiAgentSession(multiOpts, opts.task);
+    } else {
+      result = await runSession(
+        {
+          run,
+          agent: AGENT_NAME,
+          credentialRef,
+          quotaDomain,
+          cwd,
+          provider,
+          model,
+          executor: baseExecutor,
+          ledger,
+          audit,
+          maxSteps: config.agent.maxSteps,
+          ...(config.agent.systemPrompt === undefined
+            ? {}
+            : { systemPrompt: config.agent.systemPrompt }),
+        },
+        opts.task,
+      );
+    }
   } catch (error) {
     if (!(error instanceof MaxStepsError)) throw error;
 
@@ -216,7 +240,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     run,
     agent: AGENT_NAME,
     tipo: "run.completed",
-    payload: { steps: result.steps, tokensIn, tokensOut, costUsd },
+    payload: { steps: result.steps, tokensIn, tokensOut, costUsd, agentsUsed: result.agentsUsed },
   });
 
   return {
@@ -228,5 +252,6 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     costUsd,
     ledgerPath,
     auditPath,
+    agentsUsed: result.agentsUsed,
   };
 }

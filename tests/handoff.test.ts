@@ -1,0 +1,183 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Auditor } from "../src/audit";
+import { Ledger } from "../src/ledger";
+import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
+import type { ModelEntry } from "../src/registry";
+import { ToolExecutor } from "../src/tools/executor";
+import { readFileTool } from "../src/tools/read-file";
+import { writeFileTool } from "../src/tools/write-file";
+import { runCommandTool } from "../src/tools/run-command";
+import type { Tool } from "../src/tools/types";
+import { runMultiAgentSession, type MultiAgentSessionOptions } from "../src/session";
+import { handoffTool } from "../src/tools/handoff";
+import type { AgentEntry } from "../src/registry";
+
+const model: ModelEntry = {
+  provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000, status: "active",
+  price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false },
+};
+const resp = (p: Partial<CompletionResponse>): CompletionResponse => ({
+  content: "", toolCalls: [], usage: { inputTokens: 10, outputTokens: 5 }, ...p,
+});
+
+function makeExecutor(tools: Tool[], allow: string[], audit: Auditor) {
+  return new ToolExecutor({ tools, allow, audit });
+}
+
+function makeRegistry(agents: Record<string, AgentEntry>) {
+  return {
+    requireAgent(name: string): AgentEntry {
+      const a = agents[name];
+      if (!a) throw new Error(`agent "${name}" não encontrado`);
+      return a;
+    },
+    getAgent(name: string): AgentEntry | undefined {
+      return agents[name];
+    },
+  };
+}
+
+describe("handoff tool (F3-2)", () => {
+  test("handoff tool existe no manifesto", () => {
+    expect(handoffTool.manifest.name).toBe("handoff");
+    expect(handoffTool.manifest.risk).toBe("medium");
+    expect(handoffTool.manifest.permission).toBe("handoff");
+    const params = handoffTool.manifest.parameters as { properties: Record<string, unknown> };
+    expect(params.properties).toHaveProperty("to");
+    expect(params.properties).toHaveProperty("payload");
+  });
+
+  test("handoff válido troca agent no contexto via runMultiAgentSession", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-handoff-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const run = "r1";
+
+    const agents = {
+      planner: { model: "openai/gpt-4o-mini", maxSteps: 10, tools: ["handoff"], systemPrompt: "Planeje" },
+      coder: { model: "openai/gpt-4o-mini", maxSteps: 10, tools: ["read_file", "write_file", "run_command"], systemPrompt: "Code" },
+    };
+    const registry = makeRegistry(agents);
+
+    let step = 0;
+    const provider: Provider = {
+      complete: async (req) => {
+        step++;
+        if (step === 1) {
+          return resp({
+            toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", payload: { task: "write file" } }) }],
+          });
+        }
+        return resp({ content: "done" });
+      },
+    };
+
+    const opts: MultiAgentSessionOptions = {
+      run, credentialRef: "OPENAI_API_KEY", quotaDomain: "default",
+      cwd, provider, registry,
+      baseModel: model,
+      baseExecutor: makeExecutor([handoffTool, readFileTool, writeFileTool, runCommandTool], ["handoff", "read_file", "write_file", "run_command"], audit),
+      ledger, audit, baseMaxSteps: 5,
+      entryAgent: "planner",
+    };
+
+    const result = await runMultiAgentSession(opts, "plan and hand off");
+    expect(result.final).toBe("done");
+    expect(result.steps).toBe(2);
+    expect(result.agentsUsed).toEqual(["planner", "coder"]);
+
+    const events = audit.readAll();
+    const switchEvent = events.find((e) => e.tipo === "agent.switch");
+    expect(switchEvent).toBeDefined();
+    expect(switchEvent!.payload.from).toBe("planner");
+    expect(switchEvent!.payload.to).toBe("coder");
+  });
+
+  test("handoff para agent inexistente lança erro", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-handoff-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const run = "r1";
+
+    const agents = {
+      planner: { model: "openai/gpt-4o-mini", maxSteps: 10, tools: ["handoff"] },
+    };
+    const registry = makeRegistry(agents);
+
+    const provider: Provider = {
+      complete: async () => resp({
+        toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "ghost", payload: {} }) }],
+      }),
+    };
+
+    const opts: MultiAgentSessionOptions = {
+      run, credentialRef: "OPENAI_API_KEY", quotaDomain: "default",
+      cwd, provider, registry,
+      baseModel: model,
+      baseExecutor: makeExecutor([handoffTool], ["handoff"], audit),
+      ledger, audit, baseMaxSteps: 5,
+      entryAgent: "planner",
+    };
+
+    const err = await runMultiAgentSession(opts, "handoff to ghost")
+      .then(() => null)
+      .catch((e) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect(err!.message).toContain("ghost");
+  });
+});
+
+describe("runMultiAgentSession (F3-2)", () => {
+  test("planner → coder → reviewer completa tarefa em 3 steps", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-multi-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const run = "r1";
+
+    const agents = {
+      planner: { model: "openai/gpt-4o-mini", maxSteps: 10, tools: ["handoff"], systemPrompt: "Planeje" },
+      coder: { model: "openai/gpt-4o-mini", maxSteps: 10, tools: ["handoff", "write_file"], systemPrompt: "Code" },
+      reviewer: { model: "openai/gpt-4o-mini", maxSteps: 5, tools: ["read_file"], systemPrompt: "Review" },
+    };
+    const registry = makeRegistry(agents);
+
+    let step = 0;
+    const provider: Provider = {
+      complete: async () => {
+        step++;
+        if (step === 1) {
+          return resp({ toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", payload: {} }) }] });
+        }
+        if (step === 2) {
+          return resp({ toolCalls: [{ id: "c2", name: "handoff", arguments: JSON.stringify({ to: "reviewer", payload: {} }) }] });
+        }
+        return resp({ content: "approved" });
+      },
+    };
+
+    const opts: MultiAgentSessionOptions = {
+      run, credentialRef: "OPENAI_API_KEY", quotaDomain: "default",
+      cwd, provider, registry,
+      baseModel: model,
+      baseExecutor: makeExecutor([handoffTool, readFileTool, writeFileTool, runCommandTool], ["handoff", "read_file", "write_file", "run_command"], audit),
+      ledger, audit, baseMaxSteps: 10,
+      entryAgent: "planner",
+    };
+
+    const result = await runMultiAgentSession(opts, "full cycle");
+    expect(result.final).toBe("approved");
+    expect(result.steps).toBe(3);
+    expect(result.agentsUsed).toEqual(["planner", "coder", "reviewer"]);
+
+    const events = audit.readAll();
+    const switches = events.filter((e) => e.tipo === "agent.switch");
+    expect(switches).toHaveLength(2);
+    expect(switches[0].payload.from).toBe("planner");
+    expect(switches[0].payload.to).toBe("coder");
+    expect(switches[1].payload.from).toBe("coder");
+    expect(switches[1].payload.to).toBe("reviewer");
+  });
+});
