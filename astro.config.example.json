@@ -45,7 +45,7 @@
   "agent": {
     "model": "nvidia/meta/llama-3.3-70b-instruct",
     "maxSteps": 12,
-    "tools": ["read_file", "write_file", "run_command", "grep"]
+    "tools": ["read_file", "write_file", "run_command", "grep", "list_dir"]
   },
   "paths": {
     "ledger": ".astro/ledger.jsonl",
