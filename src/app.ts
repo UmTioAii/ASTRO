@@ -18,6 +18,7 @@ import { handoffTool } from "./tools/handoff";
 import { grepTool } from "./tools/grep";
 import { listDirTool } from "./tools/list-dir";
 import { editTool } from "./tools/edit";
+import { lspTool } from "./tools/lsp";
 import type { Tool } from "./tools/types";
 
 export interface RunOptions {
@@ -42,7 +43,7 @@ export interface RunReport {
 const AGENT_NAME = "default";
 const TASK_HASH_LENGTH = 16;
 
-const TOOLS: readonly Tool[] = [readFileTool, writeFileTool, runCommandTool, handoffTool, grepTool, listDirTool, editTool];
+const TOOLS: readonly Tool[] = [readFileTool, writeFileTool, runCommandTool, handoffTool, grepTool, listDirTool, editTool, lspTool];
 const TOOLS_BY_NAME = new Map(TOOLS.map((tool) => [tool.manifest.name, tool]));
 
 /** Hash curto da tarefa: permite correlacionar execuções sem persistir o prompt. */
