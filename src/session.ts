@@ -25,8 +25,8 @@ const DEFAULT_SYSTEM_PROMPT =
 
 /** Erro lançado quando a sessão esgota `maxSteps` sem uma resposta final. */
 export class MaxStepsError extends Error {
-  constructor(maxSteps: number) {
-    super(`sessão excedeu o limite de ${maxSteps} passos sem resposta final`);
+  constructor(maxSteps: number, message?: string) {
+    super(message ?? `sessão excedeu o limite de ${maxSteps} passos sem resposta final`);
     this.name = "MaxStepsError";
   }
 }
@@ -133,6 +133,7 @@ export interface MultiAgentSessionOptions {
 /**
  * Executa uma sessão multi-agent com handoff.
  * Começa no `entryAgent` e troca de agent quando a tool `handoff` é chamada.
+ * Enforca `maxSteps` global (soma de todos) e por agent.
  */
 export async function runMultiAgentSession(
   opts: MultiAgentSessionOptions,
@@ -148,6 +149,7 @@ export async function runMultiAgentSession(
   let currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
   let currentTools: Set<string> = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
   let step = 0;
+  let agentSteps = 0; // steps do agent atual
 
   const messages: ChatMessage[] = [
     { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT },
@@ -155,7 +157,16 @@ export async function runMultiAgentSession(
   ];
 
   while (step < opts.baseMaxSteps) {
+    // Verificar limite do agent atual
+    if (agentSteps >= currentMaxSteps) {
+      throw new MaxStepsError(
+        currentMaxSteps,
+        `agent "${currentAgentName}" excedeu o limite de ${currentMaxSteps} passos sem resposta final`,
+      );
+    }
+
     step++;
+    agentSteps++;
 
     // Atualizar executor com tools do agent atual
     const executor = new ToolExecutor({
@@ -219,6 +230,7 @@ export async function runMultiAgentSession(
         currentMaxSteps = newAgent.maxSteps ?? opts.baseMaxSteps;
         currentSystemPrompt = newAgent.systemPrompt ?? opts.baseSystemPrompt;
         currentTools = newAgent.tools ? new Set(newAgent.tools) : new Set();
+        agentSteps = 0; // reseta contador do novo agent
         agentsUsed.push(currentAgentName);
         handoffTriggered = true;
         break; // interrompe execução das outras tools deste step
