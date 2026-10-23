@@ -76,6 +76,18 @@ export class Ledger {
     return { tokensIn, tokensOut, costUsd };
   }
 
+  /** Agregação por agent: tokens e custo de cada agent no ledger. */
+  byAgent(): Record<string, { tokensIn: number; tokensOut: number; costUsd: number }> {
+    const result: Record<string, { tokensIn: number; tokensOut: number; costUsd: number }> = Object.create(null);
+    for (const entry of this.readAll()) {
+      const agg = (result[entry.agent] ??= { tokensIn: 0, tokensOut: 0, costUsd: 0 });
+      agg.tokensIn += entry.tokensIn;
+      agg.tokensOut += entry.tokensOut;
+      agg.costUsd += entry.costUsd ?? 0;
+    }
+    return result;
+  }
+
   private readLines(): string[] {
     let text: string;
     try {
