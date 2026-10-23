@@ -1,0 +1,54 @@
+{
+  "providers": {
+    "nvidia": {
+      "kind": "openai-compat",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "credentialRef": "NVIDIA_API_KEY",
+      "quotaDomain": "nvidia"
+    },
+    "openrouter": {
+      "kind": "openai-compat",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "credentialRef": "OPENROUTER_API_KEY",
+      "quotaDomain": "openrouter",
+      "headers": {
+        "HTTP-Referer": "https://github.com/astro-harness",
+        "X-Title": "Astro Harness"
+      }
+    },
+    "codex": {
+      "kind": "codex-oauth",
+      "credentialsPath": "~/.codex/auth.json",
+      "quotaDomain": "codex"
+    }
+  },
+  "models": [
+    {
+      "provider": "nvidia",
+      "id": "meta/llama-3.3-70b-instruct",
+      "tags": ["writing-code", "tools", "long-context"],
+      "context": 131072
+    },
+    {
+      "provider": "openrouter",
+      "id": "openai/gpt-4o-mini",
+      "tags": ["writing-code", "tools", "fast"],
+      "context": 128000
+    },
+    {
+      "provider": "codex",
+      "id": "gpt-5.5",
+      "tags": ["writing-code", "tools", "reasoning"],
+      "context": 400000
+    }
+  ],
+  "agent": {
+    "model": "nvidia/meta/llama-3.3-70b-instruct",
+    "maxSteps": 12,
+    "tools": ["read_file", "write_file", "run_command"]
+  },
+  "paths": {
+    "ledger": ".astro/ledger.jsonl",
+    "audit": ".astro/audit.jsonl"
+  }
+}
