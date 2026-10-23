@@ -83,9 +83,10 @@ bun src/cli.ts --help
 - Em sucesso, imprime a resposta final e uma linha de resumo:
   `modelo · tokens · custo · ledger · auditoria`.
 
-As tools disponíveis são `read_file`, `write_file`, `run_command`, `grep` e `list_dir`. Apenas as
-tools listadas em `agent.tools` são expostas ao modelo; caminhos de arquivo são
-confinados ao `--cwd` e `run_command` tem timeout.
+As tools disponíveis são `read_file`, `write_file`, `run_command`, `grep`, `list_dir` e
+`edit`. Apenas as tools listadas em `agent.tools` são expostas ao modelo; caminhos de
+arquivo são confinados ao `--cwd` e `run_command` tem timeout. A tool `edit` aplica
+unified diffs com backup `.bak` automático e rollback se algum hunk não corresponder.
 
 ## Smoke manual por provider
 
