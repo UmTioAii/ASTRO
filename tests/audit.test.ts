@@ -27,12 +27,16 @@ test("redige segredos no payload", () => {
   const path = join(dir(), "audit.jsonl");
   new Auditor(path).append({
     run: "r1", tipo: "x",
-    payload: { apiKey: "sk-abc123456789", nested: { authorization: "Bearer zzz" }, ok: "fine" },
+    payload: { apiKey: "sk-abc123456789", nested: { authorization: "Bearer zzz" }, token: "abc", tokensIn: 30, tokensOut: 12, ok: "fine" },
   });
   const raw = readFileSync(path, "utf8");
   expect(raw).not.toContain("sk-abc123456789");
   expect(raw).not.toContain("Bearer zzz");
+  expect(raw).not.toContain('"abc"');
   expect(raw).toContain("[REDACTED]");
+  expect(raw).toContain('"tokensIn":30');
+  expect(raw).toContain('"tokensOut":12');
+  expect(raw).toContain('"ok":"fine"');
 });
 
 test("cria o diretório do arquivo se não existir", () => {
