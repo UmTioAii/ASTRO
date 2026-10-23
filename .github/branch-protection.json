@@ -1,0 +1,15 @@
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["test (ubuntu-latest)", "test (windows-latest)", "eval", "secrets"]
+  },
+  "enforce_admins": false,
+  "required_pull_request_reviews": {
+    "required_approving_review_count": 0,
+    "dismiss_stale_reviews": true
+  },
+  "restrictions": null,
+  "required_linear_history": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false
+}
