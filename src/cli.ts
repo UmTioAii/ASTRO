@@ -3,12 +3,14 @@ import { loadConfig } from "./config";
 import { Registry } from "./registry";
 import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./eval/harness";
 import { runBenchmark, type BenchReport } from "./eval/bench";
+import { Metrics, startMetricsServer } from "./metrics";
 import { resolve } from "node:path";
 
 const USAGE = `Uso:
   bun src/cli.ts run "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts eval [--threshold <0..1>] [--golden <dir>] [--report <path>] [--baseline <path>] [--write-baseline]
   bun src/cli.ts bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
+  bun src/cli.ts serve [--port <n>]
   bun src/cli.ts --help
 
 Opções:
@@ -56,11 +58,16 @@ interface BenchCommand {
   outDir: string;
 }
 
+interface ServeCommand {
+  port: number;
+}
+
 type ParsedCommand =
   | { kind: "help" }
   | { kind: "run"; options: RunCommand }
   | { kind: "eval"; options: EvalCommand }
-  | { kind: "bench"; options: BenchCommand };
+  | { kind: "bench"; options: BenchCommand }
+  | { kind: "serve"; options: ServeCommand };
 
 function parseArgs(argv: string[]): ParsedCommand {
   if (argv.length === 0) {
@@ -71,8 +78,29 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  if (command !== "run" && command !== "eval" && command !== "bench") {
+  if (command !== "run" && command !== "eval" && command !== "bench" && command !== "serve") {
     throw new UsageError(`comando desconhecido: "${command}"`);
+  }
+
+  if (command === "serve") {
+    let port = 9090;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--port") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError("falta o valor de --port");
+        }
+        i++;
+        port = Number(value);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          throw new UsageError(`--port deve ser inteiro 1..65535 (recebido: ${value})`);
+        }
+        continue;
+      }
+      throw new UsageError(`opção desconhecida: "${arg}"`);
+    }
+    return { kind: "serve", options: { port } };
   }
 
   if (command === "bench") {
@@ -258,6 +286,16 @@ async function main(argv: string[]): Promise<number> {
       console.error(`erro: pass rate abaixo do threshold ${o.threshold} ou regressões detectadas`);
       return 1;
     }
+    return 0;
+  }
+
+  if (parsed.kind === "serve") {
+    const metrics = new Metrics();
+    const handle = startMetricsServer(metrics, parsed.options.port);
+    console.log(`métricas Prometheus em ${handle.url}/metrics (Ctrl+C para sair)`);
+    // Mantém o processo vivo até interrupção; contadores acumulam de runs
+    // neste processo (runTask com a mesma instância de Metrics).
+    await new Promise<never>(() => {});
     return 0;
   }
 

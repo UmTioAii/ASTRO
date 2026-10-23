@@ -10,6 +10,7 @@ import { OpenAICompatProvider } from "./provider/openai-compat";
 import type { Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
 import { sendTelemetry } from "./telemetry";
+import { Metrics, MetricsCollector } from "./metrics";
 import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
@@ -29,6 +30,8 @@ export interface RunOptions {
   task: string;
   cwd?: string;
   env?: Record<string, string | undefined>;
+  /** Registro de métricas Prometheus (F6-1); quando presente, alimentado pelo run. */
+  metrics?: Metrics;
 }
 
 export interface RunReport {
@@ -153,8 +156,10 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   const ledgerPath = resolveFrom(cwd, config.paths.ledger);
   const auditPath = resolveFrom(cwd, config.paths.audit);
-  const ledger = new Ledger(ledgerPath);
-  const audit = new Auditor(auditPath);
+  // Métricas Prometheus (F6-1): callbacks alimentam o registro durante o run
+  const collector = opts.metrics !== undefined ? new MetricsCollector(opts.metrics) : undefined;
+  const ledger = new Ledger(ledgerPath, ...(collector ? [{ onRecord: collector.onLedgerRecord }] : []));
+  const audit = new Auditor(auditPath, ...(collector ? [{ onEvent: collector.onAuditEvent }] : []));
 
   const run = randomUUID();
   audit.append({
