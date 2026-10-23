@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "refactor-promise-chain",
+  "category": "refactor",
+  "difficulty": 2,
+  "tags": [
+    "writing-code"
+  ],
+  "files": [
+    "src.ts"
+  ]
+}

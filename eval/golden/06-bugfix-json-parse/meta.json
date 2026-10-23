@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "bugfix-json-parse",
+  "category": "bugfix",
+  "difficulty": 1,
+  "tags": [
+    "writing-code"
+  ],
+  "files": [
+    "src.ts"
+  ]
+}

@@ -1,0 +1,4 @@
+[test]
+# Suíte do projeto vive em tests/; eval/golden/ contém artefatos de dataset
+# (subject.test.ts esperados), que não são testes do CI.
+root = "tests"
