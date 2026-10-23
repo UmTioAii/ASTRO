@@ -10,7 +10,7 @@ export interface AuditEvent {
   payload: Record<string, unknown>;
 }
 
-const SECRET_KEY = /key|token|secret|password|authorization/i;
+const SECRET_KEY = /(^|[-_])(api[-_]?)?keys?$|tokens?$|secret|password|authorization/i;
 const SECRET_VALUE = /^sk-[A-Za-z0-9_-]{8,}$/;
 const REDACTED = "[REDACTED]";
 
