@@ -73,6 +73,14 @@ export interface RunCommandToolConfig {
   sandbox?: boolean;
 }
 
+/** Telemetria opt-in (F5-5): métricas anônimas por run; off por default. */
+export interface TelemetryConfig {
+  enabled: boolean;
+  endpoint: string;
+  /** Fração de runs enviados, 0..1 (default: 1). */
+  sampleRate: number;
+}
+
 export interface PathsConfig {
   ledger: string;
   audit: string;
@@ -84,6 +92,7 @@ export interface AstroConfig {
   agent: AgentConfig;
   agents?: Record<string, NamedAgentConfig>;
   tools?: ToolsConfig;
+  telemetry?: TelemetryConfig;
   paths: PathsConfig;
 }
 
@@ -305,6 +314,19 @@ function validateNamedAgent(
   return { model, maxSteps, tools, ...(systemPrompt === undefined ? {} : { systemPrompt }) };
 }
 
+/** Valida a seção opcional `telemetry` (F5-5): off por default, sem PII. */
+function validateTelemetry(value: unknown): TelemetryConfig {
+  const raw = expectObject(value, "telemetry");
+  const enabled = raw.enabled === undefined ? false : expectBoolean(raw.enabled, "telemetry.enabled");
+  const endpoint =
+    raw.endpoint === undefined
+      ? "https://telemetry.astro.local/v1/runs"
+      : expectString(raw.endpoint, "telemetry.endpoint");
+  let sampleRate = raw.sampleRate === undefined ? 1 : expectNonNegativeNumber(raw.sampleRate, "telemetry.sampleRate");
+  if (sampleRate > 1) sampleRate = 1;
+  return { enabled, endpoint, sampleRate };
+}
+
 /** Valida a seção opcional `tools`. */
 function validateTools(value: unknown): ToolsConfig {
   const raw = expectObject(value, "tools");
@@ -373,9 +395,12 @@ export function validateConfig(raw: unknown): AstroConfig {
   // Validar seção tools (F4-6)
   const tools = root.tools === undefined ? undefined : validateTools(root.tools);
 
+  // Validar telemetria (F5-5)
+  const telemetry = root.telemetry === undefined ? undefined : validateTelemetry(root.telemetry);
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, tools, paths };
+  return { providers, models, agent, agents, tools, telemetry, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
