@@ -1,4 +1,4 @@
-# Astro
+# Astro Harness
 
 Harness single-agent em Bun/TypeScript para executar tarefas de código com tools,
 ledger de uso e auditoria append-only. Esta é a F2 do projeto: um agente, três
@@ -146,3 +146,7 @@ bun run typecheck
 
 Os testes automatizados usam `Bun.serve` como provider mock e diretórios
 temporários; não há chamadas reais nem credenciais reais.
+
+## Licença
+
+MIT — veja [`LICENSE`](LICENSE).
