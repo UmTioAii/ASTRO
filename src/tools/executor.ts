@@ -13,18 +13,23 @@ export class ToolExecutor {
   private readonly tools: readonly Tool[];
   private readonly byName: Map<string, Tool>;
   private readonly allow: Set<string>;
-  private readonly audit: Auditor;
+  private readonly auditRef: Auditor;
 
   constructor(opts: { tools: readonly Tool[]; allow: string[]; audit: Auditor }) {
     this.tools = opts.tools;
     this.byName = new Map(opts.tools.map((tool) => [tool.manifest.name, tool]));
     this.allow = new Set(opts.allow);
-    this.audit = opts.audit;
+    this.auditRef = opts.audit;
   }
 
   /** Todas as tools registradas (para multi-agent session). */
   get allTools(): readonly Tool[] {
     return this.tools;
+  }
+
+  /** Auditoria da sessão (para tools de composição logarem eventos próprios). */
+  get audit(): Auditor {
+    return this.auditRef;
   }
 
   /** Definições das tools permitidas, no formato exposto ao provider. */
@@ -39,7 +44,7 @@ export class ToolExecutor {
   }
 
   async run(ctx: ToolContext, call: ToolCall): Promise<ToolResult> {
-    this.audit.append({
+    this.auditRef.append({
       run: ctx.run,
       agent: ctx.agent,
       tipo: "tool.call",
@@ -48,7 +53,7 @@ export class ToolExecutor {
 
     const result = await this.execute(ctx, call);
 
-    this.audit.append({
+    this.auditRef.append({
       run: ctx.run,
       agent: ctx.agent,
       tipo: "tool.result",
@@ -61,7 +66,7 @@ export class ToolExecutor {
   private async execute(ctx: ToolContext, call: ToolCall): Promise<ToolResult> {
     const tool = this.byName.get(call.name);
     if (tool === undefined) {
-      this.audit.append({
+      this.auditRef.append({
         run: ctx.run,
         agent: ctx.agent,
         tipo: "tool.denied",
@@ -71,7 +76,7 @@ export class ToolExecutor {
     }
     if (!this.allow.has(call.name)) {
       const reason = `tool "${call.name}" não permitida para o agent "${ctx.agent}"`;
-      this.audit.append({
+      this.auditRef.append({
         run: ctx.run,
         agent: ctx.agent,
         tipo: "tool.denied",
@@ -92,7 +97,7 @@ export class ToolExecutor {
       const timeout = new Promise<typeof TIMEOUT>((resolve) => {
         timer = setTimeout(() => resolve(TIMEOUT), tool.manifest.timeoutMs);
       });
-      const outcome = await Promise.race([tool.execute(input, ctx), timeout]);
+      const outcome = await Promise.race([tool.execute(input, { ...ctx, executor: this }), timeout]);
 
       if (outcome === TIMEOUT) {
         return failure(

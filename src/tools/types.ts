@@ -9,11 +9,36 @@ export interface ToolManifest {
   retryable: boolean;
 }
 
-/** Contexto de execução de uma tool. */
+/**
+ * Contexto de execução de uma tool.
+ *
+ * `executor` é injetado pelo ToolExecutor ao chamar `tool.execute` e permite que
+ * tools de composição (ex.: pipeline) executem sub-tools respeitando a MESMA
+ * allowlist do agent (I-01), timeout por manifesto e auditoria. Tools comuns
+ * ignoram o campo.
+ */
 export interface ToolContext {
   cwd: string;
   run: string;
   agent: string;
+  /** Executor da sessão; presente apenas quando chamado via ToolExecutor. */
+  executor?: ToolExecutorLike;
+}
+
+/**
+ * Superfície do executor que tools de composição podem usar.
+ * Definida aqui (em vez de importar ToolExecutor) para evitar import cíclico.
+ */
+export interface ToolExecutorLike {
+  run(ctx: ToolContext, call: { id: string; name: string; arguments: string }): Promise<ToolResult>;
+  defs(): { name: string; description: string; parameters: object }[];
+  /** Auditoria da sessão, para tools de composição logarem eventos próprios. */
+  audit: AuditLike;
+}
+
+/** Superfície do Auditor para tools de composição. */
+export interface AuditLike {
+  append(event: { run: string; agent?: string; tipo: string; payload?: Record<string, unknown> }): unknown;
 }
 
 /** Resultado de uma tool; erros voltam ao modelo como resultado, não como exceção. */
