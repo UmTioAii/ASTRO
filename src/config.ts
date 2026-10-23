@@ -51,6 +51,8 @@ export interface AgentConfig {
   maxSteps: number;
   tools: string[];
   systemPrompt?: string;
+  /** Agent inicial para sessão multi-agent (default: "planner"). */
+  entryAgent?: string;
 }
 
 /** Configuração de agents nomeados (para multi-agent F3+). Campos opcionais herdam do agent principal. */
