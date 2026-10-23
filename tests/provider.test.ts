@@ -189,3 +189,37 @@ test("erros não transitórios não retentam (403/404/422 inclusos)", async () =
     expect(calls).toBe(1);
   }
 });
+
+test("redige a chave inteira antes de truncar o detalhe do erro", async () => {
+  const apiKey = `sk-${"a".repeat(60)}`;
+  const padding = "p".repeat(250);
+  const leak = apiKey.slice(0, 20);
+
+  const http = new OpenAICompatProvider({
+    baseUrl: "http://x/v1",
+    apiKey,
+    fetchFn: async () => ok({ error: { message: `${padding}${apiKey}` } }, 401),
+    retry: { maxAttempts: 1 },
+  });
+  const httpErr = (await http.complete(req).catch((e) => e)) as ProviderError;
+  expect(httpErr).toBeInstanceOf(ProviderError);
+  expect(httpErr.errClass).toBe("auth");
+  expect(httpErr.message).not.toContain(apiKey);
+  expect(httpErr.message).not.toContain(leak);
+  expect(httpErr.message).toContain("[REDACTED]");
+
+  const network = new OpenAICompatProvider({
+    baseUrl: "http://x/v1",
+    apiKey,
+    fetchFn: async () => {
+      throw new Error(`${padding}${apiKey}`);
+    },
+    retry: { maxAttempts: 1 },
+  });
+  const networkErr = (await network.complete(req).catch((e) => e)) as ProviderError;
+  expect(networkErr).toBeInstanceOf(ProviderError);
+  expect(networkErr.errClass).toBe("outage");
+  expect(networkErr.message).not.toContain(apiKey);
+  expect(networkErr.message).not.toContain(leak);
+  expect(networkErr.message).toContain("[REDACTED]");
+});
