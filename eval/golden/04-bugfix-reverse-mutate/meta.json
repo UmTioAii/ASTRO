@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "bugfix-reverse-mutate",
+  "category": "bugfix",
+  "difficulty": 1,
+  "tags": [
+    "writing-code",
+    "review"
+  ],
+  "files": [
+    "src.ts"
+  ]
+}

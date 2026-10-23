@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "feature-pick",
+  "category": "feature",
+  "difficulty": 1,
+  "tags": [
+    "writing-code"
+  ],
+  "files": [
+    "pick.ts"
+  ]
+}

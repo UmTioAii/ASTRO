@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "bugfix-date-format",
+  "category": "bugfix",
+  "difficulty": 1,
+  "tags": [
+    "writing-code"
+  ],
+  "files": [
+    "src.ts"
+  ]
+}
