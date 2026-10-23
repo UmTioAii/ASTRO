@@ -1,0 +1,39 @@
+name: bench
+
+# Benchmark manual (F5-4): consome quota de providers reais; nunca roda em PR.
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Filtro de modelos (substring, vírgula separa)"
+        required: false
+        default: ""
+      runs:
+        description: "Repetições da suite"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - run: bun install --frozen-lockfile
+      - name: Benchmark
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: bun src/cli.ts bench --runs ${{ github.event.inputs.runs }} ${{ github.event.inputs.models != '' && format('--models {0}', github.event.inputs.models) || '' }}
+      - name: Upload bench reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-reports
+          path: eval/bench-*.json
