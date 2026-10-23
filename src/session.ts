@@ -5,6 +5,7 @@ import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
 import type { AgentEntry } from "./registry";
 import type { SpanHandle, TracerLike } from "./tracing";
+import { assertWithinQuota, type QuotaLimit } from "./quota";
 
 export interface SessionOptions {
   run: string;
@@ -21,6 +22,8 @@ export interface SessionOptions {
   systemPrompt?: string;
   /** Tracing OTLP (F6-2); ausente = sem spans. */
   tracer?: TracerLike;
+  /** Limites de quota por domínio (F6-3); ausente = sem enforcement. */
+  quotaLimits?: Record<string, QuotaLimit>;
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -75,6 +78,8 @@ export async function runSession(
 
   try {
     for (let step = 1; step <= opts.maxSteps; step++) {
+      // Quota (F6-3): bloqueia a chamada antes de gastar
+      assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
       const stepSpan = tracer?.start("step", { step, agent: opts.agent }, rootSpan);
       const providerSpan = tracer?.start(
         "provider.complete",
@@ -178,6 +183,8 @@ export interface MultiAgentSessionOptions {
   entryAgent: string;
   /** Tracing OTLP (F6-2); ausente = sem spans. */
   tracer?: TracerLike;
+  /** Limites de quota por domínio (F6-3); ausente = sem enforcement. */
+  quotaLimits?: Record<string, QuotaLimit>;
 }
 
 /**
@@ -227,6 +234,9 @@ export async function runMultiAgentSession(
 
       step++;
       agentSteps++;
+
+      // Quota (F6-3): bloqueia a chamada antes de gastar
+      assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
 
       // Atualizar executor com tools do agent atual
       const executor = new ToolExecutor({
