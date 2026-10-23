@@ -57,6 +57,12 @@
     "endpoint": "https://telemetry.astro.local/v1/runs",
     "sampleRate": 1.0
   },
+  "quota": {
+    "nvidia": {
+      "dailyTokens": 200000,
+      "monthlyCostUsd": 10
+    }
+  },
   "paths": {
     "ledger": ".astro/ledger.jsonl",
     "audit": ".astro/audit.jsonl"

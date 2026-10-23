@@ -213,6 +213,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         baseSystemPrompt: config.agent.systemPrompt,
         entryAgent,
         ...(tracer === undefined ? {} : { tracer }),
+        ...(config.quota === undefined ? {} : { quotaLimits: config.quota }),
       };
       result = await runMultiAgentSession(multiOpts, opts.task);
     } else {
@@ -233,6 +234,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
             ? {}
             : { systemPrompt: config.agent.systemPrompt }),
           ...(tracer === undefined ? {} : { tracer }),
+          ...(config.quota === undefined ? {} : { quotaLimits: config.quota }),
         },
         opts.task,
       );
