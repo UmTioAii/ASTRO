@@ -87,6 +87,13 @@ export interface QuotaLimitConfig {
   monthlyCostUsd?: number;
 }
 
+/** Completion cache (F6-4): off por default; SQLite em .astro/cache.db. */
+export interface CacheConfig {
+  enabled: boolean;
+  ttlHours: number;
+  maxEntries: number;
+}
+
 export interface PathsConfig {
   ledger: string;
   audit: string;
@@ -101,6 +108,7 @@ export interface AstroConfig {
   telemetry?: TelemetryConfig;
   /** Limites por quotaDomain (F6-3). */
   quota?: Record<string, QuotaLimitConfig>;
+  cache?: CacheConfig;
   paths: PathsConfig;
 }
 
@@ -322,6 +330,17 @@ function validateNamedAgent(
   return { model, maxSteps, tools, ...(systemPrompt === undefined ? {} : { systemPrompt }) };
 }
 
+/** Valida a seção opcional `cache` (F6-4): defaults 24h/10000 entradas. */
+function validateCache(value: unknown): CacheConfig {
+  const raw = expectObject(value, "cache");
+  const enabled = raw.enabled === undefined ? false : expectBoolean(raw.enabled, "cache.enabled");
+  const ttlHours =
+    raw.ttlHours === undefined ? 24 : expectNonNegativeNumber(raw.ttlHours, "cache.ttlHours");
+  const maxEntries =
+    raw.maxEntries === undefined ? 10_000 : expectPositiveInteger(raw.maxEntries, "cache.maxEntries");
+  return { enabled, ttlHours, maxEntries };
+}
+
 /** Valida a seção opcional `quota` (F6-3): limites por quotaDomain. */
 function validateQuota(value: unknown): Record<string, QuotaLimitConfig> {
   const raw = expectObject(value, "quota");
@@ -440,9 +459,12 @@ export function validateConfig(raw: unknown): AstroConfig {
   // Validar quota (F6-3)
   const quota = root.quota === undefined ? undefined : validateQuota(root.quota);
 
+  // Validar cache (F6-4)
+  const cache = root.cache === undefined ? undefined : validateCache(root.cache);
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, tools, telemetry, quota, paths };
+  return { providers, models, agent, agents, tools, telemetry, quota, cache, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
