@@ -10,16 +10,21 @@ function failure(message: string): ToolResult {
 
 /** Executa tools com allowlist, timeout e auditoria; erros voltam como resultado de tool. */
 export class ToolExecutor {
-  private readonly tools: Tool[];
+  private readonly tools: readonly Tool[];
   private readonly byName: Map<string, Tool>;
   private readonly allow: Set<string>;
   private readonly audit: Auditor;
 
-  constructor(opts: { tools: Tool[]; allow: string[]; audit: Auditor }) {
+  constructor(opts: { tools: readonly Tool[]; allow: string[]; audit: Auditor }) {
     this.tools = opts.tools;
     this.byName = new Map(opts.tools.map((tool) => [tool.manifest.name, tool]));
     this.allow = new Set(opts.allow);
     this.audit = opts.audit;
+  }
+
+  /** Todas as tools registradas (para multi-agent session). */
+  get allTools(): readonly Tool[] {
+    return this.tools;
   }
 
   /** Definições das tools permitidas, no formato exposto ao provider. */
