@@ -45,10 +45,19 @@ export interface ModelConfig {
   price?: PriceConfig;
 }
 
+/** Configuração de um agent (pode ser o principal ou um agent nomeado em `agents`). */
 export interface AgentConfig {
   model: string;
   maxSteps: number;
   tools: string[];
+  systemPrompt?: string;
+}
+
+/** Configuração de agents nomeados (para multi-agent F3+). Campos opcionais herdam do agent principal. */
+export interface NamedAgentConfig {
+  model: string;
+  maxSteps?: number;
+  tools?: string[];
   systemPrompt?: string;
 }
 
@@ -61,6 +70,7 @@ export interface AstroConfig {
   providers: Record<string, ProviderConfig>;
   models: ModelConfig[];
   agent: AgentConfig;
+  agents?: Record<string, NamedAgentConfig>;
   paths: PathsConfig;
 }
 
@@ -243,6 +253,45 @@ function validatePaths(value: unknown): PathsConfig {
   };
 }
 
+/** Valida um agent nomeado (em `agents`). Usa defaults do agent principal se omitido. */
+function validateNamedAgent(
+  name: string,
+  value: unknown,
+  baseAgent: AgentConfig,
+  knownTools: Set<string>,
+  knownModels: Set<string>,
+  allModels: ModelConfig[],
+): NamedAgentConfig {
+  const field = `agents.${name}`;
+  const raw = expectObject(value, field);
+
+  const systemPrompt = raw.systemPrompt === undefined ? undefined : expectString(raw.systemPrompt, `${field}.systemPrompt`);
+
+  const model = raw.model === undefined ? baseAgent.model : expectString(raw.model, `${field}.model`);
+  if (!knownModels.has(model)) {
+    fail(`config inválida: agent "${name}" referencia modelo "${model}" não declarado em "models"`);
+  }
+  // Verificar se o modelo está active
+  const modelEntry = allModels.find((m) => `${m.provider}/${m.id}` === model);
+  if (modelEntry && modelEntry.status !== "active") {
+    fail(`config inválida: agent "${name}" referencia modelo "${model}" que não está active (status: "${modelEntry.status}")`);
+  }
+
+  const maxSteps = raw.maxSteps === undefined ? baseAgent.maxSteps : expectPositiveInteger(raw.maxSteps, `${field}.maxSteps`);
+
+  let tools = baseAgent.tools;
+  if (raw.tools !== undefined) {
+    tools = expectStringArray(raw.tools, `${field}.tools`);
+    for (const tool of tools) {
+      if (!knownTools.has(tool)) {
+        fail(`config inválida: agent "${name}" tool "${tool}" desconhecida (disponíveis: ${[...knownTools].join(", ")})`);
+      }
+    }
+  }
+
+  return { model, maxSteps, tools, ...(systemPrompt === undefined ? {} : { systemPrompt }) };
+}
+
 /**
  * Valida a configuração crua (tipicamente vinda de JSON) e aplica os defaults:
  * `status: "active"` por modelo e `quotaDomain: "default"` por provider.
@@ -284,9 +333,19 @@ export function validateConfig(raw: unknown): AstroConfig {
     );
   }
 
+  // Validar agents nomeados (F3-1)
+  const agents: Record<string, NamedAgentConfig> = Object.create(null);
+  if (root.agents !== undefined) {
+    const agentsRaw = expectObject(root.agents, "agents");
+    const knownTools = new Set(agent.tools);
+    for (const [name, agentRaw] of Object.entries(agentsRaw)) {
+      agents[name] = validateNamedAgent(name, agentRaw, agent, knownTools, seenModels, models);
+    }
+  }
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, paths };
+  return { providers, models, agent, agents, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
