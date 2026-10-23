@@ -1,4 +1,36 @@
+# Dependências
 node_modules/
+.bun/
+
+# Runtime / build
 .astro/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+
+# Ambiente / segredos
+.env
+.env.*
+!.env.example
+
+# Config local (o exemplo é versionado)
+astro.config.json
+
+# Worktrees, SDD e documentação (fora do repo público)
 .worktrees/
+.sdd/
+docs/
 progress.md
+
+# SO / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
