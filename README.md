@@ -83,10 +83,12 @@ bun src/cli.ts --help
 - Em sucesso, imprime a resposta final e uma linha de resumo:
   `modelo · tokens · custo · ledger · auditoria`.
 
-As tools disponíveis são `read_file`, `write_file`, `run_command`, `grep`, `list_dir` e
-`edit`. Apenas as tools listadas em `agent.tools` são expostas ao modelo; caminhos de
+As tools disponíveis são `read_file`, `write_file`, `run_command`, `grep`, `list_dir`,
+`edit` e `lsp`. Apenas as tools listadas em `agent.tools` são expostas ao modelo; caminhos de
 arquivo são confinados ao `--cwd` e `run_command` tem timeout. A tool `edit` aplica
 unified diffs com backup `.bak` automático e rollback se algum hunk não corresponder.
+A tool `lsp` usa o compilador nativo do TypeScript 7 (tsgo) para definition, references
+e hover; o servidor é cacheado por sessão e recriado quando os arquivos mudam.
 
 ## Smoke manual por provider
 
