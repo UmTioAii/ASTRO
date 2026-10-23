@@ -83,7 +83,7 @@ bun src/cli.ts --help
 - Em sucesso, imprime a resposta final e uma linha de resumo:
   `modelo · tokens · custo · ledger · auditoria`.
 
-As tools disponíveis são `read_file`, `write_file` e `run_command`. Apenas as
+As tools disponíveis são `read_file`, `write_file`, `run_command` e `grep`. Apenas as
 tools listadas em `agent.tools` são expostas ao modelo; caminhos de arquivo são
 confinados ao `--cwd` e `run_command` tem timeout.
 
