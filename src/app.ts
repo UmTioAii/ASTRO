@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Auditor } from "./audit";
 import type { AstroConfig, ProviderConfig } from "./config";
 import { ConfigError, loadConfig } from "./config";
@@ -12,6 +12,7 @@ import { Registry, type ModelEntry } from "./registry";
 import { sendTelemetry } from "./telemetry";
 import { tracerFromEnv } from "./tracing";
 import { Metrics, MetricsCollector } from "./metrics";
+import { CompletionCache, cachedProvider } from "./cache";
 import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
@@ -174,6 +175,26 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const model = registry.require(config.agent.model);
 
   const { provider, credentialRef, quotaDomain } = createProvider(config, model, env);
+
+  // Completion cache (F6-4): wrap do provider com cache SQLite
+  let effectiveProvider = provider;
+  if (config.cache?.enabled === true) {
+    const cacheDbPath = join(dirname(ledgerPath), "cache.db");
+    const cache = new CompletionCache(cacheDbPath);
+    effectiveProvider = cachedProvider(provider, {
+      cache,
+      ttlHours: config.cache.ttlHours,
+      maxEntries: config.cache.maxEntries,
+      onHit: (key) => {
+        audit.append({
+          run,
+          agent: AGENT_NAME,
+          tipo: "cache.hit",
+          payload: { key: key.slice(0, 16) },
+        });
+      },
+    });
+  }
   audit.append({
     run,
     agent: AGENT_NAME,
@@ -203,7 +224,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         credentialRef,
         quotaDomain,
         cwd,
-        provider,
+        provider: effectiveProvider,
         registry,
         baseModel: model,
         baseExecutor,
@@ -224,7 +245,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           credentialRef,
           quotaDomain,
           cwd,
-          provider,
+          provider: effectiveProvider,
           model,
           executor: baseExecutor,
           ledger,

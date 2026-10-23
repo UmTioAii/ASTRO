@@ -63,6 +63,11 @@
       "monthlyCostUsd": 10
     }
   },
+  "cache": {
+    "enabled": false,
+    "ttlHours": 24,
+    "maxEntries": 10000
+  },
   "paths": {
     "ledger": ".astro/ledger.jsonl",
     "audit": ".astro/audit.jsonl"
