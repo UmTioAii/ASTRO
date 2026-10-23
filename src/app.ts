@@ -10,6 +10,7 @@ import { OpenAICompatProvider } from "./provider/openai-compat";
 import type { Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
 import { sendTelemetry } from "./telemetry";
+import { tracerFromEnv } from "./tracing";
 import { Metrics, MetricsCollector } from "./metrics";
 import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
 import { ToolExecutor } from "./tools/executor";
@@ -189,6 +190,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   const baseline = ledger.total();
   const startedAt = Date.now();
+  // Tracing OTLP (F6-2): habilitado por OTEL_EXPORTER_OTLP_ENDPOINT
+  const tracer = tracerFromEnv(env);
 
   let result: { final: string; steps: number; agentsUsed?: string[] };
   try {
@@ -209,6 +212,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         baseMaxSteps: config.agent.maxSteps,
         baseSystemPrompt: config.agent.systemPrompt,
         entryAgent,
+        ...(tracer === undefined ? {} : { tracer }),
       };
       result = await runMultiAgentSession(multiOpts, opts.task);
     } else {
@@ -228,6 +232,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ...(config.agent.systemPrompt === undefined
             ? {}
             : { systemPrompt: config.agent.systemPrompt }),
+          ...(tracer === undefined ? {} : { tracer }),
         },
         opts.task,
       );
