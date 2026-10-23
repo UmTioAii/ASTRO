@@ -9,6 +9,7 @@ import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
 import type { Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
+import { sendTelemetry } from "./telemetry";
 import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
@@ -182,6 +183,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   });
 
   const baseline = ledger.total();
+  const startedAt = Date.now();
 
   let result: { final: string; steps: number; agentsUsed?: string[] };
   try {
@@ -252,6 +254,19 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     tipo: "run.completed",
     payload: { steps: result.steps, tokensIn, tokensOut, costUsd, agentsUsed: result.agentsUsed },
   });
+
+  // Telemetria opt-in (F5-5): métricas anônimas; falha nunca derruba o run
+  if (config.telemetry !== undefined) {
+    await sendTelemetry(config.telemetry, {
+      runId: run,
+      model: config.agent.model,
+      tokensIn,
+      tokensOut,
+      latencyMs: Date.now() - startedAt,
+      steps: result.steps,
+      costUsd,
+    });
+  }
 
   return {
     final: result.final,
