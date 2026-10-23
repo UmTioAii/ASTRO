@@ -81,6 +81,12 @@ export interface TelemetryConfig {
   sampleRate: number;
 }
 
+/** Limite de quota por quotaDomain (F6-3); pelo menos um campo. */
+export interface QuotaLimitConfig {
+  dailyTokens?: number;
+  monthlyCostUsd?: number;
+}
+
 export interface PathsConfig {
   ledger: string;
   audit: string;
@@ -93,6 +99,8 @@ export interface AstroConfig {
   agents?: Record<string, NamedAgentConfig>;
   tools?: ToolsConfig;
   telemetry?: TelemetryConfig;
+  /** Limites por quotaDomain (F6-3). */
+  quota?: Record<string, QuotaLimitConfig>;
   paths: PathsConfig;
 }
 
@@ -314,6 +322,37 @@ function validateNamedAgent(
   return { model, maxSteps, tools, ...(systemPrompt === undefined ? {} : { systemPrompt }) };
 }
 
+/** Valida a seção opcional `quota` (F6-3): limites por quotaDomain. */
+function validateQuota(value: unknown): Record<string, QuotaLimitConfig> {
+  const raw = expectObject(value, "quota");
+  const result: Record<string, QuotaLimitConfig> = Object.create(null);
+
+  for (const [domain, limitRaw] of Object.entries(raw)) {
+    if (domain.trim().length === 0) {
+      fail('config inválida: "quota" contém um domínio vazio');
+    }
+    const field = `quota.${domain}`;
+    const limit = expectObject(limitRaw, field);
+    const dailyTokens =
+      limit.dailyTokens === undefined
+        ? undefined
+        : expectPositiveInteger(limit.dailyTokens, `${field}.dailyTokens`);
+    const monthlyCostUsd =
+      limit.monthlyCostUsd === undefined
+        ? undefined
+        : expectNonNegativeNumber(limit.monthlyCostUsd, `${field}.monthlyCostUsd`);
+
+    if (dailyTokens === undefined && monthlyCostUsd === undefined) {
+      fail(`config inválida: "${field}" precisa de dailyTokens ou monthlyCostUsd`);
+    }
+    result[domain] = {
+      ...(dailyTokens === undefined ? {} : { dailyTokens }),
+      ...(monthlyCostUsd === undefined ? {} : { monthlyCostUsd }),
+    };
+  }
+  return result;
+}
+
 /** Valida a seção opcional `telemetry` (F5-5): off por default, sem PII. */
 function validateTelemetry(value: unknown): TelemetryConfig {
   const raw = expectObject(value, "telemetry");
@@ -398,9 +437,12 @@ export function validateConfig(raw: unknown): AstroConfig {
   // Validar telemetria (F5-5)
   const telemetry = root.telemetry === undefined ? undefined : validateTelemetry(root.telemetry);
 
+  // Validar quota (F6-3)
+  const quota = root.quota === undefined ? undefined : validateQuota(root.quota);
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, tools, telemetry, paths };
+  return { providers, models, agent, agents, tools, telemetry, quota, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
