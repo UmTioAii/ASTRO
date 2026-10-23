@@ -47,6 +47,11 @@
     "maxSteps": 12,
     "tools": ["read_file", "write_file", "run_command", "grep", "list_dir", "edit", "lsp", "pipeline"]
   },
+  "tools": {
+    "run_command": {
+      "sandbox": false
+    }
+  },
   "paths": {
     "ledger": ".astro/ledger.jsonl",
     "audit": ".astro/audit.jsonl"

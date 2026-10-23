@@ -63,6 +63,16 @@ export interface NamedAgentConfig {
   systemPrompt?: string;
 }
 
+/** Configuração de tools específicas (por nome da tool). */
+export interface ToolsConfig {
+  run_command?: RunCommandToolConfig;
+}
+
+export interface RunCommandToolConfig {
+  /** Executar comandos em container Docker efêmero isolado (default: false). */
+  sandbox?: boolean;
+}
+
 export interface PathsConfig {
   ledger: string;
   audit: string;
@@ -73,6 +83,7 @@ export interface AstroConfig {
   models: ModelConfig[];
   agent: AgentConfig;
   agents?: Record<string, NamedAgentConfig>;
+  tools?: ToolsConfig;
   paths: PathsConfig;
 }
 
@@ -294,6 +305,20 @@ function validateNamedAgent(
   return { model, maxSteps, tools, ...(systemPrompt === undefined ? {} : { systemPrompt }) };
 }
 
+/** Valida a seção opcional `tools`. */
+function validateTools(value: unknown): ToolsConfig {
+  const raw = expectObject(value, "tools");
+  const result: ToolsConfig = Object.create(null);
+
+  if (raw.run_command !== undefined) {
+    const rcRaw = expectObject(raw.run_command, "tools.run_command");
+    const sandbox = rcRaw.sandbox === undefined ? false : expectBoolean(rcRaw.sandbox, "tools.run_command.sandbox");
+    result.run_command = { sandbox };
+  }
+
+  return result;
+}
+
 /**
  * Valida a configuração crua (tipicamente vinda de JSON) e aplica os defaults:
  * `status: "active"` por modelo e `quotaDomain: "default"` por provider.
@@ -345,9 +370,12 @@ export function validateConfig(raw: unknown): AstroConfig {
     }
   }
 
+  // Validar seção tools (F4-6)
+  const tools = root.tools === undefined ? undefined : validateTools(root.tools);
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, paths };
+  return { providers, models, agent, agents, tools, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
