@@ -89,6 +89,8 @@ arquivo são confinados ao `--cwd` e `run_command` tem timeout. A tool `edit` ap
 unified diffs com backup `.bak` automático e rollback se algum hunk não corresponder.
 A tool `lsp` usa o compilador nativo do TypeScript 7 (tsgo) para definition, references
 e hover; o servidor é cacheado por sessão e recriado quando os arquivos mudam.
+A tool `pipeline` compõe tools em sequência (grep → edit → run_command) numa única call;
+sub-tools passam pela mesma allowlist do agent e cada step é auditado.
 
 ## Smoke manual por provider
 
