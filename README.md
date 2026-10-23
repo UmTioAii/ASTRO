@@ -92,6 +92,20 @@ e hover; o servidor é cacheado por sessão e recriado quando os arquivos mudam.
 A tool `pipeline` compõe tools em sequência (grep → edit → run_command) numa única call;
 sub-tools passam pela mesma allowlist do agent e cada step é auditado.
 
+### Sandbox do run_command
+
+Com `"tools": { "run_command": { "sandbox": true } }` na configuração, o `run_command`
+executa em um container Docker efêmero (`alpine:3`) com:
+
+- **rede desabilitada** (`--network none`);
+- **rootfs somente leitura** (`--read-only`) — apenas o `cwd` é montado read-write;
+- **env do host não vaza** — nenhum segredo (como `credentialRef`) entra no container;
+- **timeout** do manifesto aplicado, com `docker rm -f` de limpeza no estouro.
+
+Se o Docker não estiver disponível, a tool **recusa** a execução com erro claro em vez
+de rodar sem isolamento. Sem o sandbox (default), o comportamento é o histórico:
+comando direto no shell do host.
+
 ## Smoke manual por provider
 
 Os testes automatizados usam um servidor HTTP local (nunca chamam provider real).
