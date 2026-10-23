@@ -12,8 +12,8 @@
       "credentialRef": "OPENROUTER_API_KEY",
       "quotaDomain": "openrouter",
       "headers": {
-        "HTTP-Referer": "https://github.com/astro-harness",
-        "X-Title": "Astro Harness"
+        "HTTP-Referer": "https://github.com/UmTioAii/ASTRO",
+        "X-Title": "ASTRO"
       }
     },
     "codex": {
