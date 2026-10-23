@@ -314,7 +314,7 @@ export class OpenAICompatProvider implements Provider {
       errClass = "outage";
     }
 
-    const detail = this.redact(truncate(extractErrorDetail(text), MAX_ERROR_DETAIL_LENGTH));
+    const detail = truncate(this.redact(extractErrorDetail(text)), MAX_ERROR_DETAIL_LENGTH);
     const message =
       `provider respondeu HTTP ${status} (${errClass})` + (detail.length > 0 ? `: ${detail}` : "");
     const error = new ProviderError(errClass, message, status);
@@ -327,10 +327,10 @@ export class OpenAICompatProvider implements Provider {
 
   private describe(error: unknown): string {
     const detail = error instanceof Error ? error.message : String(error);
-    return this.redact(truncate(detail, MAX_ERROR_DETAIL_LENGTH));
+    return truncate(this.redact(detail), MAX_ERROR_DETAIL_LENGTH);
   }
 
   private redact(text: string): string {
-    return this.apiKey.length === 0 ? text : text.split(this.apiKey).join("[redacted]");
+    return this.apiKey.length === 0 ? text : text.split(this.apiKey).join("[REDACTED]");
   }
 }
