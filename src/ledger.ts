@@ -37,10 +37,13 @@ function isMissingFile(error: unknown): boolean {
 export class Ledger {
   private readonly path: string;
   private readonly warn: (msg: string) => void;
+  /** Callback opcional para observabilidade (F6-1: metrics). */
+  private readonly onRecord?: (entry: LedgerEntry) => void;
 
-  constructor(path: string, opts?: { warn?: (msg: string) => void }) {
+  constructor(path: string, opts?: { warn?: (msg: string) => void; onRecord?: (entry: LedgerEntry) => void }) {
     this.path = path;
     this.warn = opts?.warn ?? ((msg) => console.warn(msg));
+    this.onRecord = opts?.onRecord;
     mkdirSync(dirname(path), { recursive: true });
   }
 
@@ -57,6 +60,7 @@ export class Ledger {
       costUsd,
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    if (this.onRecord !== undefined) this.onRecord(entry);
     return entry;
   }
 
