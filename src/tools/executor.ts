@@ -61,10 +61,23 @@ export class ToolExecutor {
   private async execute(ctx: ToolContext, call: ToolCall): Promise<ToolResult> {
     const tool = this.byName.get(call.name);
     if (tool === undefined) {
+      this.audit.append({
+        run: ctx.run,
+        agent: ctx.agent,
+        tipo: "tool.denied",
+        payload: { name: call.name, reason: "tool desconhecida" },
+      });
       return failure(`tool desconhecida: "${call.name}"`);
     }
     if (!this.allow.has(call.name)) {
-      return failure(`tool "${call.name}" não permitida para este agente`);
+      const reason = `tool "${call.name}" não permitida para o agent "${ctx.agent}"`;
+      this.audit.append({
+        run: ctx.run,
+        agent: ctx.agent,
+        tipo: "tool.denied",
+        payload: { name: call.name, reason },
+      });
+      return failure(reason);
     }
 
     let input: unknown;
