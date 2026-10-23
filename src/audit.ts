@@ -51,9 +51,12 @@ function isMissingFile(error: unknown): boolean {
 export class Auditor {
   private readonly path: string;
   private nextSeq: number;
+  /** Callback opcional para observabilidade (F6-1: metrics). */
+  private readonly onEvent?: (event: AuditEvent) => void;
 
-  constructor(path: string) {
+  constructor(path: string, opts?: { onEvent?: (event: AuditEvent) => void }) {
     this.path = path;
+    this.onEvent = opts?.onEvent;
     mkdirSync(dirname(path), { recursive: true });
     this.nextSeq = this.readLastSeq() + 1;
   }
@@ -74,6 +77,7 @@ export class Auditor {
     };
     const sanitized = sanitize(event) as AuditEvent;
     appendFileSync(this.path, `${JSON.stringify(sanitized)}\n`, "utf8");
+    if (this.onEvent !== undefined) this.onEvent(event);
     return sanitized;
   }
 
