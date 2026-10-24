@@ -28,7 +28,7 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-04 | Snapshots de escrita no write_file (ponte; deprecação via ADR) | planejado | — | F-02 | F-16 |
 | F-05 | Limites de execução por tarefa com corte físico (I-17) | planejado | — | F-02 | C4, C7 |
 | F-06 | Cancelamento consistente e retomada explícita (I-19) | planejado | — | F-02, F-03 | F-18, F-19, T2 |
-| F-07 | Matriz de capability por modelo, consultada antes da escolha | planejado | — | F-02 | F-08, C4, C6 |
+| F-07 | Matriz de capability por modelo, consultada antes da escolha | planejado | #81 | F-02 | F-08, C4, C6, F-27 |
 | F-08 | Estratégia de context overflow com contagem por provider (D-18) | planejado | — | F-02, F-07 | T1 |
 | F-09 | Sanitização de conteúdo externo antes de logar e de entrar no contexto | concluído | #70 | — | C2, C3, F-11 |
 | F-10 | Manifesto estendido: `idempotent` e `sideEffects` (I-12) | planejado | — | F-03 | C1, C2, F-14, F-15, F-16 |
@@ -47,6 +47,11 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-24 | Handoff com ack de recebimento, timeout e retomada de pendentes | planejado | #76 | F-23, F-06 | C4 |
 | F-25 | Compactação estruturada do handoff com source_refs e validação de artefatos | planejado | #77 | F-23, F-09 | C4 |
 | F-26 | Lock de via única: CAS por handoff_id e verifier na recepção | planejado | #78 | F-23, F-03 | C4 |
+| F-27 | Model pool declarativa: seção modelPool, profile → modelo, `astro pool list` (ADR-0007) | planejado | #82 | F-07, ADR-0007 | F-28, F-29, C4 |
+| F-28 | AgentManager: ciclo de vida de agentes com profile e `astro agents list` | planejado | #83 | F-27 | F-29 |
+| F-29 | Runtime com pool: profile no startup e no handoff; `profile` no ledger; from/to_profile no artefato | planejado | #84 | F-27, F-28, F-23, F-24, F-25, F-26 | F-30, C4 |
+| F-30 | Custo atribuído por agente com granularidade de profile e `astro cost --by-agent` | planejado | #85 | F-29 | F-31 |
+| F-31 | Health e fallback por profile estendendo C6 (ADR-0007) | planejado | #86 | F-30, C6 | — |
 
 Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenciais (multi-agente, multi-provider, comunicação). Pode voltar como issue própria.
 
@@ -88,13 +93,13 @@ C4 inclui o blackboard entre agentes como sub-itens: entradas tipadas (`fact`, `
 |---|---|
 | 1 | F-00; em paralelo: F-01, F-09, ADR-0002 (ledger), ADR-0001 (dependências, F-12) |
 | 2 | F-02 (após ADR-0002) |
-| 3 | F-03, F-07, F-10 |
-| 4 | F-04, F-05, F-06, F-08, F-11 |
+| 3 | F-03, F-07, F-10; F-27 (após F-07, ADR-0007) |
+| 4 | F-04, F-05, F-06, F-08, F-11; F-28 (após F-27) |
 | 5 | F-14, F-15, F-16, F-17, F-18 |
-| 6 | F-19, F-20, F-21, F-22; F-23 (após ADR-0006) |
+| 6 | F-19, F-20, F-21, F-22; F-23 (após ADR-0006, de preferência após F-27 para from/to_profile); F-29 (após F-23..F-26, F-28); F-30 (após F-29) |
 | 7 | T1 em paralelo com a Camada 0; F-24 (após F-23, F-06), F-25 (após F-23, F-09), F-26 (após F-23, F-03) |
 | 8 | T2 (após F-06, F-12, F-17, F-18); T3 (após T2, F-14); T4 (após T2, F-21, F-22) |
-| 9 | C1, C2, C3; C4, C6; C5; C7 |
+| 9 | C1, C2, C3; C4, C6; C5; C7; F-31 (após C6, F-30) |
 | 10 | P-01 a P-04 (após C5, C6, C7) |
 
 ## ADRs necessários
@@ -107,3 +112,4 @@ C4 inclui o blackboard entre agentes como sub-itens: entradas tipadas (`fact`, `
 | ADR-0004 | Perfis de execução por ambiente | C7 |
 | ADR-0005 | Deprecação do `write_file` direto em favor de `apply_patch` (I-16) | F-04, F-16 |
 | ADR-0006 | Artefato de handoff durável (HandoffArtifact v1) no ledger | F-23 |
+| ADR-0007 | Pool declarativa de modelos (profile → modelo, sem pricing duplicado) | F-27 |
