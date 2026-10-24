@@ -48,31 +48,35 @@ describe("config quota (F6-3)", () => {
 });
 
 describe("assertWithinQuota (F6-3)", () => {
-  const now = new Date("2026-10-23T12:00:00Z");
+  // now fixo é ok aqui: nenhum registro no ledger para comparar
+  const emptyNow = new Date("2026-10-23T12:00:00Z");
 
   test("domínio sem limite passa direto", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-quota-"));
     const ledger = new Ledger(join(dir, "ledger.jsonl"), { warn: () => {} });
-    expect(() => assertWithinQuota(ledger, {}, "default", now)).not.toThrow();
+    expect(() => assertWithinQuota(ledger, {}, "default", emptyNow)).not.toThrow();
   });
 
   test("abaixo do limite passa", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-quota-"));
     const ledger = new Ledger(join(dir, "ledger.jsonl"), { warn: () => {} });
-    ledger.record(
+    const entry = ledger.record(
       { run: "r", agent: "a", provider: "p", model: "m", credentialRef: "K", quotaDomain: "d", tokensIn: 40, tokensOut: 10 },
       undefined,
     );
+    // now derivado do ts gravado: imune a virada de meia-noite entre record e assert
+    const now = new Date(entry.ts);
     expect(() => assertWithinQuota(ledger, { d: { dailyTokens: 100 } }, "d", now)).not.toThrow();
   });
 
   test("tokens de hoje no limite → QuotaExceededError hard_quota", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-quota-"));
     const ledger = new Ledger(join(dir, "ledger.jsonl"), { warn: () => {} });
-    ledger.record(
+    const entry = ledger.record(
       { run: "r", agent: "a", provider: "p", model: "m", credentialRef: "K", quotaDomain: "d", tokensIn: 60, tokensOut: 40 },
       undefined,
     );
+    const now = new Date(entry.ts);
     const err = capture(() => assertWithinQuota(ledger, { d: { dailyTokens: 100 } }, "d", now));
     expect(err).toBeInstanceOf(QuotaExceededError);
     expect(err.errClass).toBe("hard_quota");
@@ -83,20 +87,22 @@ describe("assertWithinQuota (F6-3)", () => {
   test("uso de outro domínio é ignorado", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-quota-"));
     const ledger = new Ledger(join(dir, "ledger.jsonl"), { warn: () => {} });
-    ledger.record(
+    const entry = ledger.record(
       { run: "r", agent: "a", provider: "p", model: "m", credentialRef: "K", quotaDomain: "outro", tokensIn: 9999, tokensOut: 0 },
       undefined,
     );
+    const now = new Date(entry.ts);
     expect(() => assertWithinQuota(ledger, { d: { dailyTokens: 100 } }, "d", now)).not.toThrow();
   });
 
   test("custo do mês no limite bloqueia", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-quota-"));
     const ledger = new Ledger(join(dir, "ledger.jsonl"), { warn: () => {} });
-    ledger.record(
+    const entry = ledger.record(
       { run: "r", agent: "a", provider: "p", model: "m", credentialRef: "K", quotaDomain: "d", tokensIn: 1, tokensOut: 1 },
       { inputPerM: 500_000, outputPerM: 0, fonte: "t", verificado: true }, // 1 token in = US$ 0.5
     );
+    const now = new Date(entry.ts);
     const err = capture(() => assertWithinQuota(ledger, { d: { monthlyCostUsd: 0.5 } }, "d", now));
     expect(err).toBeInstanceOf(QuotaExceededError);
     expect(err.message).toContain("limite mensal");
