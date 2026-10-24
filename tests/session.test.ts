@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { MaxStepsError, runSession, type SessionOptions } from "../src/session";
 import { ToolExecutor } from "../src/tools/executor";
 import { readFileTool } from "../src/tools/read-file";
 import { writeFileTool } from "../src/tools/write-file";
+import { handoffTool } from "../src/tools/handoff";
 
 const model: ModelEntry = {
   provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000, status: "active",
@@ -77,4 +78,43 @@ test("estoura maxSteps → MaxStepsError", async () => {
   s.opts.maxSteps = 2;
   const err = await runSession(s.opts, "loop").catch((e) => e as Error);
   expect(err).toBeInstanceOf(MaxStepsError);
+});
+
+describe("estado de execução e callHashes no ledger (F-02)", () => {
+  test("sessão normal grava callHashes por entrada e estado completed", async () => {
+    const s = setup([
+      resp({ toolCalls: [{ id: "c1", name: "write_file", arguments: JSON.stringify({ path: "a.txt", content: "x" }) }] }),
+      resp({ content: "feito" }),
+    ]);
+    s.opts.executor = new ToolExecutor({ tools: [writeFileTool], allow: ["write_file"], audit: s.opts.audit });
+    await runSession(s.opts, "crie a.txt");
+    const usage = s.ledger.readAll();
+    expect(usage[0].schemaVersion).toBe(1);
+    expect(usage[0].callHashes).toHaveLength(1);
+    expect(usage[1].callHashes).toEqual([]);
+    const st = s.ledger.lastState("r1")!;
+    expect(st.state).toBe("completed");
+    expect(st.agent).toBe("default");
+  });
+
+  test("erro na sessão grava estado interrupted com reason", async () => {
+    const tc = resp({ toolCalls: [{ id: "c1", name: "write_file", arguments: JSON.stringify({ path: "a.txt", content: "x" }) }] });
+    const s = setup([tc, tc]);
+    s.opts.executor = new ToolExecutor({ tools: [writeFileTool], allow: ["write_file"], audit: s.opts.audit });
+    s.opts.maxSteps = 2;
+    await runSession(s.opts, "loop").catch(() => undefined);
+    const st = s.ledger.lastState("r1")!;
+    expect(st.state).toBe("interrupted");
+    expect(st.reason).toBe("MaxStepsError");
+  });
+
+  test("HandoffSignal não grava estado de execução", async () => {
+    const s = setup([
+      resp({ toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "planner", payload: {} }) }] }),
+    ]);
+    s.opts.executor = new ToolExecutor({ tools: [handoffTool], allow: ["handoff"], audit: s.opts.audit });
+    const err = await runSession(s.opts, "transfira").then(() => null).catch((e: unknown) => e);
+    expect((err as { name?: string }).name).toBe("HandoffSignal");
+    expect(s.ledger.lastState("r1")).toBeUndefined();
+  });
 });
