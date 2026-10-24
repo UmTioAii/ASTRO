@@ -17,6 +17,8 @@ interface LedgerLine {
   tokensIn: number;
   tokensOut: number;
   costUsd: number | null;
+  kind?: string;
+  state?: string;
 }
 
 interface AuditLine {
@@ -25,9 +27,22 @@ interface AuditLine {
   payload: Record<string, unknown>;
 }
 
+/** Entradas de uso (tokens/custo); entradas de estado (F-02) ficam de fora. */
 function readLedger(dir: string): LedgerLine[] {
   const text = readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").trim();
-  return text.split("\n").map((line) => JSON.parse(line) as LedgerLine);
+  return text
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerLine)
+    .filter((e) => e.kind !== "run_state");
+}
+
+/** Entradas de estado de execução gravadas pelo run (F-02). */
+function readLedgerStates(dir: string): LedgerLine[] {
+  const text = readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").trim();
+  return text
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerLine)
+    .filter((e) => e.kind === "run_state");
 }
 
 function readAudit(dir: string): { text: string; events: AuditLine[] } {
@@ -112,6 +127,11 @@ test("golden F2: tarefa de código ponta a ponta com custo e auditoria", async (
     expect(secondLedger).toHaveLength(2);
     const secondCost = secondLedger.reduce((s, e) => s + (e.costUsd ?? 0), 0);
     expect(secondCost).toBeCloseTo(RUN_COST, 10);
+
+    // F-02: cada run registra o estado de execução no ledger
+    const states = readLedgerStates(dir);
+    expect(states).toHaveLength(2);
+    expect(states.every((s) => s.state === "completed")).toBe(true);
 
     const secondAudit = readAudit(dir);
     const startedRuns = secondAudit.events.filter((e) => e.tipo === "run.started");
