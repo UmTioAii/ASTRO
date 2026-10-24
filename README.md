@@ -169,3 +169,24 @@ temporários; não há chamadas reais nem credenciais reais.
 ## Licença
 
 MIT — veja [`LICENSE`](LICENSE).
+
+## Provider SDK (F7)
+
+`src/sdk/provider.ts` é a superfície pública para construir providers (builtin,
+plugin ou pacote npm): contratos (`Provider`, `CompletionRequest/Response`,
+`ToolDef`), `ProviderError` com classificação (D-18), `defineProviderFactory`
+(registrável em plugin via `definePlugin`) e o harness de teste
+`createMockProvider(script)` com `mockResponse`/`mockToolCall`.
+
+Exemplo completo: [`examples/provider-ollama/ollama.ts`](examples/provider-ollama/ollama.ts)
+(~90 linhas) — provider para Ollama local com classificação de erros.
+
+Guia rápido de "criando um provider":
+
+1. Implemente `Provider.complete(req)` devolvendo `CompletionResponse`;
+2. Classifique falhas com `ProviderError` (`transient_rate_limit`, `hard_quota`,
+   `auth`, `outage`, `invalid_request`);
+3. Leia segredos só de `env[credentialRef]` (I-03) — nunca de config em claro;
+4. Envolva com `defineProviderFactory("meu-kind", create)` e exporte num plugin
+   `definePlugin({ name, providers: [factory] })`;
+5. Teste com `createMockProvider` e um `Bun.serve` mock — sem rede real.
