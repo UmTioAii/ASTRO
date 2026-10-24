@@ -1,12 +1,14 @@
 import { runTask, type RunReport, createProvider } from "./app";
-import { loadConfig } from "./config";
+import { loadConfig, validateConfig } from "./config";
 import { Registry } from "./registry";
 import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./eval/harness";
 import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
 import { replayRun } from "./replay";
 import { runHealthCheck } from "./health";
+import { GitHubConfigRegistry } from "./config-share";
 import { resolve } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const USAGE = `Uso:
   bun src/cli.ts run "<pedido>" [--config <path>] [--cwd <dir>]
@@ -15,6 +17,7 @@ const USAGE = `Uso:
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
+  bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
   bun src/cli.ts --help
 
 Opções:
@@ -77,6 +80,14 @@ interface HealthCommand {
   configPath: string;
 }
 
+interface ConfigShareCommand {
+  action: "push" | "pull";
+  name: string;
+  registry?: string;
+  configPath: string;
+  token?: string;
+}
+
 type ParsedCommand =
   | { kind: "help" }
   | { kind: "run"; options: RunCommand }
@@ -84,7 +95,8 @@ type ParsedCommand =
   | { kind: "bench"; options: BenchCommand }
   | { kind: "serve"; options: ServeCommand }
   | { kind: "replay"; options: ReplayCommand }
-  | { kind: "health"; options: HealthCommand };
+  | { kind: "health"; options: HealthCommand }
+  | { kind: "config"; options: ConfigShareCommand };
 
 function parseArgs(argv: string[]): ParsedCommand {
   if (argv.length === 0) {
@@ -95,9 +107,53 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "health", "config"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
+  }
+
+  if (command === "config") {
+    let action: "push" | "pull" | undefined;
+    let name: string | undefined;
+    let registry: string | undefined;
+    let configPath = "astro.config.json";
+    let token: string | undefined;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--registry" || arg === "--config" || arg === "--token") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError(`falta o valor de ${arg}`);
+        }
+        i++;
+        if (arg === "--registry") registry = value;
+        else if (arg === "--config") configPath = value;
+        else token = value;
+        continue;
+      }
+      if (arg.startsWith("-")) {
+        throw new UsageError(`opção desconhecida: "${arg}"`);
+      }
+      if (action === undefined && (arg === "push" || arg === "pull")) {
+        action = arg;
+        continue;
+      }
+      if (name !== undefined) {
+        throw new UsageError(`argumento inesperado: "${arg}"`);
+      }
+      name = arg;
+    }
+    if (action === undefined || name === undefined) {
+      throw new UsageError('use: config <push|pull> <org/projeto> [--registry <owner/repo>]');
+    }
+    return {
+      kind: "config",
+      options: {
+        action, name, configPath,
+        ...(registry === undefined ? {} : { registry }),
+        ...(token === undefined ? {} : { token }),
+      },
+    };
   }
 
   if (command === "health") {
@@ -416,6 +472,45 @@ async function main(argv: string[]): Promise<number> {
       console.log(`  resposta: ${result.replay.final}`);
       console.log(result.identical ? "  ✓ idêntico ao original" : "  ✗ divergente do original");
       return result.identical ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${message}`);
+      return 1;
+    }
+  }
+
+  if (parsed.kind === "config") {
+    const o = parsed.options;
+    const registrySpec = o.registry ?? process.env.ASTRO_CONFIG_REGISTRY;
+    if (registrySpec === undefined || !/^[^/]+\/[^/]+$/.test(registrySpec)) {
+      console.error('erro: informe o registry com --registry <owner/repo> (ou ASTRO_CONFIG_REGISTRY)');
+      return 1;
+    }
+    const token = o.token ?? process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN;
+    if (token === undefined || token.length === 0) {
+      console.error("erro: informe o token com --token ou GH_TOKEN no ambiente");
+      return 1;
+    }
+    const [owner, repo] = registrySpec.split("/");
+    const registry = new GitHubConfigRegistry({ owner: owner!, repo: repo!, token });
+
+    try {
+      if (o.action === "push") {
+        const configPath = resolve(o.configPath);
+        const raw = JSON.parse(readFileSync(configPath, "utf8")) as unknown;
+        validateConfig(raw); // publica só config válida — e sem segredos por construção (D-03)
+        const published = await registry.push(o.name, JSON.stringify(raw, null, 2) + "\n");
+        console.log(`config publicada em ${published.path} (${published.created ? "criada" : "atualizada"})`);
+        return 0;
+      }
+      // pull
+      const pulled = await registry.pull(o.name);
+      const raw = JSON.parse(pulled) as unknown;
+      validateConfig(raw); // remota inválida não chega ao disco
+      const configPath = resolve(o.configPath);
+      writeFileSync(configPath, pulled, "utf8");
+      console.log(`config "${o.name}" validada e gravada em ${o.configPath}`);
+      return 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`erro: ${message}`);
