@@ -6,7 +6,17 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AstroConfig } from "./config";
+import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
+
+// Predicates: PluginProviderConfig (kind: string) sobrepõe os literais dos
+// built-ins e desativa a discriminação automática da união.
+function isOpenAICompat(p: ProviderConfig): p is OpenAICompatProviderConfig {
+  return p.kind === "openai-compat";
+}
+
+function isCodexOAuth(p: ProviderConfig): p is CodexOAuthProviderConfig {
+  return p.kind === "codex-oauth";
+}
 
 export type CheckStatus = "ok" | "down";
 
@@ -84,7 +94,7 @@ export async function runHealthCheck(
 
   // Checks por provider
   for (const [name, provider] of Object.entries(config.providers)) {
-    if (provider.kind === "openai-compat") {
+    if (isOpenAICompat(provider)) {
       const credentialRef = provider.credentialRef;
       const apiKey = env[credentialRef];
       if (apiKey === undefined || apiKey.length === 0) {
@@ -107,16 +117,26 @@ export async function runHealthCheck(
       continue;
     }
 
-    // codex-oauth: arquivo de credenciais legível; conectividade exigiria
-    // refresh de token — fora do escopo do health, verifica o essencial
-    const credentialsPath = expandHome(provider.credentialsPath);
-    try {
-      readFileSync(credentialsPath, "utf8");
-      checks.push({ name: `provider:${name}`, status: "ok", detail: "credenciais legíveis" });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      checks.push({ name: `provider:${name}`, status: "down", detail });
+    if (isCodexOAuth(provider)) {
+      // codex-oauth: arquivo de credenciais legível; conectividade exigiria
+      // refresh de token — fora do escopo do health, verifica o essencial
+      const credentialsPath = expandHome(provider.credentialsPath);
+      try {
+        readFileSync(credentialsPath, "utf8");
+        checks.push({ name: `provider:${name}`, status: "ok", detail: "credenciais legíveis" });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        checks.push({ name: `provider:${name}`, status: "down", detail });
+      }
+      continue;
     }
+
+    // Kind de plugin (F7-1): sem verificação automática disponível
+    checks.push({
+      name: `provider:${name}`,
+      status: "ok",
+      detail: `kind "${provider.kind}" de plugin; sem check automático`,
+    });
   }
 
   const providerChecks = checks.filter((c) => c.name.startsWith("provider:"));
