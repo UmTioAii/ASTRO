@@ -1,217 +1,124 @@
 # ASTRO
 
-Harness single-agent em Bun/TypeScript para executar tarefas de código com tools,
-ledger de uso e auditoria append-only. Esta é a F2 do projeto: um agente, três
-providers iniciais (NVIDIA NIM, OpenRouter e Codex OAuth) e zero dependências de
-runtime.
+Objetivo: harness de agentes de código com governança — cada agente executa só o que o escopo dele permite, com a conta e o orçamento designados, e todo run deixa rastro auditável.
 
-## Requisitos
+## O que é o ASTRO
 
-- [Bun](https://bun.sh) instalado.
-- Uma chave de API da NVIDIA (`NVIDIA_API_KEY`) ou do OpenRouter
-  (`OPENROUTER_API_KEY`), ou uma sessão do Codex já autenticada em
-  `~/.codex/auth.json`.
-- Nenhum segredo vai no arquivo de configuração: a config guarda apenas o
-  **nome** da variável de ambiente (`credentialRef`).
+Runtime local, terminal-first, para tarefas de código com agentes. Um pedido vira uma sessão que planeja, lê, escreve e executa dentro de um escopo declarado, com custo medido por chamada e auditoria append-only.
 
-## Configuração
+| Capacidade | Onde |
+|---|---|
+| Multi-agente com handoff pelo orquestrador | `src/session.ts`, `src/tools/handoff.ts` |
+| Multi-provider (builtin + plugins) | `src/provider/`, `src/plugins.ts` |
+| Ledger de uso e auditoria sanitizada | `src/ledger.ts`, `src/audit.ts` |
+| Tools com manifesto e allowlist | `src/tools/`, `src/sdk/tool.ts` |
+| Sandbox opcional para comandos | `src/tools/run-command.ts:107` |
+| Zero dependências de runtime | `package.json` (só devDependencies) |
 
-Copie o exemplo:
+## Diferenciais
+
+| Diferencial | O que faz | Onde |
+|---|---|---|
+| Escopo por agente | Cada agente declara modelo, tools e orçamento; tool fora da allowlist é negada e auditada como `tool.denied` | `src/config.ts:321`, `src/tools/executor.ts:72` |
+| Custo e quota imputados por domínio | Ledger por agente/provider/domínio; quota diária e mensal bloqueia antes da chamada ao provider | `src/quota.ts`, `src/team.ts` |
+| Handoff entre agentes pelo orquestrador | Troca de agente ativo com evento `agent.switch` auditável, sem canal direto entre agentes | `src/session.ts:54`, `src/session.ts:229` |
+| Rastro completo com custo | Cada completion grava tokens e custo no ledger; cada run registra só `taskHash`, nunca o prompt | `src/app.ts:215`, `src/ledger.ts` |
+
+## Início rápido
 
 ```bash
+git clone https://github.com/UmTioAii/ASTRO.git && cd ASTRO
+bun install --frozen-lockfile
 cp astro.config.example.json astro.config.json
+export NVIDIA_API_KEY="..."     # ou OPENROUTER_API_KEY; ver tabela abaixo
+bun src/cli.ts run "diga oi"
 ```
 
-No PowerShell:
+## Variáveis de inicialização
 
-```powershell
-Copy-Item astro.config.example.json astro.config.json
-```
+| Nome | Obrigatória | Padrão | Onde é lida | O que faz |
+|---|---|---|---|---|
+| `<credentialRef>` (ex.: `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) | sim, para providers openai-compat | — | `src/app.ts:122` | Chave do provider; o nome vem da config (`credentialRef`, `src/config.ts:17`), o valor só do ambiente |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | não | desligado | `src/tracing.ts:137` | Habilita tracing OTLP/HTTP com spans de run, step, tool e provider |
+| `ASTRO_CONFIG_REGISTRY` | não | — | `src/cli.ts:484` | Registry (`owner/repo`) usado por `config push/pull` |
+| `GH_TOKEN` ou `GITHUB_TOKEN` | só em `config push/pull` | — | `src/cli.ts:489` | Token do registry de configs |
+| `EVAL_THRESHOLD` | não | `0.85` | `.github/workflows/ci.yml` | Mínimo de pass rate do gate de eval no CI |
 
-Exporte a chave do provider que será usado:
+## Configuração (`astro.config.json`)
 
-```bash
-export NVIDIA_API_KEY="..."      # Linux/macOS
-export OPENROUTER_API_KEY="..."
-```
+| Chave | Tipo | Padrão | Onde |
+|---|---|---|---|
+| `providers` | `Record<string, ProviderConfig>` | — | `src/config.ts` |
+| `models` | `ModelConfig[]` | — | `src/config.ts` |
+| `agent` | `AgentConfig` | — | `src/config.ts` |
+| `agents` | `Record<string, NamedAgentConfig>` | ausente | `src/config.ts:321` |
+| `tools` | `{ run_command?: { sandbox?: boolean } }` | `sandbox: false` | `src/config.ts` |
+| `telemetry` | `{ enabled, endpoint, sampleRate }` | desligada | `src/config.ts` |
+| `quota` | `Record<domínio, { dailyTokens?, monthlyCostUsd? }>` | sem enforcement | `src/config.ts` |
+| `cache` | `{ enabled, ttlHours, maxEntries }` | desligada; 24h; 10000 | `src/config.ts` |
+| `plugins` | `string[]` | — | `src/plugins.ts` |
+| `version` | semver `x.y.z` | — | `src/config.ts:129` |
+| `team` | `{ projectBudgetUsd?, agentQuotas?, auditWebhook? }` | — | `src/team.ts` |
+| `paths` | `{ ledger, audit }` | — | relativo ao `--cwd` |
 
-```powershell
-$env:NVIDIA_API_KEY = "..."      # PowerShell
-$env:OPENROUTER_API_KEY = "..."
-```
-
-O exemplo já vem com um modelo de cada provider. O modelo usado pelo agente é
-escolhido em `agent.model` no formato `<provider>/<id>`:
-
-- NVIDIA NIM: `nvidia/meta/llama-3.3-70b-instruct`
-- OpenRouter: `openrouter/openai/gpt-4o-mini`
-- Codex OAuth: `codex/gpt-5.5`
-
-As tags de cada modelo pertencem ao vocabulário fechado de `src/tags.ts`; uma tag
-desconhecida (ou um modelo/provider ausente) faz a config falhar com `ConfigError`.
-
-### Custo e preço
-
-`price` é opcional por modelo. Sem preço curado, o ledger grava `costUsd: null`,
-o console avisa e o resumo do CLI mostra `n/d` — esse é o comportamento previsto
-na spec. Para estimar custo, acrescente ao modelo:
+Exemplo mínimo (sem segredo; só `credentialRef`):
 
 ```json
-"price": { "inputPerM": 1.5, "outputPerM": 6, "fonte": "tabela do provider", "verificado": false }
+{
+  "providers": { "nvidia": { "kind": "openai-compat", "baseUrl": "https://integrate.api.nvidia.com/v1", "credentialRef": "NVIDIA_API_KEY" } },
+  "models": [{ "provider": "nvidia", "id": "meta/llama-3.3-70b-instruct", "tags": ["writing-code", "tools"], "context": 131072 }],
+  "agent": { "model": "nvidia/meta/llama-3.3-70b-instruct", "maxSteps": 12, "tools": ["read_file", "write_file", "run_command", "grep", "list_dir", "edit", "lsp", "pipeline"] },
+  "paths": { "ledger": ".astro/ledger.jsonl", "audit": ".astro/audit.jsonl" }
+}
 ```
 
-Mantenha `verificado: false` enquanto o valor não tiver sido conferido na fonte.
+O exemplo completo, com os três providers, está em `astro.config.example.json`. Guia de criação de providers e SDKs: `docs/providers.md`.
 
-## Rodando
+## Comandos da CLI
 
-```bash
-bun src/cli.ts run "crie um hello.ts que exporta hello()"
-```
-
-Opções:
-
-```bash
-bun src/cli.ts run "<pedido>" --config astro.config.json --cwd ./work
-bun src/cli.ts --help
-```
-
-- `--config` aponta para a config (default: `astro.config.json` no diretório em
-  que o CLI foi chamado).
-- `--cwd` é o diretório de trabalho do agente e a base dos caminhos relativos de
-  `paths.ledger`/`paths.audit` (default: diretório atual).
-- Sem argumentos ou com opção inválida, o CLI imprime o uso e sai com código 1.
-- Em sucesso, imprime a resposta final e uma linha de resumo:
-  `modelo · tokens · custo · ledger · auditoria`.
-
-As tools disponíveis são `read_file`, `write_file`, `run_command`, `grep`, `list_dir`,
-`edit` e `lsp`. Apenas as tools listadas em `agent.tools` são expostas ao modelo; caminhos de
-arquivo são confinados ao `--cwd` e `run_command` tem timeout. A tool `edit` aplica
-unified diffs com backup `.bak` automático e rollback se algum hunk não corresponder.
-A tool `lsp` usa o compilador nativo do TypeScript 7 (tsgo) para definition, references
-e hover; o servidor é cacheado por sessão e recriado quando os arquivos mudam.
-A tool `pipeline` compõe tools em sequência (grep → edit → run_command) numa única call;
-sub-tools passam pela mesma allowlist do agent e cada step é auditado.
-
-### Sandbox do run_command
-
-Com `"tools": { "run_command": { "sandbox": true } }` na configuração, o `run_command`
-executa em um container Docker efêmero (`alpine:3`) com:
-
-- **rede desabilitada** (`--network none`);
-- **rootfs somente leitura** (`--read-only`) — apenas o `cwd` é montado read-write;
-- **env do host não vaza** — nenhum segredo (como `credentialRef`) entra no container;
-- **timeout** do manifesto aplicado, com `docker rm -f` de limpeza no estouro.
-
-Se o Docker não estiver disponível, a tool **recusa** a execução com erro claro em vez
-de rodar sem isolamento. Sem o sandbox (default), o comportamento é o histórico:
-comando direto no shell do host.
-
-## Smoke manual por provider
-
-Os testes automatizados usam um servidor HTTP local (nunca chamam provider real).
-Para validar credenciais de verdade, rode uma vez por provider:
-
-1. **NVIDIA NIM**
-   ```bash
-   export NVIDIA_API_KEY="..."
-   bun src/cli.ts run "diga oi"
-   ```
-   Com `agent.model` em `nvidia/meta/llama-3.3-70b-instruct`. Se a variável não
-   estiver no ambiente, a execução falha antes de qualquer chamada com
-   `erro: defina NVIDIA_API_KEY no ambiente`.
-
-2. **OpenRouter**
-   ```bash
-   export OPENROUTER_API_KEY="..."
-   bun src/cli.ts run "diga oi"
-   ```
-   Com `agent.model` em `openrouter/openai/gpt-4o-mini`. A ausência da variável
-   produz `erro: defina OPENROUTER_API_KEY no ambiente`.
-
-3. **Codex OAuth**
-   ```bash
-   bun src/cli.ts run "diga oi"
-   ```
-   Com `agent.model` em `codex/gpt-5.5`, sem exportar chave: o provider lê
-   `~/.codex/auth.json` (gerado pelo login do Codex CLI). Arquivo ausente ou
-   inválido gera erro de autenticação claro antes da chamada, citando apenas o
-   caminho.
-
-Para trocar de provider, edite `agent.model` em `astro.config.json` e repita o
-comando. O ledger/auditoria de cada execução fica em `.astro/`.
+| Comando | O que faz | Flags |
+|---|---|---|
+| `run "<pedido>"` | Executa uma tarefa ponta a ponta e imprime resposta + resumo | `--config`, `--cwd` |
+| `eval` | Roda o golden dataset em modo mock; gate de regressão | `--threshold`, `--golden`, `--report`, `--baseline`, `--write-baseline` |
+| `bench` | Latência, tokens/s e custo por modelo | `--config`, `--models`, `--runs`, `--out` |
+| `serve` | Expõe `/metrics` no formato Prometheus | `--port` |
+| `replay <run-id>` | Re-executa a tarefa e compara métricas com o run original | `--task`, `--config`, `--cwd` |
+| `health` | Valida config, credenciais e conectividade dos providers | `--config` |
+| `config <push\|pull> <nome>` | Publica/recupera config no registry | `--registry`, `--config`, `--token` |
 
 ## Segurança
 
-- **Chave só no ambiente.** O valor nunca é lido da config, nem gravado em log,
-  ledger ou auditoria; a config contém só o nome da variável (`credentialRef`).
-- **Prompt não persistido.** `run.started` guarda apenas um `taskHash` SHA-256
-  curto da tarefa, não o texto do pedido.
-- **Auditoria sanitizada.** Eventos são JSONL append-only com `seq`/`ts`; chaves
-  e valores com formato de segredo são redigidos. Eventos registram nomes de
-  tools e `isError`, não argumentos nem resultados.
-- **Codex somente leitura.** `~/.codex/auth.json` é lido, nunca escrito; a
-  renovação de token acontece apenas em memória.
-- **`.astro/` fora do git.** Ledger e auditoria ficam em `.astro/`, já coberto
-  pelo `.gitignore`. Não versione `astro.config.json` com dados pessoais.
-- **Estado do harness protegido.** `write_file` recusa `.astro/` e os caminhos
-  reais de `paths.ledger`/`paths.audit`, então o agente não sobrescreve
-  ledger/auditoria por essa tool.
-- **Ambiente sanitizado no shell.** `run_command` preserva `PATH`/`HOME`/etc.,
-  mas remove os `credentialRef`s configurados e variáveis cujo nome indica
-  segredo (KEY, TOKEN, SECRET, PASSWORD, AUTH, CREDENTIAL, PRIVATE, COOKIE,
-  SESSION). Defesa best-effort: comandos ainda podem ler arquivos de
-  credencial diretamente; para isolamento completo, use o sandbox.
-- **Falha terminal auditada.** Todo run que falha emite `run.stopped` com
-  `reason`; erros de provider acrescentam `errorClass`, sem prompt nem valor
-  de credencial.
-- **Confinamento real de caminho.** A checagem usa o caminho resolvido
-  (symlinks/junctions inclusos), não só o léxico; links para fora do `cwd`
-  são bloqueados.
-- A mensagem de chave ausente cita o **nome** da variável (ex.: `TEST_KEY`), nunca
-  o valor.
+| Garantia | Invariante | Teste |
+|---|---|---|
+| Segredo só via ambiente; redação de segredo em auditoria e provider | I-03 | `tests/audit.test.ts`, `tests/provider.test.ts`, `tests/app.test.ts:52` |
+| Tool fora da allowlist não executa; negação auditada | I-01 | `tests/tools.test.ts`, `tests/tool-isolation.test.ts` |
+| Caminho confinado ao `--cwd` com resolução real (symlink/junction bloqueado); sandbox opcional para `run_command` | I-11 | `tests/tools.test.ts`, `tests/security-f00.test.ts`, `tests/sandbox.test.ts` |
+| `run_command` sanitiza o ambiente do filho (remove `credentialRef`s e nomes de segredo) | I-03 | `tests/security-f00.test.ts` |
+| `write_file` recusa o estado do harness (`.astro/` e caminhos protegidos) | I-11 | `tests/security-f00.test.ts` |
+| Falha terminal auditada com `run.stopped` (reason e `errorClass`) | I-04 | `tests/security-f00.test.ts` |
+| Prompt não persistido; `run.started` guarda só `taskHash` | I-04 | `src/app.ts:215`, `tests/app.test.ts:48` |
+| Quota diária/mensal e budget bloqueiam antes do gasto | I-17 | `tests/quota.test.ts`, `tests/team.test.ts` |
 
-## Testes
+## Documentação
 
-```bash
-bun test
-bun run typecheck
-```
+| Arquivo | Função |
+|---|---|
+| `docs/CONTRIBUTING-DOCS.md` | Padrão de escrita para toda documentação |
+| `docs/workflow.md` | Fluxo de branch, commit, PR e merge |
+| `docs/review-checklist.md` | Checklist de revisão de PR |
+| `docs/invariants.md` | Invariantes I-01 a I-22 com cobertura no código |
+| `docs/decisions.md` | Decisões D-01 a D-20 e correspondência com a trilha |
+| `docs/providers.md` | Providers, credenciais, SDKs e smoke manual |
+| `docs/roadmap.md` | Fases concluídas F0–F7 |
+| `docs/roadmap-complementar.md` | Camadas 0–3 planejadas |
 
-Os testes automatizados usam `Bun.serve` como provider mock e diretórios
-temporários; não há chamadas reais nem credenciais reais.
+## Status
 
-## Licença
+| Escopo | Estado | Referência |
+|---|---|---|
+| F0–F7 (fundação, multi-agent, tools, eval, produção, ecossistema) | concluído | `docs/roadmap.md` |
+| Camadas 0–3 (F-xx, T1–T4, C1–C7, P-01–P-04) | planejado | `docs/roadmap-complementar.md`, issues #55–#65 |
 
-MIT — veja [`LICENSE`](LICENSE).
+## Contribuir e licença
 
-## Provider SDK (F7)
-
-`src/sdk/provider.ts` é a superfície pública para construir providers (builtin,
-plugin ou pacote npm): contratos (`Provider`, `CompletionRequest/Response`,
-`ToolDef`), `ProviderError` com classificação (D-18), `defineProviderFactory`
-(registrável em plugin via `definePlugin`) e o harness de teste
-`createMockProvider(script)` com `mockResponse`/`mockToolCall`.
-
-Exemplo completo: [`examples/provider-ollama/ollama.ts`](examples/provider-ollama/ollama.ts)
-(~90 linhas) — provider para Ollama local com classificação de erros.
-
-### Tool SDK
-
-`src/sdk/tool.ts` é a superfície pública para construir tools: contratos (`Tool`,
-`ToolManifest`, `ToolContext`, `ToolResult`), `ToolError`,
-`validateManifest` (I-12: nome, risco, permissão, timeout, retryable — falha cedo
-no load do plugin via `defineTool`), `createMockTool` (harness com registro de
-chamadas) e `toolFailure`/`toolSuccess` (erros voltam como resultado, não throw).
-
-Exemplo completo: [`examples/tool-sql/sql.ts`](examples/tool-sql/sql.ts)
-(~70 linhas) — consulta estilo SQL sobre JSON do workspace com confinamento I-11.
-
-Guia rápido de "criando um provider":
-
-1. Implemente `Provider.complete(req)` devolvendo `CompletionResponse`;
-2. Classifique falhas com `ProviderError` (`transient_rate_limit`, `hard_quota`,
-   `auth`, `outage`, `invalid_request`);
-3. Leia segredos só de `env[credentialRef]` (I-03) — nunca de config em claro;
-4. Envolva com `defineProviderFactory("meu-kind", create)` e exporte num plugin
-   `definePlugin({ name, providers: [factory] })`;
-5. Teste com `createMockProvider` e um `Bun.serve` mock — sem rede real.
+Contribuição segue `docs/workflow.md` (issue, branch por item, PR com revisão obrigatória, squash merge). Suíte: `bun test` e `bun run typecheck`. Licença: MIT (`LICENSE`).
