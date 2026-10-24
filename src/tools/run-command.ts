@@ -3,6 +3,31 @@ import { resolve } from "node:path";
 import { ToolError, type Tool, type ToolResult } from "./types";
 
 const MAX_OUTPUT = 10_000;
+
+/**
+ * Nomes de variáveis que podem carregar segredos. O `run_command` recebe uma
+ * cópia sanitizada do ambiente: o filho mantém PATH/HOME/etc., mas nunca vê
+ * chaves de API, tokens, senhas ou credenciais.
+ */
+const SECRET_ENV =
+  /(^|_)[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE|COOKIE|SESSION)[A-Z0-9_]*$/i;
+
+function secretKey(name: string): string {
+  return process.platform === "win32" ? name.toLowerCase() : name;
+}
+
+function sanitizedEnv(
+  source: NodeJS.ProcessEnv,
+  secretEnvNames: readonly string[] = [],
+): Record<string, string> {
+  const exactSecrets = new Set(secretEnvNames.map(secretKey));
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined || exactSecrets.has(secretKey(name)) || SECRET_ENV.test(name)) continue;
+    env[name] = value;
+  }
+  return env;
+}
 const DOCKER_IMAGE = "alpine:3";
 
 function failure(message: string): ToolResult {
@@ -216,6 +241,7 @@ export const runCommandTool: Tool = {
       const proc = Bun.spawn({
         cmd: shellArgv(command),
         cwd: ctx.cwd,
+        env: sanitizedEnv(ctx.env ?? process.env, ctx.secretEnvNames ?? []),
         stdout: "pipe",
         stderr: "pipe",
       });
