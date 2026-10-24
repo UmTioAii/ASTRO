@@ -5,6 +5,7 @@ import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./e
 import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
 import { replayRun } from "./replay";
+import { runHealthCheck } from "./health";
 import { resolve } from "node:path";
 
 const USAGE = `Uso:
@@ -13,6 +14,7 @@ const USAGE = `Uso:
   bun src/cli.ts bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
+  bun src/cli.ts health [--config <path>]
   bun src/cli.ts --help
 
 Opções:
@@ -71,13 +73,18 @@ interface ReplayCommand {
   cwd?: string;
 }
 
+interface HealthCommand {
+  configPath: string;
+}
+
 type ParsedCommand =
   | { kind: "help" }
   | { kind: "run"; options: RunCommand }
   | { kind: "eval"; options: EvalCommand }
   | { kind: "bench"; options: BenchCommand }
   | { kind: "serve"; options: ServeCommand }
-  | { kind: "replay"; options: ReplayCommand };
+  | { kind: "replay"; options: ReplayCommand }
+  | { kind: "health"; options: HealthCommand };
 
 function parseArgs(argv: string[]): ParsedCommand {
   if (argv.length === 0) {
@@ -88,8 +95,27 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  if (command !== "run" && command !== "eval" && command !== "bench" && command !== "serve" && command !== "replay") {
+  const commands = ["run", "eval", "bench", "serve", "replay", "health"];
+  if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
+  }
+
+  if (command === "health") {
+    let configPath = "astro.config.json";
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--config") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError("falta o valor de --config");
+        }
+        i++;
+        configPath = value;
+        continue;
+      }
+      throw new UsageError(`opção desconhecida: "${arg}"`);
+    }
+    return { kind: "health", options: { configPath } };
   }
 
   if (command === "replay") {
@@ -390,6 +416,19 @@ async function main(argv: string[]): Promise<number> {
       console.log(`  resposta: ${result.replay.final}`);
       console.log(result.identical ? "  ✓ idêntico ao original" : "  ✗ divergente do original");
       return result.identical ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${message}`);
+      return 1;
+    }
+  }
+
+  if (parsed.kind === "health") {
+    try {
+      const config = loadConfig(resolve(parsed.options.configPath));
+      const report = await runHealthCheck(config, process.env);
+      console.log(JSON.stringify(report, null, 2));
+      return report.status === "ok" ? 0 : 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`erro: ${message}`);
