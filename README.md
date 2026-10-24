@@ -181,6 +181,17 @@ plugin ou pacote npm): contratos (`Provider`, `CompletionRequest/Response`,
 Exemplo completo: [`examples/provider-ollama/ollama.ts`](examples/provider-ollama/ollama.ts)
 (~90 linhas) — provider para Ollama local com classificação de erros.
 
+### Tool SDK
+
+`src/sdk/tool.ts` é a superfície pública para construir tools: contratos (`Tool`,
+`ToolManifest`, `ToolContext`, `ToolResult`), `ToolError`,
+`validateManifest` (I-12: nome, risco, permissão, timeout, retryable — falha cedo
+no load do plugin via `defineTool`), `createMockTool` (harness com registro de
+chamadas) e `toolFailure`/`toolSuccess` (erros voltam como resultado, não throw).
+
+Exemplo completo: [`examples/tool-sql/sql.ts`](examples/tool-sql/sql.ts)
+(~70 linhas) — consulta estilo SQL sobre JSON do workspace com confinamento I-11.
+
 Guia rápido de "criando um provider":
 
 1. Implemente `Provider.complete(req)` devolvendo `CompletionResponse`;
