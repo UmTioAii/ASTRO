@@ -127,6 +127,9 @@ describe("handoff tool (F3-2)", () => {
       .catch((e) => e as Error);
     expect(err).toBeInstanceOf(Error);
     expect(err!.message).toContain("ghost");
+    const st = ledger.lastState(run)!;
+    expect(st.state).toBe("interrupted");
+    expect(st.reason).toBeTruthy();
   });
 });
 
@@ -191,5 +194,42 @@ describe("runMultiAgentSession (F3-2)", () => {
     expect(switches[0].payload.to).toBe("coder");
     expect(switches[1].payload.from).toBe("coder");
     expect(switches[1].payload.to).toBe("reviewer");
+  });
+
+  test("F-02: uso multi-agent carrega callHashes e estado de execução", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-multi-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const run = "r1";
+    const agents = { coder: { model: "openai/gpt-4o-mini", maxSteps: 10, tools: ["write_file"] } };
+    const registry = makeRegistry(agents);
+
+    let step = 0;
+    const provider: Provider = {
+      complete: async () => {
+        step++;
+        if (step === 1) {
+          return resp({ toolCalls: [{ id: "c1", name: "write_file", arguments: JSON.stringify({ path: "a.txt", content: "x" }) }] });
+        }
+        return resp({ content: "done" });
+      },
+    };
+
+    const opts: MultiAgentSessionOptions = {
+      run, credentialRef: "OPENAI_API_KEY", quotaDomain: "default",
+      cwd, provider, registry, baseModel: model,
+      baseExecutor: makeExecutor([writeFileTool], ["write_file"], audit),
+      ledger, audit, baseMaxSteps: 5, entryAgent: "coder",
+    };
+
+    await runMultiAgentSession(opts, "escreva");
+    const usage = ledger.readAll();
+    expect(usage).toHaveLength(2);
+    expect(usage[0].schemaVersion).toBe(1);
+    expect(usage[0].callHashes).toHaveLength(1);
+    expect(usage[1].callHashes).toEqual([]);
+    const st = ledger.lastState(run)!;
+    expect(st.state).toBe("completed");
+    expect(st.agent).toBe("coder");
   });
 });

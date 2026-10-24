@@ -21,16 +21,16 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 
 | ID | Título | Status | Issue | Depende de | Bloqueia |
 |---|---|---|---|---|---|
-| F-00 | Rebase dos fixes de segurança (env herdado no run_command; escape por symlink no read_file) | planejado | — | — | C2, C3 |
-| F-01 | Política de ação por classe de erro (D-14/D-18) | planejado | — | — | C6 |
-| F-02 | Ledger com schemaVersion, estado de execução e hash de chamadas | planejado | — | ADR-0002 | F-03, F-04, F-05, F-06, F-07, F-08, F-17, F-19, F-22, C7, T4 |
+| F-00 | Rebase dos fixes de segurança (env herdado no run_command; escape por symlink no read_file) | concluído | #67 | — | C2, C3 |
+| F-01 | Política de ação por classe de erro (D-14/D-18) | concluído | #69 | — | C6 |
+| F-02 | Ledger com schemaVersion, estado de execução e hash de chamadas | concluído | #73 | ADR-0002 | F-03, F-04, F-05, F-06, F-07, F-08, F-17, F-19, F-22, C7, T4 |
 | F-03 | Idempotência de tool calls por `call_id` determinístico | planejado | — | F-02 | F-06, F-10, F-20, C2, C6 |
 | F-04 | Snapshots de escrita no write_file (ponte; deprecação via ADR) | planejado | — | F-02 | F-16 |
 | F-05 | Limites de execução por tarefa com corte físico (I-17) | planejado | — | F-02 | C4, C7 |
 | F-06 | Cancelamento consistente e retomada explícita (I-19) | planejado | — | F-02, F-03 | F-18, F-19, T2 |
 | F-07 | Matriz de capability por modelo, consultada antes da escolha | planejado | — | F-02 | F-08, C4, C6 |
 | F-08 | Estratégia de context overflow com contagem por provider (D-18) | planejado | — | F-02, F-07 | T1 |
-| F-09 | Sanitização de conteúdo externo antes de logar e de entrar no contexto | planejado | — | — | C2, C3, F-11 |
+| F-09 | Sanitização de conteúdo externo antes de logar e de entrar no contexto | concluído | #70 | — | C2, C3, F-11 |
 | F-10 | Manifesto estendido: `idempotent` e `sideEffects` (I-12) | planejado | — | F-03 | C1, C2, F-14, F-15, F-16 |
 | F-11 | Limites de saída por tool com metadados de truncamento | planejado | — | F-09 | F-14, F-15, C3 |
 | F-12 | ADR de dependências de runtime | planejado | — | — | T2 |
