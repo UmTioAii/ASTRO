@@ -11,7 +11,7 @@ O handoff é um envelope em memória (`src/tools/handoff.ts:32`): só `to` é va
 
 ## Decisão
 
-Handoff vira `HandoffArtifactV1`: artefato versionado com campos obrigatórios (`task`, `objective`, `decisions`, `constraints`, `next_steps`) e `handoff_id = sha256(run|from|to|taskHash|source_step)` determinístico, com `taskHash = sha256(task + "|" + objective)`. Mudanças em `decisions`/`constraints`/`next_steps` não alteram o id. O artefato carrega `version` (do schema do artefato, distinta do `schemaVersion` do ledger, ADR-0002), `source_step` (base do verifier, F-26) e `budget_spent` (leitura do ledger no momento do handoff, nunca contador paralelo).
+Handoff vira `HandoffArtifactV1`: artefato versionado com campos obrigatórios (`task`, `objective`, `decisions`, `constraints`, `next_steps`) e `handoff_id = sha256(run|from|to|taskHash|source_step)` determinístico, com `taskHash = sha256(task + "|" + objective)`. Mudanças em `decisions`/`constraints`/`next_steps` não alteram o id. O artefato carrega `version` (do schema do artefato, distinta do `schemaVersion` do ledger, ADR-0002), `source_step` (base do verifier, F-26) e `budget_spent` (leitura do ledger no momento do handoff, nunca contador paralelo). Opcionalmente carrega `from_profile?`/`to_profile?` quando emissor/receptor usam a pool (F-27, ADR-0007).
 
 Gravado no ledger append-only como `handoff.created` antes da troca de agente; ciclo de vida: `handoff.received`, `handoff.failed`, `handoff.ack_timeout` — espelhados no audit sanitizados (I-04). Pendências (`created` sem `received`) são retomáveis, filtradas por run e pelo ledger do cwd corrente (`paths.ledger`).
 
