@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Auditor } from "./audit";
-import type { AstroConfig, ProviderConfig } from "./config";
+import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
 import { ConfigError, loadConfig } from "./config";
 import { Ledger } from "./ledger";
 import { CodexOAuthProvider } from "./provider/codex-oauth";
@@ -13,6 +13,7 @@ import { sendTelemetry } from "./telemetry";
 import { tracerFromEnv } from "./tracing";
 import { Metrics, MetricsCollector } from "./metrics";
 import { CompletionCache, cachedProvider } from "./cache";
+import { loadPlugins, type PluginProviderFactory } from "./plugins";
 import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
@@ -89,20 +90,32 @@ function providerConfigFor(config: AstroConfig, model: ModelEntry): ProviderConf
   return providerConfig;
 }
 
+// Predicates de narrowing: PluginProviderConfig tem kind: string, que
+// sobrepõe os literais dos built-ins e desativa a discriminação automática.
+function isOpenAICompat(p: ProviderConfig): p is OpenAICompatProviderConfig {
+  return p.kind === "openai-compat";
+}
+
+function isCodexOAuth(p: ProviderConfig): p is CodexOAuthProviderConfig {
+  return p.kind === "codex-oauth";
+}
+
 /**
  * Instancia o provider do modelo pelo `kind`. Segredos vêm apenas do ambiente
  * (`env[credentialRef]`) ou, no Codex, do arquivo de credenciais em modo leitura.
+ * Kinds de plugin (F7-1) são criados pela factory registrada pelo plugin.
  * Exportado para o bench CLI construir providers a partir da config.
  */
 export function createProvider(
   config: AstroConfig,
   model: ModelEntry,
   env: Record<string, string | undefined>,
+  pluginFactories: Map<string, PluginProviderFactory> = new Map(),
 ): ProviderSetup {
   const providerConfig = providerConfigFor(config, model);
   const quotaDomain = providerConfig.quotaDomain ?? "default";
 
-  if (providerConfig.kind === "openai-compat") {
+  if (isOpenAICompat(providerConfig)) {
     const credentialRef = providerConfig.credentialRef;
     const apiKey = env[credentialRef];
     if (apiKey === undefined || apiKey.length === 0) {
@@ -120,26 +133,42 @@ export function createProvider(
     };
   }
 
-  const credentialsPath = expandHome(providerConfig.credentialsPath);
+  if (isCodexOAuth(providerConfig)) {
+    const credentialsPath = expandHome(providerConfig.credentialsPath);
+    return {
+      provider: new CodexOAuthProvider({
+        credentialsPath,
+        ...(providerConfig.baseUrl === undefined ? {} : { baseUrl: providerConfig.baseUrl }),
+        ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
+      }),
+      credentialRef: credentialsPath,
+      quotaDomain,
+    };
+  }
+
+  // Provider de plugin (F7-1): factory keyed por kind
+  const factory = pluginFactories.get(providerConfig.kind);
+  if (factory === undefined) {
+    throw new ConfigError(
+      `provider "${model.provider}" usa kind "${providerConfig.kind}" sem factory; ` +
+        `registre um plugin que exporte esse kind`,
+    );
+  }
+  const rawCredentialRef = (providerConfig as Record<string, unknown>).credentialRef;
   return {
-    provider: new CodexOAuthProvider({
-      credentialsPath,
-      ...(providerConfig.baseUrl === undefined ? {} : { baseUrl: providerConfig.baseUrl }),
-      ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
-    }),
-    credentialRef: credentialsPath,
+    provider: factory.create(providerConfig as Record<string, unknown>, env),
+    credentialRef: typeof rawCredentialRef === "string" ? rawCredentialRef : providerConfig.kind,
     quotaDomain,
   };
 }
-
 /** Valida as tools pedidas pelo agente e devolve as instâncias correspondentes. */
-function resolveTools(config: AstroConfig): Tool[] {
+function resolveTools(config: AstroConfig, toolsByName: Map<string, Tool>): Tool[] {
   return config.agent.tools.map((name) => {
-    const tool = TOOLS_BY_NAME.get(name);
+    const tool = toolsByName.get(name);
     if (tool === undefined) {
       throw new ConfigError(
         `config inválida: tool "${name}" desconhecida em "agent.tools" ` +
-          `(disponíveis: ${[...TOOLS_BY_NAME.keys()].join(", ")})`,
+          `(disponíveis: ${[...toolsByName.keys()].join(", ")})`,
       );
     }
     return tool;
@@ -154,6 +183,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
   const config = loadConfig(opts.configPath);
+
+  // Plugins (F7-1): tools e provider factories; falha de load é isolada
+  const loaded = await loadPlugins(config.plugins ?? []);
 
   // Sandbox do run_command (F4-6): configurado antes de qualquer execução
   configureRunCommand({ sandbox: config.tools?.run_command?.sandbox ?? false });
@@ -176,7 +208,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const registry = new Registry(config);
   const model = registry.require(config.agent.model);
 
-  const { provider, credentialRef, quotaDomain } = createProvider(config, model, env);
+  const { provider, credentialRef, quotaDomain } = createProvider(config, model, env, loaded.providerFactories);
 
   // Completion cache (F6-4): wrap do provider com cache SQLite
   let effectiveProvider = provider;
@@ -204,7 +236,12 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     payload: { provider: model.provider, credentialRef, quotaDomain },
   });
 
-  const baseTools = resolveTools(config);
+  // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
+  const toolsByName = new Map(TOOLS_BY_NAME);
+  for (const tool of loaded.tools) {
+    if (!toolsByName.has(tool.manifest.name)) toolsByName.set(tool.manifest.name, tool);
+  }
+  const baseTools = resolveTools(config, toolsByName);
   const baseExecutor = new ToolExecutor({
     tools: baseTools,
     allow: config.agent.tools,

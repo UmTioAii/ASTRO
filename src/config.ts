@@ -24,8 +24,15 @@ export interface CodexOAuthProviderConfig extends ProviderConfigBase {
   baseUrl?: string;
 }
 
+/** Configuração de provider fornecida por plugin (F7-1): kind custom, shape opaco. */
+export interface PluginProviderConfig extends ProviderConfigBase {
+  /** Qualquer kind que não seja openai-compat/codex-oauth; a factory vive no plugin. */
+  kind: string;
+  [key: string]: unknown;
+}
+
 /** União discriminada por `kind`. */
-export type ProviderConfig = OpenAICompatProviderConfig | CodexOAuthProviderConfig;
+export type ProviderConfig = OpenAICompatProviderConfig | CodexOAuthProviderConfig | PluginProviderConfig;
 
 export interface PriceConfig {
   inputPerM: number;
@@ -109,6 +116,8 @@ export interface AstroConfig {
   /** Limites por quotaDomain (F6-3). */
   quota?: Record<string, QuotaLimitConfig>;
   cache?: CacheConfig;
+  /** Caminhos ou pacotes de plugins a carregar (F7-1). */
+  plugins?: string[];
   paths: PathsConfig;
 }
 
@@ -187,12 +196,8 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
   const field = `providers.${name}`;
   const raw = expectObject(value, field);
   const kind = raw.kind;
-
-  if (kind !== "openai-compat" && kind !== "codex-oauth") {
-    fail(
-      `config inválida: "${field}.kind" deve ser "openai-compat" ou "codex-oauth" ` +
-        `(recebido: ${JSON.stringify(kind)})`,
-    );
+  if (typeof kind !== "string" || kind.length === 0) {
+    fail(`config inválida: "${field}.kind" deve ser uma string não vazia`);
   }
 
   const quotaDomain =
@@ -209,14 +214,24 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
     };
   }
 
-  const baseUrl = raw.baseUrl === undefined ? undefined : expectString(raw.baseUrl, `${field}.baseUrl`);
+  if (kind === "codex-oauth") {
+    const baseUrl = raw.baseUrl === undefined ? undefined : expectString(raw.baseUrl, `${field}.baseUrl`);
+    return {
+      kind,
+      credentialsPath: expectString(raw.credentialsPath, `${field}.credentialsPath`),
+      quotaDomain,
+      ...(baseUrl === undefined ? {} : { baseUrl }),
+      ...(headers === undefined ? {} : { headers }),
+    };
+  }
+
+  // Kind de plugin (F7-1): shape opaco; a factory é exigida em runtime
   return {
+    ...raw,
     kind,
-    credentialsPath: expectString(raw.credentialsPath, `${field}.credentialsPath`),
     quotaDomain,
-    ...(baseUrl === undefined ? {} : { baseUrl }),
     ...(headers === undefined ? {} : { headers }),
-  };
+  } as PluginProviderConfig;
 }
 
 function validateStatus(value: unknown, field: string): ModelStatus {
@@ -462,9 +477,15 @@ export function validateConfig(raw: unknown): AstroConfig {
   // Validar cache (F6-4)
   const cache = root.cache === undefined ? undefined : validateCache(root.cache);
 
+  // Validar plugins (F7-1): lista de strings não vazias
+  let plugins: string[] | undefined;
+  if (root.plugins !== undefined) {
+    plugins = expectStringArray(root.plugins, "plugins");
+  }
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, tools, telemetry, quota, cache, paths };
+  return { providers, models, agent, agents, tools, telemetry, quota, cache, plugins, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
