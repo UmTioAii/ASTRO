@@ -4,6 +4,7 @@ import { Registry } from "./registry";
 import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./eval/harness";
 import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
+import { replayRun } from "./replay";
 import { resolve } from "node:path";
 
 const USAGE = `Uso:
@@ -11,6 +12,7 @@ const USAGE = `Uso:
   bun src/cli.ts eval [--threshold <0..1>] [--golden <dir>] [--report <path>] [--baseline <path>] [--write-baseline]
   bun src/cli.ts bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
   bun src/cli.ts serve [--port <n>]
+  bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts --help
 
 Opções:
@@ -62,12 +64,20 @@ interface ServeCommand {
   port: number;
 }
 
+interface ReplayCommand {
+  runId: string;
+  task: string;
+  configPath: string;
+  cwd?: string;
+}
+
 type ParsedCommand =
   | { kind: "help" }
   | { kind: "run"; options: RunCommand }
   | { kind: "eval"; options: EvalCommand }
   | { kind: "bench"; options: BenchCommand }
-  | { kind: "serve"; options: ServeCommand };
+  | { kind: "serve"; options: ServeCommand }
+  | { kind: "replay"; options: ReplayCommand };
 
 function parseArgs(argv: string[]): ParsedCommand {
   if (argv.length === 0) {
@@ -78,8 +88,46 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  if (command !== "run" && command !== "eval" && command !== "bench" && command !== "serve") {
+  if (command !== "run" && command !== "eval" && command !== "bench" && command !== "serve" && command !== "replay") {
     throw new UsageError(`comando desconhecido: "${command}"`);
+  }
+
+  if (command === "replay") {
+    let configPath = "astro.config.json";
+    let cwd: string | undefined;
+    let runId: string | undefined;
+    let task: string | undefined;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--config" || arg === "--cwd" || arg === "--task") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError(`falta o valor de ${arg}`);
+        }
+        i++;
+        if (arg === "--config") configPath = value;
+        else if (arg === "--cwd") cwd = value;
+        else task = value;
+        continue;
+      }
+      if (arg.startsWith("-")) {
+        throw new UsageError(`opção desconhecida: "${arg}"`);
+      }
+      if (runId !== undefined) {
+        throw new UsageError(`argumento inesperado: "${arg}"`);
+      }
+      runId = arg;
+    }
+    if (runId === undefined) {
+      throw new UsageError('falta o run-id; use: replay <run-id> --task "<pedido>"');
+    }
+    if (task === undefined) {
+      throw new UsageError('falta a tarefa; use: replay <run-id> --task "<pedido>"');
+    }
+    return {
+      kind: "replay",
+      options: { runId, task, configPath, ...(cwd === undefined ? {} : { cwd }) },
+    };
   }
 
   if (command === "serve") {
@@ -320,6 +368,33 @@ async function main(argv: string[]): Promise<number> {
     console.log(formatBenchTable(report));
     console.log(`relatórios gravados em ${o.outDir}/bench-${report.date}.{md,json}`);
     return 0;
+  }
+
+  if (parsed.kind === "replay") {
+    const o = parsed.options;
+    const config = loadConfig(resolve(o.configPath));
+    const base = o.cwd ?? process.cwd();
+    const auditPath = resolve(base, config.paths.audit);
+    try {
+      const result = await replayRun({
+        configPath: resolve(o.configPath),
+        auditPath,
+        runId: o.runId,
+        task: o.task,
+        ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
+      });
+      const fmtCost = (v: number | null): string => (v === null ? "n/d" : `US$ ${v.toFixed(6)}`);
+      console.log(`replay do run ${result.runId}`);
+      console.log(`  original: ${result.original.steps} steps · ${result.original.tokensIn}/${result.original.tokensOut} tokens · ${fmtCost(result.original.costUsd)}`);
+      console.log(`  replay:   ${result.replay.steps} steps · ${result.replay.tokensIn}/${result.replay.tokensOut} tokens · ${fmtCost(result.replay.costUsd)}`);
+      console.log(`  resposta: ${result.replay.final}`);
+      console.log(result.identical ? "  ✓ idêntico ao original" : "  ✗ divergente do original");
+      return result.identical ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${message}`);
+      return 1;
+    }
   }
 
   try {
