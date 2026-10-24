@@ -30,6 +30,12 @@ export interface SessionOptions {
     projectBudgetUsd?: number;
     agentQuotas?: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }>;
   };
+  /** Ambiente do run; vai ao ToolContext do shell (default: `process.env` no run_command). */
+  env?: Record<string, string | undefined>;
+  /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
+  protectedPaths?: readonly string[];
+  /** Nomes exatos de variáveis removidos do shell (ex.: credentialRef). */
+  secretEnvNames?: readonly string[];
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -142,7 +148,14 @@ export async function runSession(
           stepSpan ?? rootSpan,
         );
         const result = await opts.executor.run(
-          { cwd: opts.cwd, run: opts.run, agent: opts.agent },
+          {
+            cwd: opts.cwd,
+            run: opts.run,
+            agent: opts.agent,
+            ...(opts.env === undefined ? {} : { env: opts.env }),
+            ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
+            ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
+          },
           call,
         );
         tracer?.end(toolSpan, { isError: result.isError === true });
@@ -203,6 +216,12 @@ export interface MultiAgentSessionOptions {
     projectBudgetUsd?: number;
     agentQuotas?: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }>;
   };
+  /** Ambiente do run; vai ao ToolContext do shell. */
+  env?: Record<string, string | undefined>;
+  /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
+  protectedPaths?: readonly string[];
+  /** Nomes exatos de variáveis removidos do shell (ex.: credentialRef). */
+  secretEnvNames?: readonly string[];
 }
 
 /**
@@ -320,7 +339,14 @@ export async function runMultiAgentSession(
           stepSpan ?? rootSpan,
         );
         const result = await executor.run(
-          { cwd: opts.cwd, run: opts.run, agent: currentAgentName },
+          {
+            cwd: opts.cwd,
+            run: opts.run,
+            agent: currentAgentName,
+            ...(opts.env === undefined ? {} : { env: opts.env }),
+            ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
+            ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
+          },
           call,
         );
         tracer?.end(toolSpan, { isError: result.isError === true });

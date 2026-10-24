@@ -153,6 +153,20 @@ comando. O ledger/auditoria de cada execução fica em `.astro/`.
   renovação de token acontece apenas em memória.
 - **`.astro/` fora do git.** Ledger e auditoria ficam em `.astro/`, já coberto
   pelo `.gitignore`. Não versione `astro.config.json` com dados pessoais.
+- **Estado do harness protegido.** `write_file` recusa `.astro/` e os caminhos
+  reais de `paths.ledger`/`paths.audit`, então o agente não sobrescreve
+  ledger/auditoria por essa tool.
+- **Ambiente sanitizado no shell.** `run_command` preserva `PATH`/`HOME`/etc.,
+  mas remove os `credentialRef`s configurados e variáveis cujo nome indica
+  segredo (KEY, TOKEN, SECRET, PASSWORD, AUTH, CREDENTIAL, PRIVATE, COOKIE,
+  SESSION). Defesa best-effort: comandos ainda podem ler arquivos de
+  credencial diretamente; para isolamento completo, use o sandbox.
+- **Falha terminal auditada.** Todo run que falha emite `run.stopped` com
+  `reason`; erros de provider acrescentam `errorClass`, sem prompt nem valor
+  de credencial.
+- **Confinamento real de caminho.** A checagem usa o caminho resolvido
+  (symlinks/junctions inclusos), não só o léxico; links para fora do `cwd`
+  são bloqueados.
 - A mensagem de chave ausente cita o **nome** da variável (ex.: `TEST_KEY`), nunca
   o valor.
 
