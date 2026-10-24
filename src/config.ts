@@ -118,6 +118,8 @@ export interface AstroConfig {
   cache?: CacheConfig;
   /** Caminhos ou pacotes de plugins a carregar (F7-1). */
   plugins?: string[];
+  /** Versão semântica da config (x.y.z) para sharing (F7-4). */
+  version?: string;
   paths: PathsConfig;
 }
 
@@ -483,9 +485,18 @@ export function validateConfig(raw: unknown): AstroConfig {
     plugins = expectStringArray(root.plugins, "plugins");
   }
 
+  // Versão semântica (F7-4): x.y.z quando presente
+  let version: string | undefined;
+  if (root.version !== undefined) {
+    version = expectString(root.version, "version");
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      fail(`config inválida: "version" deve ser semântica x.y.z (recebido: "${version}")`);
+    }
+  }
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, tools, telemetry, quota, cache, plugins, paths };
+  return { providers, models, agent, agents, tools, telemetry, quota, cache, plugins, version, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
