@@ -1,5 +1,6 @@
 import type { AstroConfig, ModelConfig, ModelStatus, NamedAgentConfig } from "./config";
 import { ConfigError } from "./config";
+import { missingCapabilities, type Capability } from "./capabilities";
 
 /** Modelo da configuração com o status sempre resolvido. */
 export type ModelEntry = ModelConfig & { status: ModelStatus };
@@ -31,8 +32,8 @@ export class Registry {
     return this.#models.get(key);
   }
 
-  /** Devolve o modelo apenas se estiver ativo; caso contrário lança ConfigError. */
-  require(key: string): ModelEntry {
+  /** Devolve o modelo apenas se estiver ativo E atender às capabilities exigidas; caso contrário lança ConfigError. */
+  require(key: string, required?: readonly Capability[]): ModelEntry {
     const model = this.#models.get(key);
     if (model === undefined) {
       throw new ConfigError(`modelo "${key}" não encontrado na configuração`);
@@ -43,15 +44,28 @@ export class Registry {
           `selecione um modelo active na configuração`,
       );
     }
+    if (required !== undefined && required.length > 0) {
+      const missing = missingCapabilities(model, required);
+      if (missing.length > 0) {
+        throw new ConfigError(
+          `modelo "${key}" não atende às capabilities exigidas: ${missing.join(", ")}; ` +
+            `declare as capabilities do modelo ou escolha outro na configuração`,
+        );
+      }
+    }
     return model;
   }
 
-  /** Lista os modelos ativos, opcionalmente filtrando por tags. */
-  list(filter?: { tags?: string[] }): ModelEntry[] {
+  /** Lista os modelos ativos, opcionalmente filtrando por tags e capabilities exigidas. */
+  list(filter?: { tags?: string[]; capabilities?: Capability[] }): ModelEntry[] {
     const tags = filter?.tags;
+    const capabilities = filter?.capabilities;
     return [...this.#models.values()].filter(
       (model) =>
-        model.status === "active" && (tags === undefined || tags.every((tag) => model.tags.includes(tag))),
+        model.status === "active" &&
+        (tags === undefined || tags.every((tag) => model.tags.includes(tag))) &&
+        (capabilities === undefined ||
+          missingCapabilities(model, capabilities).length === 0),
     );
   }
 
