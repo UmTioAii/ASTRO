@@ -20,10 +20,9 @@ logs/
 # Config local (o exemplo é versionado)
 astro.config.json
 
-# Worktrees, SDD e documentação (fora do repo público)
+# Worktrees e SDD (fora do repo público)
 .worktrees/
 .sdd/
-docs/
 progress.md
 
 # SO / editores
