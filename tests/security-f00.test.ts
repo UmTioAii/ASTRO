@@ -46,14 +46,14 @@ describe("segurança F-00", () => {
     );
     const prevSecret = process.env.ASTRO_SEC_SECRET;
     const prevSafe = process.env.ASTRO_SEC_SAFE;
-    process.env.ASTRO_SEC_SECRET = "astro-secret-value";
-    process.env.ASTRO_SEC_SAFE = "astro-safe-value";
+    process.env.ASTRO_SEC_SECRET = "sec1";
+    process.env.ASTRO_SEC_SAFE = "safe1";
     try {
       const result = await runCommandTool.execute({ command: "bun print-env.js" }, ctx(cwd));
       expect(result.isError).toBeFalsy();
       expect(result.output).toContain("missing-secret");
-      expect(result.output).not.toContain("astro-secret-value");
-      expect(result.output).toContain("astro-safe-value");
+      expect(result.output).not.toContain("sec1");
+      expect(result.output).toContain("safe1");
     } finally {
       if (prevSecret === undefined) delete process.env.ASTRO_SEC_SECRET;
       else process.env.ASTRO_SEC_SECRET = prevSecret;
@@ -70,7 +70,7 @@ describe("segurança F-00", () => {
     );
     const prev = process.env.ASTRO_SEC_CRED;
     // "CRED" não casa com o padrão de nome; só a lista exata remove
-    process.env.ASTRO_SEC_CRED = "astro-cred-value";
+    process.env.ASTRO_SEC_CRED = "cred1";
     try {
       const result = await runCommandTool.execute(
         { command: "bun print-cred.js" },
@@ -78,7 +78,7 @@ describe("segurança F-00", () => {
       );
       expect(result.isError).toBeFalsy();
       expect(result.output).toContain("missing-cred");
-      expect(result.output).not.toContain("astro-cred-value");
+      expect(result.output).not.toContain("cred1");
     } finally {
       if (prev === undefined) delete process.env.ASTRO_SEC_CRED;
       else process.env.ASTRO_SEC_CRED = prev;
@@ -146,7 +146,7 @@ describe("segurança F-00", () => {
         configPath,
         task: "x",
         cwd,
-        env: { ASTRO_SEC_KEY: "chave-de-teste" },
+        env: { ASTRO_SEC_KEY: "key-tst" },
       }).then(
         () => null,
         (e) => e,
@@ -156,7 +156,7 @@ describe("segurança F-00", () => {
       expect(auditText).toContain("run.stopped");
       expect(auditText).toContain('"reason":"error"');
       expect(auditText).toContain('"errorClass":"auth"');
-      expect(auditText).not.toContain("chave-de-teste");
+      expect(auditText).not.toContain("key-tst");
     } finally {
       server.stop(true);
       rmSync(cwd, { recursive: true, force: true });
