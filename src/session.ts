@@ -6,6 +6,7 @@ import { ToolExecutor } from "./tools/executor";
 import type { AgentEntry } from "./registry";
 import type { SpanHandle, TracerLike } from "./tracing";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
+import { assertAgentQuota, assertProjectBudget } from "./team";
 
 export interface SessionOptions {
   run: string;
@@ -24,6 +25,11 @@ export interface SessionOptions {
   tracer?: TracerLike;
   /** Limites de quota por domínio (F6-3); ausente = sem enforcement. */
   quotaLimits?: Record<string, QuotaLimit>;
+  /** Limites de time (F7-5): budget do projeto e quotas por agent. */
+  teamLimits?: {
+    projectBudgetUsd?: number;
+    agentQuotas?: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }>;
+  };
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -80,6 +86,13 @@ export async function runSession(
     for (let step = 1; step <= opts.maxSteps; step++) {
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
+      // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
+      if (opts.teamLimits?.projectBudgetUsd !== undefined) {
+        assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
+      }
+      if (opts.teamLimits?.agentQuotas !== undefined) {
+        assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, opts.agent);
+      }
       const stepSpan = tracer?.start("step", { step, agent: opts.agent }, rootSpan);
       const providerSpan = tracer?.start(
         "provider.complete",
@@ -185,6 +198,11 @@ export interface MultiAgentSessionOptions {
   tracer?: TracerLike;
   /** Limites de quota por domínio (F6-3); ausente = sem enforcement. */
   quotaLimits?: Record<string, QuotaLimit>;
+  /** Limites de time (F7-5): budget do projeto e quotas por agent. */
+  teamLimits?: {
+    projectBudgetUsd?: number;
+    agentQuotas?: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }>;
+  };
 }
 
 /**
@@ -237,6 +255,13 @@ export async function runMultiAgentSession(
 
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
+      // Team (F7-5): budget do projeto e quota do agent corrente
+      if (opts.teamLimits?.projectBudgetUsd !== undefined) {
+        assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
+      }
+      if (opts.teamLimits?.agentQuotas !== undefined) {
+        assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, currentAgentName);
+      }
 
       // Atualizar executor com tools do agent atual
       const executor = new ToolExecutor({

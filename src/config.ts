@@ -101,6 +101,13 @@ export interface CacheConfig {
   maxEntries: number;
 }
 
+/** Team features (F7-5): budget do projeto, quotas por agent, webhook de auditoria. */
+export interface TeamSectionConfig {
+  projectBudgetUsd?: number;
+  agentQuotas?: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }>;
+  auditWebhook?: string;
+}
+
 export interface PathsConfig {
   ledger: string;
   audit: string;
@@ -120,6 +127,8 @@ export interface AstroConfig {
   plugins?: string[];
   /** Versão semântica da config (x.y.z) para sharing (F7-4). */
   version?: string;
+  /** Recursos de time (F7-5). */
+  team?: TeamSectionConfig;
   paths: PathsConfig;
 }
 
@@ -389,6 +398,44 @@ function validateQuota(value: unknown): Record<string, QuotaLimitConfig> {
   return result;
 }
 
+/** Valida a seção opcional `team` (F7-5). */
+function validateTeam(value: unknown): TeamSectionConfig {
+  const raw = expectObject(value, "team");
+  const result: TeamSectionConfig = Object.create(null);
+
+  if (raw.projectBudgetUsd !== undefined) {
+    result.projectBudgetUsd = expectNonNegativeNumber(raw.projectBudgetUsd, "team.projectBudgetUsd");
+  }
+  if (raw.auditWebhook !== undefined) {
+    result.auditWebhook = expectString(raw.auditWebhook, "team.auditWebhook");
+  }
+  if (raw.agentQuotas !== undefined) {
+    const quotasRaw = expectObject(raw.agentQuotas, "team.agentQuotas");
+    const agentQuotas: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }> = Object.create(null);
+    for (const [agent, quotaRaw] of Object.entries(quotasRaw)) {
+      const field = `team.agentQuotas.${agent}`;
+      const quota = expectObject(quotaRaw, field);
+      const dailyTokens =
+        quota.dailyTokens === undefined
+          ? undefined
+          : expectPositiveInteger(quota.dailyTokens, `${field}.dailyTokens`);
+      const monthlyCostUsd =
+        quota.monthlyCostUsd === undefined
+          ? undefined
+          : expectNonNegativeNumber(quota.monthlyCostUsd, `${field}.monthlyCostUsd`);
+      if (dailyTokens === undefined && monthlyCostUsd === undefined) {
+        fail(`config inválida: "${field}" precisa de dailyTokens ou monthlyCostUsd`);
+      }
+      agentQuotas[agent] = {
+        ...(dailyTokens === undefined ? {} : { dailyTokens }),
+        ...(monthlyCostUsd === undefined ? {} : { monthlyCostUsd }),
+      };
+    }
+    result.agentQuotas = agentQuotas;
+  }
+  return result;
+}
+
 /** Valida a seção opcional `telemetry` (F5-5): off por default, sem PII. */
 function validateTelemetry(value: unknown): TelemetryConfig {
   const raw = expectObject(value, "telemetry");
@@ -494,9 +541,12 @@ export function validateConfig(raw: unknown): AstroConfig {
     }
   }
 
+  // Team features (F7-5)
+  const team = root.team === undefined ? undefined : validateTeam(root.team);
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, tools, telemetry, quota, cache, plugins, version, paths };
+  return { providers, models, agent, agents, tools, telemetry, quota, cache, plugins, version, team, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
