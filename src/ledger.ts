@@ -1,8 +1,13 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import type { PriceConfig } from "./config";
 
+/** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
+export const LEDGER_SCHEMA_VERSION = 1;
+
 export interface LedgerEntry {
+  schemaVersion: number;
   ts: string;
   run: string;
   agent: string;
@@ -13,6 +18,38 @@ export interface LedgerEntry {
   tokensIn: number;
   tokensOut: number;
   costUsd: number | null;
+  /** Hash SHA-256 por tool call do step (F-02/I-03); array vazio sem calls. */
+  callHashes?: string[];
+  /** Discriminador do JSONL; entradas antigas (pré-v1) não têm. */
+  kind?: "usage";
+}
+
+/** Estado de execução de um run gravado no ledger (F-02). */
+export type RunState = "interrupted" | "completed";
+
+export interface LedgerStateEntry {
+  schemaVersion: number;
+  ts: string;
+  run: string;
+  kind: "run_state";
+  state: RunState;
+  agent?: string;
+  reason?: string;
+}
+
+export type LedgerAnyEntry = LedgerEntry | LedgerStateEntry;
+
+/**
+ * Hash determinístico por tool call: SHA-256 de nome + arguments (F-02).
+ * Identifica a operação sem persistir o conteúdo (I-03); `id` do provider
+ * não entra no hash porque pode variar entre tentativas (F-03 usará isso).
+ */
+export function hashToolCalls(
+  calls: readonly { name: string; arguments: string }[],
+): string[] {
+  return calls.map((c) =>
+    createHash("sha256").update(JSON.stringify({ name: c.name, arguments: c.arguments })).digest("hex"),
+  );
 }
 
 /** Custo em USD para os tokens informados, ou null quando não há preço curado. */
@@ -47,7 +84,7 @@ export class Ledger {
     mkdirSync(dirname(path), { recursive: true });
   }
 
-  record(e: Omit<LedgerEntry, "ts" | "costUsd">, price?: PriceConfig): LedgerEntry {
+  record(e: Omit<LedgerEntry, "ts" | "costUsd" | "schemaVersion" | "kind">, price?: PriceConfig): LedgerEntry {
     const costUsd = estimateCost(e.tokensIn, e.tokensOut, price);
     if (costUsd === null) {
       this.warn(
@@ -55,6 +92,8 @@ export class Ledger {
       );
     }
     const entry: LedgerEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      kind: "usage",
       ts: new Date().toISOString(),
       ...e,
       costUsd,
@@ -64,8 +103,44 @@ export class Ledger {
     return entry;
   }
 
+  /** Grava o estado de execução de um run (F-02): `interrupted` ou `completed`. */
+  recordState(
+    run: string,
+    state: RunState,
+    opts?: { agent?: string; reason?: string },
+  ): LedgerStateEntry {
+    const entry: LedgerStateEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run,
+      kind: "run_state",
+      state,
+      ...(opts?.agent === undefined ? {} : { agent: opts.agent }),
+      ...(opts?.reason === undefined ? {} : { reason: opts.reason }),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    return entry;
+  }
+
+  /** Entradas de uso (tokens/custo); ignora entradas de estado e legado sem kind. */
   readAll(): LedgerEntry[] {
-    return this.readLines().map((line) => JSON.parse(line) as LedgerEntry);
+    return this.readAllEntries().filter((e): e is LedgerEntry => e.kind !== "run_state");
+  }
+
+  /** Todas as entradas do JSONL: uso, estado e legado, na ordem em que foram gravadas. */
+  readAllEntries(): LedgerAnyEntry[] {
+    return this.readLines().map((line) => JSON.parse(line) as LedgerAnyEntry);
+  }
+
+  /** Entradas de estado de execução, na ordem em que foram gravadas. */
+  readStates(): LedgerStateEntry[] {
+    return this.readAllEntries().filter((e): e is LedgerStateEntry => e.kind === "run_state");
+  }
+
+  /** Último estado de execução do run (undefined quando não há). */
+  lastState(run?: string): LedgerStateEntry | undefined {
+    const states = this.readStates().filter((e) => run === undefined || e.run === run);
+    return states.at(-1);
   }
 
   total(): { tokensIn: number; tokensOut: number; costUsd: number } {

@@ -1,5 +1,5 @@
 import type { Auditor } from "./audit";
-import type { Ledger } from "./ledger";
+import { hashToolCalls, type Ledger } from "./ledger";
 import type { ChatMessage, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
@@ -125,11 +125,13 @@ export async function runSession(
           quotaDomain: opts.quotaDomain,
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
+          callHashes: hashToolCalls(response.toolCalls),
         },
         opts.model.price,
       );
 
       if (response.toolCalls.length === 0) {
+        opts.ledger.recordState(opts.run, "completed", { agent: opts.agent });
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
         return { final: response.content, steps: step };
@@ -174,6 +176,12 @@ export async function runSession(
     tracer?.end(rootSpan, { status: "max_steps" });
     throw new MaxStepsError(opts.maxSteps);
   } catch (error) {
+    if (!errorHasHandoffName(error)) {
+      opts.ledger.recordState(opts.run, "interrupted", {
+        agent: opts.agent,
+        reason: error instanceof Error ? error.name : String(error),
+      });
+    }
     if (rootSpan !== undefined && !errorHasHandoffName(error)) {
       tracer?.end(rootSpan, {
         status: "error",
@@ -315,11 +323,13 @@ export async function runMultiAgentSession(
           quotaDomain: opts.quotaDomain,
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
+          callHashes: hashToolCalls(response.toolCalls),
         },
         currentModel.price,
       );
 
       if (response.toolCalls.length === 0) {
+        opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
         return { final: response.content, steps: step, agentsUsed };
@@ -391,6 +401,10 @@ export async function runMultiAgentSession(
     tracer?.end(rootSpan, { status: "max_steps" });
     throw new MaxStepsError(opts.baseMaxSteps);
   } catch (error) {
+    opts.ledger.recordState(opts.run, "interrupted", {
+      agent: currentAgentName,
+      reason: error instanceof Error ? error.name : String(error),
+    });
     if (rootSpan !== undefined) {
       tracer?.end(rootSpan, {
         status: "error",
