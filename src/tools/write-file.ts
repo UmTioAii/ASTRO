@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { resolveWithin } from "./paths";
+import { resolveWritableWithin } from "./paths";
 import { ToolError, type Tool, type ToolResult } from "./types";
 
 function failure(message: string): ToolResult {
@@ -49,7 +49,7 @@ export const writeFileTool: Tool = {
   async execute(input, ctx): Promise<ToolResult> {
     try {
       const { path, content } = writeInput(input);
-      const target = resolveWithin(ctx.cwd, path);
+      const target = resolveWritableWithin(ctx.cwd, path, ctx.protectedPaths ?? []);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, content, "utf8");
       return { output: `arquivo escrito: ${path}` };
