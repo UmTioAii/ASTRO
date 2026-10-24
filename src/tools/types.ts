@@ -21,6 +21,12 @@ export interface ToolContext {
   cwd: string;
   run: string;
   agent: string;
+  /** Ambiente do run; `run_command` usa este mapa em vez de `process.env` quando presente. */
+  env?: Record<string, string | undefined>;
+  /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
+  protectedPaths?: readonly string[];
+  /** Nomes exatos de variáveis que devem ser removidos do shell (ex.: credentialRef). */
+  secretEnvNames?: readonly string[];
   /** Executor da sessão; presente apenas quando chamado via ToolExecutor. */
   executor?: ToolExecutorLike;
 }

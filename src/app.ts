@@ -17,6 +17,7 @@ import { loadPlugins, type PluginProviderFactory } from "./plugins";
 import { sendAuditWebhook } from "./team";
 import type { AuditEvent } from "./audit";
 import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
+import { ProviderError } from "./provider/types";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
 import { runCommandTool } from "./tools/run-command";
@@ -246,6 +247,14 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     payload: { provider: model.provider, credentialRef, quotaDomain },
   });
 
+  // O shell não deve ver chaves de nenhum provider configurado, mesmo inativo
+  const secretEnvNames: string[] = [];
+  for (const provider of Object.values(config.providers)) {
+    if (isOpenAICompat(provider)) {
+      secretEnvNames.push(provider.credentialRef);
+    }
+  }
+
   // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
   const toolsByName = new Map(TOOLS_BY_NAME);
   for (const tool of loaded.tools) {
@@ -296,6 +305,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
                   : { agentQuotas: config.team.agentQuotas }),
               },
             }),
+        env,
+        protectedPaths: [ledgerPath, auditPath],
+        secretEnvNames,
       };
       result = await runMultiAgentSession(multiOpts, opts.task);
     } else {
@@ -329,24 +341,40 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
                     : { agentQuotas: config.team.agentQuotas }),
                 },
               }),
+          env,
+          protectedPaths: [ledgerPath, auditPath],
+          secretEnvNames,
         },
         opts.task,
       );
     }
   } catch (error) {
-    if (!(error instanceof MaxStepsError)) throw error;
+    if (error instanceof MaxStepsError) {
+      audit.append({
+        run,
+        agent: AGENT_NAME,
+        tipo: "run.stopped",
+        payload: { reason: "max_steps" },
+      });
+      throw new Error(
+        `a tarefa excedeu ${config.agent.maxSteps} passos sem resposta final; ` +
+          `aumente "agent.maxSteps" na configuração`,
+        { cause: error },
+      );
+    }
 
+    // Falha terminal: auditar reason e classe do erro (I-04), sem segredo (I-03)
     audit.append({
       run,
       agent: AGENT_NAME,
       tipo: "run.stopped",
-      payload: { reason: "max_steps" },
+      payload: {
+        reason: "error",
+        error: error instanceof Error ? error.name : "UnknownError",
+        ...(error instanceof ProviderError ? { errorClass: error.errClass } : {}),
+      },
     });
-    throw new Error(
-      `a tarefa excedeu ${config.agent.maxSteps} passos sem resposta final; ` +
-        `aumente "agent.maxSteps" na configuração`,
-      { cause: error },
-    );
+    throw error;
   }
 
   const total = ledger.total();
