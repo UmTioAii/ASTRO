@@ -1,4 +1,5 @@
 import type { Auditor } from "./audit";
+import { CallJournal } from "./call-id";
 import { hashToolCalls, type Ledger } from "./ledger";
 import type { ChatMessage, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
@@ -87,6 +88,8 @@ export async function runSession(
     { role: "system", content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
     { role: "user", content: task },
   ];
+  /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step. */
+  const journal = new CallJournal();
 
   try {
     for (let step = 1; step <= opts.maxSteps; step++) {
@@ -154,6 +157,8 @@ export async function runSession(
             cwd: opts.cwd,
             run: opts.run,
             agent: opts.agent,
+            step,
+            journal,
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
@@ -257,6 +262,8 @@ export async function runMultiAgentSession(
     { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT },
     { role: "user", content: task },
   ];
+  /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
+  const journal = new CallJournal();
 
   const tracer = opts.tracer;
   const rootSpan = tracer?.start("run", {
@@ -353,6 +360,8 @@ export async function runMultiAgentSession(
             cwd: opts.cwd,
             run: opts.run,
             agent: currentAgentName,
+            step,
+            journal,
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),

@@ -1,3 +1,5 @@
+import type { CallJournal } from "../call-id";
+
 /** Metadados obrigatórios de uma tool (I-12). */
 export interface ToolManifest {
   name: string;
@@ -29,6 +31,10 @@ export interface ToolContext {
   secretEnvNames?: readonly string[];
   /** Executor da sessão; presente apenas quando chamado via ToolExecutor. */
   executor?: ToolExecutorLike;
+  /** Step corrente da sessão; presente quando a sessão habilita dedup (F-03). */
+  step?: number;
+  /** Journal de resultados por call_id; presente quando a sessão habilita dedup (F-03). */
+  journal?: CallJournal;
 }
 
 /**

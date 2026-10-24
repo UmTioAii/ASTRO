@@ -1,4 +1,5 @@
 import type { Auditor } from "../audit";
+import { callId } from "../call-id";
 import type { ToolCall, ToolDef } from "../provider/types";
 import type { Tool, ToolContext, ToolResult } from "./types";
 
@@ -44,6 +45,39 @@ export class ToolExecutor {
   }
 
   async run(ctx: ToolContext, call: ToolCall): Promise<ToolResult> {
+    // Dedup por call_id determinístico (F-03): só quando a sessão fornece step + journal.
+    const { step, journal } = ctx;
+    if (step !== undefined && journal !== undefined) {
+      const id = callId(ctx.run, step, call);
+      const cached = journal.lookup(id);
+      if (cached !== undefined) {
+        // Chamada suprimida NÃO emite tool.call/tool.result: as métricas de
+        // duração continuam medindo só execuções reais.
+        this.auditRef.append({
+          run: ctx.run,
+          agent: ctx.agent,
+          tipo: "tool.dedup",
+          payload: { name: call.name, callId: id },
+        });
+        return cached;
+      }
+      this.auditRef.append({
+        run: ctx.run,
+        agent: ctx.agent,
+        tipo: "tool.call",
+        payload: { name: call.name, callId: id },
+      });
+      const result = await this.execute(ctx, call);
+      journal.record(id, result);
+      this.auditRef.append({
+        run: ctx.run,
+        agent: ctx.agent,
+        tipo: "tool.result",
+        payload: { name: call.name, isError: result.isError === true, callId: id },
+      });
+      return result;
+    }
+
     this.auditRef.append({
       run: ctx.run,
       agent: ctx.agent,
