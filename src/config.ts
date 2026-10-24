@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { CAPABILITY_KEYS, isKnownCapability, type Capability } from "./capabilities";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
 /** Configuração comum a todos os providers. */
@@ -50,6 +51,8 @@ export interface ModelConfig {
   context: number;
   status?: ModelStatus;
   price?: PriceConfig;
+  /** Matriz de capability (F-07): chaves do vocabulário fechado; ausente = não tem. */
+  capabilities?: Partial<Record<Capability, boolean>>;
 }
 
 /** Configuração de um agent (pode ser o principal ou um agent nomeado em `agents`). */
@@ -262,6 +265,22 @@ function validatePrice(value: unknown, field: string): PriceConfig {
   };
 }
 
+/** Valida `models[*].capabilities` (F-07): vocabulário fechado, valores booleanos. */
+function validateCapabilities(value: unknown, field: string): Partial<Record<Capability, boolean>> {
+  const raw = expectObject(value, field);
+  const result: Partial<Record<Capability, boolean>> = Object.create(null);
+  for (const [key, flag] of Object.entries(raw)) {
+    if (!isKnownCapability(key)) {
+      fail(
+        `config inválida: capability "${key}" desconhecida em "${field}" ` +
+          `(conhecidas: ${CAPABILITY_KEYS.join(", ")})`,
+      );
+    }
+    result[key as Capability] = expectBoolean(flag, `${field}.${key}`);
+  }
+  return result;
+}
+
 function validateModel(value: unknown, index: number): ModelConfig {
   const field = `models[${index}]`;
   const raw = expectObject(value, field);
@@ -285,6 +304,10 @@ function validateModel(value: unknown, index: number): ModelConfig {
   const context = expectPositiveInteger(raw.context, `${field}.context`);
   const status = raw.status === undefined ? "active" : validateStatus(raw.status, `${field}.status`);
   const price = raw.price === undefined ? undefined : validatePrice(raw.price, `${field}.price`);
+  const capabilities =
+    raw.capabilities === undefined
+      ? undefined
+      : validateCapabilities(raw.capabilities, `${field}.capabilities`);
 
   return {
     provider,
@@ -293,6 +316,7 @@ function validateModel(value: unknown, index: number): ModelConfig {
     context,
     status,
     ...(price === undefined ? {} : { price }),
+    ...(capabilities === undefined ? {} : { capabilities }),
   };
 }
 
