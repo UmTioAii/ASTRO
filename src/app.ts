@@ -37,6 +37,8 @@ export interface RunOptions {
 }
 
 export interface RunReport {
+  /** UUID do run (para replay/correlação com a auditoria). */
+  runId: string;
   final: string;
   model: string;
   steps: number;
@@ -302,6 +304,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   }
 
   return {
+    runId: run,
     final: result.final,
     model: config.agent.model,
     steps: result.steps,
