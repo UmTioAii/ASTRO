@@ -43,6 +43,10 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-20 | Microcompactação determinística de resultados de tool | planejado | — | F-02, F-03 | F-21 |
 | F-21 | Checkpoint de contexto com verificação de preservação de identificadores | planejado | — | F-17, F-20 | T4 |
 | F-22 | Log de eventos de sessão e resume determinístico (núcleo do T4) | planejado | — | F-02, F-06 | T4 |
+| F-23 | HandoffArtifact v1: artefato durável com handoff_id determinístico e checkpoint no ledger (ADR-0006) | planejado | #75 | F-02, ADR-0006 | F-24, F-25, F-26, C4 |
+| F-24 | Handoff com ack de recebimento, timeout e retomada de pendentes | planejado | #76 | F-23, F-06 | C4 |
+| F-25 | Compactação estruturada do handoff com source_refs e validação de artefatos | planejado | #77 | F-23, F-09 | C4 |
+| F-26 | Lock de via única: CAS por handoff_id e verifier na recepção | planejado | #78 | F-23, F-03 | C4 |
 
 Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenciais (multi-agente, multi-provider, comunicação). Pode voltar como issue própria.
 
@@ -62,7 +66,7 @@ Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenci
 | C1 | Skills com manifesto e permissões (I-14) | planejado | #55 | F-02, F-10 | — |
 | C2 | Cliente MCP com namespace e saída não confiável (I-15) | planejado | #56 | F-00, F-03, F-09, F-10 | — |
 | C3 | `web_search` e `web_fetch` com bloqueio de destinos internos | planejado | #57 | F-00, F-09, F-11 | — |
-| C4 | Perfis de agente, subagentes com escopo menor (I-02) e blackboard pelo orquestrador (I-18) | planejado | #58 | F-02, F-05, F-07, F-17 | P-02 |
+| C4 | Perfis de agente, subagentes com escopo menor (I-02) e blackboard pelo orquestrador (I-18) | planejado | #58 | F-02, F-05, F-07, F-17, F-23, F-24, F-25, F-26 | P-02 |
 | C5 | Gate de conclusão determinístico e golden tasks com N execuções | planejado | #59 | F-14, F-15 | P-01, P-04 |
 | C6 | Fallback, pool de chaves com cooldown, classes de equivalência (I-22) | planejado | #60 | F-01, F-03, F-07, F-19 | P-01 |
 | C7 | Módulos reorganizados, budget por sessão, perfis de ambiente | planejado | #61 | F-02, F-05 | P-01 |
@@ -87,8 +91,8 @@ C4 inclui o blackboard entre agentes como sub-itens: entradas tipadas (`fact`, `
 | 3 | F-03, F-07, F-10 |
 | 4 | F-04, F-05, F-06, F-08, F-11 |
 | 5 | F-14, F-15, F-16, F-17, F-18 |
-| 6 | F-19, F-20, F-21, F-22 |
-| 7 | T1 em paralelo com a Camada 0 |
+| 6 | F-19, F-20, F-21, F-22; F-23 (após ADR-0006) |
+| 7 | T1 em paralelo com a Camada 0; F-24 (após F-23, F-06), F-25 (após F-23, F-09), F-26 (após F-23, F-03) |
 | 8 | T2 (após F-06, F-12, F-17, F-18); T3 (após T2, F-14); T4 (após T2, F-21, F-22) |
 | 9 | C1, C2, C3; C4, C6; C5; C7 |
 | 10 | P-01 a P-04 (após C5, C6, C7) |
@@ -102,3 +106,4 @@ C4 inclui o blackboard entre agentes como sub-itens: entradas tipadas (`fact`, `
 | ADR-0003 | Estrutura de módulos | C7 |
 | ADR-0004 | Perfis de execução por ambiente | C7 |
 | ADR-0005 | Deprecação do `write_file` direto em favor de `apply_patch` (I-16) | F-04, F-16 |
+| ADR-0006 | Artefato de handoff durável (HandoffArtifact v1) no ledger | F-23 |
