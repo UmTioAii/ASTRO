@@ -14,6 +14,8 @@ import { tracerFromEnv } from "./tracing";
 import { Metrics, MetricsCollector } from "./metrics";
 import { CompletionCache, cachedProvider } from "./cache";
 import { loadPlugins, type PluginProviderFactory } from "./plugins";
+import { sendAuditWebhook } from "./team";
+import type { AuditEvent } from "./audit";
 import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
@@ -192,10 +194,18 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   const ledgerPath = resolveFrom(cwd, config.paths.ledger);
   const auditPath = resolveFrom(cwd, config.paths.audit);
-  // Métricas Prometheus (F6-1): callbacks alimentam o registro durante o run
+  // Métricas Prometheus (F6-1) + webhook de auditoria (F7-5): callbacks compostos
   const collector = opts.metrics !== undefined ? new MetricsCollector(opts.metrics) : undefined;
+  const webhookUrl = config.team?.auditWebhook;
   const ledger = new Ledger(ledgerPath, ...(collector ? [{ onRecord: collector.onLedgerRecord }] : []));
-  const audit = new Auditor(auditPath, ...(collector ? [{ onEvent: collector.onAuditEvent }] : []));
+  const onEvent =
+    collector === undefined && webhookUrl === undefined
+      ? undefined
+      : (event: AuditEvent): void => {
+          collector?.onAuditEvent(event);
+          if (webhookUrl !== undefined) void sendAuditWebhook(webhookUrl, event);
+        };
+  const audit = new Auditor(auditPath, ...(onEvent === undefined ? [] : [{ onEvent }]));
 
   const run = randomUUID();
   audit.append({
@@ -274,6 +284,18 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         entryAgent,
         ...(tracer === undefined ? {} : { tracer }),
         ...(config.quota === undefined ? {} : { quotaLimits: config.quota }),
+        ...(config.team === undefined
+          ? {}
+          : {
+              teamLimits: {
+                ...(config.team.projectBudgetUsd === undefined
+                  ? {}
+                  : { projectBudgetUsd: config.team.projectBudgetUsd }),
+                ...(config.team.agentQuotas === undefined
+                  ? {}
+                  : { agentQuotas: config.team.agentQuotas }),
+              },
+            }),
       };
       result = await runMultiAgentSession(multiOpts, opts.task);
     } else {
@@ -295,6 +317,18 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
             : { systemPrompt: config.agent.systemPrompt }),
           ...(tracer === undefined ? {} : { tracer }),
           ...(config.quota === undefined ? {} : { quotaLimits: config.quota }),
+          ...(config.team === undefined
+            ? {}
+            : {
+                teamLimits: {
+                  ...(config.team.projectBudgetUsd === undefined
+                    ? {}
+                    : { projectBudgetUsd: config.team.projectBudgetUsd }),
+                  ...(config.team.agentQuotas === undefined
+                    ? {}
+                    : { agentQuotas: config.team.agentQuotas }),
+                },
+              }),
         },
         opts.task,
       );
