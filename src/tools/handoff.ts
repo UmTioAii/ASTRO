@@ -8,17 +8,12 @@ export interface HandoffInput extends HandoffDraft {
 
 export const handoffManifest: ToolManifest = {
   name: "handoff",
-  description:
-    "Transfere o controle para outro agent nomeado na configuração, com artefato durável (task, objective, decisions, constraints, next_steps).",
+  description: "Transfere o controle para outro agent nomeado na configuração.",
   parameters: {
     type: "object",
     properties: {
       to: { type: "string", description: "Nome do agent destino (deve existir em agents)" },
-      task: { type: "string", description: "Tarefa em andamento no momento do handoff" },
-      objective: { type: "string", description: "Objetivo a ser cumprido pelo receptor" },
-      decisions: { type: "array", items: { type: "string" }, description: "Decisões já tomadas" },
-      constraints: { type: "array", items: { type: "string" }, description: "Restrições a respeitar" },
-      next_steps: { type: "array", items: { type: "string" }, description: "Próximos passos" },
+      task: { type: "string" }, objective: { type: "string" }, decisions: { type: "array", items: { type: "string" } }, constraints: { type: "array", items: { type: "string" } }, next_steps: { type: "array", items: { type: "string" } },
     },
     required: ["to", "task", "objective", "decisions", "constraints", "next_steps"],
     additionalProperties: false,
@@ -31,20 +26,14 @@ export const handoffManifest: ToolManifest = {
   sideEffects: "none",
 };
 
-/** Tool de handoff — valida o artefato; a troca real é feita pelo runtime multi-agent. */
+/** Tool de handoff — a execução real é feita pelo runtime multi-agent. */
 export const handoffTool: Tool = {
   manifest: handoffManifest,
   async execute(input: unknown, ctx: ToolContext): Promise<ToolResult> {
     const raw = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
-    if (typeof raw.to !== "string" || raw.to.trim().length === 0)
-      throw new HandoffError("handoff_artifact_mismatch", "campo 'to' (string) é obrigatório");
+    if (typeof raw.to !== "string" || raw.to.trim().length === 0) throw new HandoffError("handoff_artifact_mismatch", "campo 'to' (string) é obrigatório");
     const draft = validateHandoffDraft(raw);
-    if (ctx.knownAgents !== undefined && !ctx.knownAgents.includes(raw.to)) throw new HandoffError(
-      "handoff_target_not_found", `agent destino "${raw.to}" não encontrado na configuração`);
-    // O runtime intercepta este resultado e faz a troca de agent
-    return {
-      output: JSON.stringify({ handoff: true, to: raw.to, draft }),
-      isError: false,
-    };
+    if (ctx.knownAgents !== undefined && !ctx.knownAgents.includes(raw.to)) throw new HandoffError("handoff_target_not_found", `agent destino "${raw.to}" não encontrado na configuração`);
+    return { output: JSON.stringify({ handoff: true, to: raw.to, draft }), isError: false };
   },
 };

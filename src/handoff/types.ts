@@ -19,7 +19,7 @@ export class HandoffError extends ToolError {
   readonly errClass: ErrorClass;
 
   constructor(code: HandoffErrorCode, message: string) {
-    super(`${code}: ${message}`);
+    super(`${code}: ${redactSecrets(message)}`);
     this.name = "HandoffError";
     this.code = code;
     this.retryable = RETRYABLE.has(code);
@@ -79,8 +79,8 @@ export function taskHash(task: string, objective: string): string {
  *
  * Mudanças em `decisions`/`constraints`/`next_steps` NÃO alteram o id — a
  * estabilidade é o que permite o verifier e o lock de via única (F-26).
- * `run`/`from`/`to` e `task`/`objective` são sanitizados antes do hash (I-03),
- * então o id calculado aqui é o mesmo do artefato persistido.
+ * `task`/`objective` são sanitizados antes do hash (I-03), de modo que o id
+ * calculado aqui é o mesmo do artefato persistido.
  */
 export function handoffId(a: Pick<HandoffArtifactV1, "run" | "from" | "to" | "source_step" | "task" | "objective">): string {
   return sha256(
