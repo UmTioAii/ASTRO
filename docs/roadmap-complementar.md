@@ -24,14 +24,14 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-00 | Rebase dos fixes de segurança (env herdado no run_command; escape por symlink no read_file) | concluído | #67 | — | C2, C3 |
 | F-01 | Política de ação por classe de erro (D-14/D-18) | concluído | #69 | — | C6 |
 | F-02 | Ledger com schemaVersion, estado de execução e hash de chamadas | concluído | #73 | ADR-0002 | F-03, F-04, F-05, F-06, F-07, F-08, F-17, F-19, F-22, C7, T4 |
-| F-03 | Idempotência de tool calls por `call_id` determinístico | planejado | — | F-02 | F-06, F-10, F-20, C2, C6 |
+| F-03 | Idempotência de tool calls por `call_id` determinístico | concluído | #88 | F-02 | F-06, F-10, F-20, C2, C6 |
 | F-04 | Snapshots de escrita no write_file (ponte; deprecação via ADR) | planejado | — | F-02 | F-16 |
 | F-05 | Limites de execução por tarefa com corte físico (I-17) | planejado | — | F-02 | C4, C7 |
 | F-06 | Cancelamento consistente e retomada explícita (I-19) | planejado | — | F-02, F-03 | F-18, F-19, T2 |
-| F-07 | Matriz de capability por modelo, consultada antes da escolha | planejado | #81 | F-02 | F-08, C4, C6, F-27 |
+| F-07 | Matriz de capability por modelo, consultada antes da escolha | concluído | #81 | F-02 | F-08, C4, C6, F-27 |
 | F-08 | Estratégia de context overflow com contagem por provider (D-18) | planejado | — | F-02, F-07 | T1 |
 | F-09 | Sanitização de conteúdo externo antes de logar e de entrar no contexto | concluído | #70 | — | C2, C3, F-11 |
-| F-10 | Manifesto estendido: `idempotent` e `sideEffects` (I-12) | planejado | — | F-03 | C1, C2, F-14, F-15, F-16 |
+| F-10 | Manifesto estendido: `idempotent` e `sideEffects` (I-12) | concluído | #93 | F-03 | C1, C2, F-14, F-15, F-16 |
 | F-11 | Limites de saída por tool com metadados de truncamento | planejado | — | F-09 | F-14, F-15, C3 |
 | F-12 | ADR de dependências de runtime | planejado | — | — | T2 |
 | F-14 | `git_status` e `git_diff` estruturadas | planejado | — | F-11 | C5, T3 |
@@ -43,15 +43,15 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-20 | Microcompactação determinística de resultados de tool | planejado | — | F-02, F-03 | F-21 |
 | F-21 | Checkpoint de contexto com verificação de preservação de identificadores | planejado | — | F-17, F-20 | T4 |
 | F-22 | Log de eventos de sessão e resume determinístico (núcleo do T4) | planejado | — | F-02, F-06 | T4 |
-| F-23 | HandoffArtifact v1: artefato durável com handoff_id determinístico e checkpoint no ledger (ADR-0006) | planejado | #75 | F-02, ADR-0006 | F-24, F-25, F-26, C4 |
-| F-24 | Handoff com ack de recebimento, timeout e retomada de pendentes | planejado | #76 | F-23, F-06 | C4 |
-| F-25 | Compactação estruturada do handoff com source_refs e validação de artefatos | planejado | #77 | F-23, F-09 | C4 |
-| F-26 | Lock de via única: CAS por handoff_id e verifier na recepção | planejado | #78 | F-23, F-03 | C4 |
-| F-27 | Model pool declarativa: seção modelPool, profile → modelo, `astro pool list` (ADR-0007) | planejado | #82 | F-07, ADR-0007 | F-28, F-29, C4 |
-| F-28 | AgentManager: ciclo de vida de agentes com profile e `astro agents list` | planejado | #83 | F-27 | F-29 |
-| F-29 | Runtime com pool: profile no startup e no handoff; `profile` no ledger; from/to_profile no artefato | planejado | #84 | F-27, F-28, F-23, F-24, F-25, F-26 | F-30, C4 |
-| F-30 | Custo atribuído por agente com granularidade de profile e `astro cost --by-agent` | planejado | #85 | F-29 | F-31 |
-| F-31 | Health e fallback por profile estendendo C6 (ADR-0007) | planejado | #86 | F-30, C6 | — |
+| F-23 | HandoffArtifact v1: artefato durável com handoff_id determinístico e checkpoint no ledger (ADR-0006) | concluído | #75 | F-02, ADR-0006 | F-24, F-25, F-26, C4 |
+| F-24 | Handoff com ack de recebimento, timeout e retomada de pendentes | concluído | #76 | F-23, F-06 | C4 |
+| F-25 | Compactação estruturada do handoff com source_refs e validação de artefatos | concluído | #77 | F-23, F-09 | C4 |
+| F-26 | Lock de via única: CAS por handoff_id e verifier na recepção | concluído | #78 | F-23, F-03 | C4 |
+| F-27 | Model pool declarativa: seção modelPool, profile → modelo, `astro pool list` (ADR-0007) | concluído | #82 | F-07, ADR-0007 | F-28, F-29, C4 |
+| F-28 | AgentManager: ciclo de vida de agentes com profile e `astro agents list` | concluído | #83 | F-27 | F-29 |
+| F-29 | Runtime com pool: profile no startup e no handoff; `profile` no ledger; from/to_profile no artefato | concluído | #84 | F-27, F-28, F-23, F-24, F-25, F-26 | F-30, C4 |
+| F-30 | Custo atribuído por agente com granularidade de profile e `astro cost --by-agent` | concluído | #85 | F-29 | F-31 |
+| F-31 | Health e fallback por profile estendendo C6 (ADR-0007) | bloqueado | #86 | F-30, C6 | — |
 
 Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenciais (multi-agente, multi-provider, comunicação). Pode voltar como issue própria.
 
@@ -73,7 +73,7 @@ Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenci
 | C3 | `web_search` e `web_fetch` com bloqueio de destinos internos | planejado | #57 | F-00, F-09, F-11 | — |
 | C4 | Perfis de agente, subagentes com escopo menor (I-02) e blackboard pelo orquestrador (I-18) | planejado | #58 | F-02, F-05, F-07, F-17, F-23, F-24, F-25, F-26 | P-02 |
 | C5 | Gate de conclusão determinístico e golden tasks com N execuções | planejado | #59 | F-14, F-15 | P-01, P-04 |
-| C6 | Fallback, pool de chaves com cooldown, classes de equivalência (I-22) | planejado | #60 | F-01, F-03, F-07, F-19 | P-01 |
+| C6 | Fallback, pool de chaves com cooldown, classes de equivalência (I-22) | em andamento | #60 | F-01, F-03, F-07, F-19 | P-01 |
 | C7 | Módulos reorganizados, budget por sessão, perfis de ambiente | planejado | #61 | F-02, F-05 | P-01 |
 
 C4 inclui o blackboard entre agentes como sub-itens: entradas tipadas (`fact`, `decision`, `task`, `question`, `artifact`, `result`), proveniência completa (agente, provider, modelo, step, `call_id`, hashes dos arquivos de origem), staleness por hash, projeção por agente com orçamento de tokens, resolução de conflito entre entradas e conteúdo externo marcado como não confiável (nunca promovido a `decision` automaticamente).

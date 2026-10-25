@@ -1,124 +1,144 @@
+<div align="center">
+
 # ASTRO
 
-Objetivo: harness de agentes de código com governança — cada agente executa só o que o escopo dele permite, com a conta e o orçamento designados, e todo run deixa rastro auditável.
+**Multi-agent coding harness with deterministic model routing, append-only audit, and cost governance.**
 
-## O que é o ASTRO
+[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-black)](https://bun.sh)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Runtime local, terminal-first, para tarefas de código com agentes. Um pedido vira uma sessão que planeja, lê, escreve e executa dentro de um escopo declarado, com custo medido por chamada e auditoria append-only.
+</div>
 
-| Capacidade | Onde |
+## What is ASTRO
+
+ASTRO is a local, terminal-first harness for AI coding agents. A request becomes a session that plans, reads, writes and executes inside a declared scope, with cost metered per call and an append-only audit trail.
+
+Multiple named agents, each bound to a model or profile, communicate through durable handoffs. The LLM never chooses its own model — the config does. That is the difference between a demo and a system you can audit.
+
+| Concern | How ASTRO handles it |
 |---|---|
-| Multi-agente com handoff pelo orquestrador | `src/session.ts`, `src/tools/handoff.ts` |
-| Multi-provider (builtin + plugins) | `src/provider/`, `src/plugins.ts` |
-| Ledger de uso e auditoria sanitizada | `src/ledger.ts`, `src/audit.ts` |
-| Tools com manifesto e allowlist | `src/tools/`, `src/sdk/tool.ts` |
-| Sandbox opcional para comandos | `src/tools/run-command.ts:107` |
-| Zero dependências de runtime | `package.json` (só devDependencies) |
+| Which model ran this step? | Every completion is recorded in the ledger: agent, provider (the real one, not the wrapper), model, tokens, cost. |
+| How much did this task cost? | Attributed per agent (and profile), per provider, per quota domain; checked before the call. |
+| Can I reproduce a failed run? | Handoffs are durable artifacts (ack, CAS, idempotent); the ledger is append-only and replayable. |
+| Can a subagent escalate privileges? | No — each agent has its own tool allowlist; denied calls are audited. |
+| Can a provider outage kill a run? | No — fallback chain by priority, retrying only transient errors. |
 
-## Diferenciais
-
-| Diferencial | O que faz | Onde |
-|---|---|---|
-| Escopo por agente | Cada agente declara modelo, tools e orçamento; tool fora da allowlist é negada e auditada como `tool.denied` | `src/config.ts:321`, `src/tools/executor.ts:72` |
-| Custo e quota imputados por domínio | Ledger por agente/provider/domínio; quota diária e mensal bloqueia antes da chamada ao provider | `src/quota.ts`, `src/team.ts` |
-| Handoff entre agentes pelo orquestrador | Troca de agente ativo com evento `agent.switch` auditável, sem canal direto entre agentes | `src/session.ts:54`, `src/session.ts:229` |
-| Rastro completo com custo | Cada completion grava tokens e custo no ledger; cada run registra só `taskHash`, nunca o prompt | `src/app.ts:215`, `src/ledger.ts` |
-
-## Início rápido
+## Quick start
 
 ```bash
 git clone https://github.com/UmTioAii/ASTRO.git && cd ASTRO
 bun install --frozen-lockfile
 cp astro.config.example.json astro.config.json
-export NVIDIA_API_KEY="..."     # ou OPENROUTER_API_KEY; ver tabela abaixo
-bun src/cli.ts run "diga oi"
+export NVIDIA_API_KEY="..."      # credentialRef from your config
+bun src/cli.ts run "create a hello.ts that exports hello()"
 ```
 
-## Variáveis de inicialização
+Secrets never live in config files and are never logged: `openai-compat` keys come only from environment variables named by `credentialRef`; `codex-oauth` reads a local credentials file (`credentialsPath`). The full three-provider example lives in `astro.config.example.json`; the provider guide is `docs/providers.md`.
 
-| Nome | Obrigatória | Padrão | Onde é lida | O que faz |
-|---|---|---|---|---|
-| `<credentialRef>` (ex.: `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) | sim, para providers openai-compat | — | `src/app.ts:122` | Chave do provider; o nome vem da config (`credentialRef`, `src/config.ts:17`), o valor só do ambiente |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | não | desligado | `src/tracing.ts:137` | Habilita tracing OTLP/HTTP com spans de run, step, tool e provider |
-| `ASTRO_CONFIG_REGISTRY` | não | — | `src/cli.ts:484` | Registry (`owner/repo`) usado por `config push/pull` |
-| `GH_TOKEN` ou `GITHUB_TOKEN` | só em `config push/pull` | — | `src/cli.ts:489` | Token do registry de configs |
-| `EVAL_THRESHOLD` | não | `0.85` | `.github/workflows/ci.yml` | Mínimo de pass rate do gate de eval no CI |
+## Configuration (`astro.config.json`)
 
-## Configuração (`astro.config.json`)
-
-| Chave | Tipo | Padrão | Onde |
+| Key | Shape | Default | Where |
 |---|---|---|---|
-| `providers` | `Record<string, ProviderConfig>` | — | `src/config.ts` |
-| `models` | `ModelConfig[]` | — | `src/config.ts` |
-| `agent` | `AgentConfig` | — | `src/config.ts` |
-| `agents` | `Record<string, NamedAgentConfig>` | ausente | `src/config.ts:321` |
-| `tools` | `{ run_command?: { sandbox?: boolean } }` | `sandbox: false` | `src/config.ts` |
-| `telemetry` | `{ enabled, endpoint, sampleRate }` | desligada | `src/config.ts` |
-| `quota` | `Record<domínio, { dailyTokens?, monthlyCostUsd? }>` | sem enforcement | `src/config.ts` |
-| `cache` | `{ enabled, ttlHours, maxEntries }` | desligada; 24h; 10000 | `src/config.ts` |
-| `plugins` | `string[]` | — | `src/plugins.ts` |
-| `version` | semver `x.y.z` | — | `src/config.ts:129` |
+| `providers` | `Record<string, { kind, credentialRef?, baseUrl?, credentialsPath?, quotaDomain?, priority?, fallback?, maxRetries?, retryBackoffMs? }>` | — | `src/config.ts` |
+| `models` | `{ provider, id, tags, context, price? }[]` | — | `src/config.ts` |
+| `modelPool` | `Record<profile, { model, capabilities?, fallback? }>` | absent | `src/registry.ts` |
+| `agent` | `{ model XOR profile, maxSteps, tools, entryAgent? }` | — | `src/config.ts` |
+| `agents` | named agents inheriting from `agent` | absent | `src/config.ts` |
+| `handoff` | `{ ackTimeoutMs }` | `30000` | `src/session.ts` |
+| `pricing` | `Record<"provider/model-id", PriceConfig>` overriding `model.price` | absent | `src/registry.ts` |
+| `quota` | per-domain `{ dailyTokens?, monthlyCostUsd? }` | no enforcement | `src/quota.ts` |
 | `team` | `{ projectBudgetUsd?, agentQuotas?, auditWebhook? }` | — | `src/team.ts` |
-| `paths` | `{ ledger, audit }` | — | relativo ao `--cwd` |
+| `tools` | `{ run_command: { sandbox } }` | `sandbox: false` | `src/tools/run-command.ts` |
+| `cache` | `{ enabled, ttlHours, maxEntries }` | off; 24h; 10000 | `src/cache.ts` |
+| `telemetry` | `{ enabled, endpoint, sampleRate }` | off | `src/telemetry.ts` |
+| `plugins` | `string[]` | — | `src/plugins.ts` |
+| `paths` | `{ ledger, audit }` (relative to `--cwd`) | — | `src/ledger.ts` |
 
-Exemplo mínimo (sem segredo; só `credentialRef`):
+Minimal valid config (note: `id` is the bare model id; the `provider/id` form is used in `agent.model`):
 
 ```json
 {
   "providers": { "nvidia": { "kind": "openai-compat", "baseUrl": "https://integrate.api.nvidia.com/v1", "credentialRef": "NVIDIA_API_KEY" } },
   "models": [{ "provider": "nvidia", "id": "meta/llama-3.3-70b-instruct", "tags": ["writing-code", "tools"], "context": 131072 }],
-  "agent": { "model": "nvidia/meta/llama-3.3-70b-instruct", "maxSteps": 12, "tools": ["read_file", "write_file", "run_command", "grep", "list_dir", "edit", "lsp", "pipeline"] },
+  "agent": { "model": "nvidia/meta/llama-3.3-70b-instruct", "maxSteps": 12, "tools": ["read_file", "write_file", "run_command"] },
   "paths": { "ledger": ".astro/ledger.jsonl", "audit": ".astro/audit.jsonl" }
 }
 ```
 
-O exemplo completo, com os três providers, está em `astro.config.example.json`. Guia de criação de providers e SDKs: `docs/providers.md`.
+Model pool and profiles are implemented — a profile replaces `model` (both together are rejected), and pricing stays inherited from `models[]` (never per profile). Fragment of `astro.config.example.json` (needs the `codex` provider and its `gpt-5.5` model from the full example):
 
-## Comandos da CLI
+```json
+{
+  "modelPool": { "cheap": { "model": "nvidia/meta/llama-3.3-70b-instruct" }, "premium": { "model": "codex/gpt-5.5" } },
+  "agent": { "model": "nvidia/meta/llama-3.3-70b-instruct", "maxSteps": 12, "tools": ["read_file", "handoff"] },
+  "agents": { "planner": { "profile": "premium", "tools": ["handoff"] }, "coder": { "profile": "cheap" } }
+}
+```
 
-| Comando | O que faz | Flags |
+## CLI
+
+All commands run as `bun src/cli.ts <command>`.
+
+| Command | What it does | Flags |
 |---|---|---|
-| `run "<pedido>"` | Executa uma tarefa ponta a ponta e imprime resposta + resumo | `--config`, `--cwd` |
-| `eval` | Roda o golden dataset em modo mock; gate de regressão | `--threshold`, `--golden`, `--report`, `--baseline`, `--write-baseline` |
-| `bench` | Latência, tokens/s e custo por modelo | `--config`, `--models`, `--runs`, `--out` |
-| `serve` | Expõe `/metrics` no formato Prometheus | `--port` |
-| `replay <run-id>` | Re-executa a tarefa e compara métricas com o run original | `--task`, `--config`, `--cwd` |
-| `health` | Valida config, credenciais e conectividade dos providers | `--config` |
-| `config <push\|pull> <nome>` | Publica/recupera config no registry | `--registry`, `--config`, `--token` |
+| `run "<prompt>"` | runs a task end to end; prints answer and summary | `--config`, `--cwd` |
+| `replay <run-id>` | re-runs the task and compares metrics with the original run | `--task`, `--config`, `--cwd` |
+| `eval` | golden dataset in mock mode; regression gate | `--threshold`, `--golden`, `--report`, `--baseline`, `--write-baseline` |
+| `bench` | latency, tokens/s and cost per model | `--config`, `--models`, `--runs`, `--out` |
+| `health` | validates config, credentials and provider connectivity | `--config` |
+| `handoff show <handoff_id>` | inspects a durable handoff artifact with its compaction audit | `--config` |
+| `cost --by-agent` | cost per agent (and profile) read from the ledger | `--config` |
+| `pool list` / `agents list` | lists model-pool profiles / named agents | `--config` |
+| `config <push\|pull> <name>` | publishes/retrieves a config in a GitHub registry | `--registry`, `--config`, `--token` |
+| `serve` | exposes `/metrics` in Prometheus format | `--port` |
 
-## Segurança
+## Environment variables
 
-| Garantia | Invariante | Teste |
+| Name | Required | Where | Purpose |
+|---|---|---|---|
+| `<credentialRef>` (e.g. `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) | for openai-compat providers | `src/app.ts` | provider key; the name comes from config, the value only from the environment |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | `src/tracing.ts` | enables OTLP tracing (run, step, tool and provider spans) |
+| `ASTRO_CONFIG_REGISTRY` | no | `src/cli.ts` | registry (`owner/repo`) used by `config push/pull` |
+| `GH_TOKEN` / `GITHUB_TOKEN` | only for `config push/pull` | `src/cli.ts` | registry token |
+
+## Security
+
+| Guarantee | Invariant | Tests |
 |---|---|---|
-| Segredo só via ambiente; redação de segredo em auditoria e provider | I-03 | `tests/audit.test.ts`, `tests/provider.test.ts`, `tests/app.test.ts:52` |
-| Tool fora da allowlist não executa; negação auditada | I-01 | `tests/tools.test.ts`, `tests/tool-isolation.test.ts` |
-| Caminho confinado ao `--cwd` com resolução real (symlink/junction bloqueado); sandbox opcional para `run_command` | I-11 | `tests/tools.test.ts`, `tests/security-f00.test.ts`, `tests/sandbox.test.ts` |
-| `run_command` sanitiza o ambiente do filho (remove `credentialRef`s e nomes de segredo) | I-03 | `tests/security-f00.test.ts` |
-| `write_file` recusa o estado do harness (`.astro/` e caminhos protegidos) | I-11 | `tests/security-f00.test.ts` |
-| Falha terminal auditada com `run.stopped` (reason e `errorClass`) | I-04 | `tests/security-f00.test.ts` |
-| Prompt não persistido; `run.started` guarda só `taskHash` | I-04 | `src/app.ts:215`, `tests/app.test.ts:48` |
-| Quota diária/mensal e budget bloqueiam antes do gasto | I-17 | `tests/quota.test.ts`, `tests/team.test.ts` |
+| Secrets only from the environment; redaction in audit, ledger, errors and prompts | I-03 | `tests/security-*.test.ts`, `tests/audit.test.ts` |
+| Tools outside the allowlist never execute; denials are audited | I-01 | `tests/tools.test.ts`, `tests/tool-isolation.test.ts` |
+| Paths confined to `--cwd` (symlink/junction resolved); optional sandbox for `run_command` | I-11 | `tests/security-f00.test.ts`, `tests/sandbox.test.ts` |
+| Child shell environment sanitized (credentialRefs and secret names removed) | I-03 | `tests/security-f00.test.ts` |
+| Harness state (`.astro/`) not writable by tools | I-11 | `tests/security-f00.test.ts` |
+| Prompts never persisted; `run.started` stores only `taskHash` | I-04 | `tests/golden-f2.test.ts` |
+| Quota and budget block before spending | I-17 | `tests/quota.test.ts`, `tests/team.test.ts` |
+| Handoff is single-path: idempotent by `handoff_id` (CAS), identity verified at reception, digest-checked artifacts | I-18 | `tests/handoff-cas.test.ts`, `tests/handoff-compact.test.ts` |
 
-## Documentação
+## Design principles
 
-| Arquivo | Função |
-|---|---|
-| `docs/CONTRIBUTING-DOCS.md` | Padrão de escrita para toda documentação |
-| `docs/workflow.md` | Fluxo de branch, commit, PR e merge |
-| `docs/review-checklist.md` | Checklist de revisão de PR |
-| `docs/invariants.md` | Invariantes I-01 a I-22 com cobertura no código |
-| `docs/decisions.md` | Decisões D-01 a D-20 e correspondência com a trilha |
-| `docs/providers.md` | Providers, credenciais, SDKs e smoke manual |
-| `docs/roadmap.md` | Fases concluídas F0–F7 |
-| `docs/roadmap-complementar.md` | Camadas 0–3 planejadas |
+Determinism over flexibility; security as a contract; every action auditable; extend, don't recreate.
 
 ## Status
 
-| Escopo | Estado | Referência |
+| Scope | State | Reference |
 |---|---|---|
-| F0–F7 (fundação, multi-agent, tools, eval, produção, ecossistema) | concluído | `docs/roadmap.md` |
-| Camadas 0–3 (F-xx, T1–T4, C1–C7, P-01–P-04) | planejado | `docs/roadmap-complementar.md`, issues #55–#65 |
+| F0–F7 (foundation, multi-agent, tools, eval, production, ecosystem) | done | `docs/roadmap.md` |
+| Layer 0 (durable handoff with ack/CAS/compaction, model pool and profiles, per-agent cost, provider fallback) | in progress | F-03, F-07, F-10, F-23..F-30 merged (#75–#102); C6 in progress (#60, C6a merged in #103); F-31 (#86) blocked on C6 |
+| C1–C5, C7 (skills, MCP, web tools, advanced agents, quality, organization), T1–T4 (REPL, TUI, sessions) | planned | `docs/roadmap-complementar.md`, issues #55–#65 |
 
-## Contribuir e licença
+## Documentation
 
-Contribuição segue `docs/workflow.md` (issue, branch por item, PR com revisão obrigatória, squash merge). Suíte: `bun test` e `bun run typecheck`. Licença: MIT (`LICENSE`).
+| File | Purpose |
+|---|---|
+| `docs/CONTRIBUTING-DOCS.md` | documentation standard |
+| `docs/workflow.md` | branch, commit, PR and merge flow |
+| `docs/review-checklist.md` | PR review checklist |
+| `docs/invariants.md` | invariants I-01..I-22 mapped to code |
+| `docs/decisions.md` | decisions D-01..D-20 |
+| `docs/adr/` | architecture decision records |
+| `docs/providers.md` | providers, credentials and SDKs |
+| `docs/roadmap.md` / `docs/roadmap-complementar.md` | completed phases / planned layers |
+
+## Contributing and license
+
+Contributions follow `docs/workflow.md`: one issue per change, a branch per item, PR with mandatory independent review, squash merge. Suite: `bun test` and `bun run typecheck`. License: MIT (`LICENSE`).
