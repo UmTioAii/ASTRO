@@ -184,6 +184,8 @@ export const editTool: Tool = {
     permission: "write",
     timeoutMs: 30_000,
     retryable: false,
+    idempotent: false,
+    sideEffects: "filesystem",
   },
 
   async execute(input, ctx): Promise<ToolResult> {

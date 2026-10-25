@@ -22,6 +22,8 @@ export const handoffManifest: ToolManifest = {
   permission: "handoff",
   timeoutMs: 5000,
   retryable: false,
+  idempotent: true,
+  sideEffects: "none",
 };
 
 /** Tool de handoff — a execução real é feita pelo runtime multi-agent. */

@@ -1,5 +1,8 @@
 import type { CallJournal } from "../call-id";
 
+/** Efeitos externos que a tool pode causar (F-10, I-12): vocabulário fechado. */
+export type SideEffects = "none" | "filesystem" | "network" | "process";
+
 /** Metadados obrigatórios de uma tool (I-12). */
 export interface ToolManifest {
   name: string;
@@ -9,6 +12,10 @@ export interface ToolManifest {
   permission: string;
   timeoutMs: number;
   retryable: boolean;
+  /** Repetir a mesma chamada deixa o sistema no mesmo estado (F-10). */
+  idempotent: boolean;
+  /** O que a tool pode mutar fora da conversa (F-10). */
+  sideEffects: SideEffects;
 }
 
 /**

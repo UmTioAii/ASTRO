@@ -18,6 +18,7 @@ export function definePlugin() {
           description: "Executa uma consulta SQL no banco de teste.",
           parameters: { type: "object", properties: { sql: { type: "string" } }, required: ["sql"] },
           risk: "high", permission: "execute", timeoutMs: 5000, retryable: false,
+          idempotent: false, sideEffects: "process",
         },
         async execute(input) {
           const sql = input.sql ?? "";
