@@ -114,6 +114,32 @@ describe("FallbackProvider (C6)", () => {
     expect(calls).toEqual(["b"]);
   });
 
+  test("falha na fábrica de um fallback pula para o próximo da cadeia com evento de audit", async () => {
+    const a: Provider = { complete: async () => { throw new ProviderError("outage", "a fora"); } };
+    let bCreated = 0;
+    const c: Provider = { complete: async () => resp({ content: "de-c" }) };
+    const audit = auditOf();
+    const fb = new FallbackProvider({ providers: [
+      { name: "a", priority: 1, create: () => a },
+      { name: "b", priority: 2, create: () => { bCreated++; throw new Error("defina KEY_B no ambiente"); } },
+      { name: "c", priority: 3, create: () => c },
+    ], maxRetries: 1, retryBackoffMs: 1, audit, run: "r1" });
+    const out = await fb.complete(req);
+    expect(out.provider).toBe("c"); // c saudável atende apesar da fábrica de b quebrar
+    expect(out.content).toBe("de-c");
+    expect(bCreated).toBe(1); // fábrica chamada uma vez, sem retry de fábrica
+    const failures = audit.readAll().filter((e) => e.tipo === "provider.failure");
+    expect(failures.map((e) => (e.payload as { provider: string }).provider)).toEqual(["a", "a", "b"]);
+    expect(failures.at(-1)!.payload).toMatchObject({ provider: "b", errorClass: "invalid_request" });
+    expect(audit.readAll().some((e) => e.tipo === "provider.success")).toBe(true);
+  });
+
+  test("maxRetries fracionário → ConfigError", () => {
+    const raw = structuredClone(baseConfig);
+    (raw.providers as Record<string, Record<string, unknown>>).a!.maxRetries = 1.5;
+    expect(() => validateConfig(raw)).toThrow(/maxRetries/);
+  });
+
   test("integração: A falha, B responde sem intervenção e o ledger registra o provider real", async () => {
     const down = Bun.serve({
       port: 0,

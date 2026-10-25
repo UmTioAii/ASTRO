@@ -223,6 +223,14 @@ function expectPositiveInteger(value: unknown, field: string): number {
   return value;
 }
 
+function expectNonNegativeInteger(value: unknown, field: string): number {
+  const n = expectNonNegativeNumber(value, field);
+  if (!Number.isInteger(n)) {
+    fail(`config inválida: "${field}" deve ser um inteiro não negativo`);
+  }
+  return n;
+}
+
 function expectBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") {
     fail(`config inválida: "${field}" deve ser booleano`);
@@ -257,7 +265,7 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
   const fallbackFields = {
     ...(raw.priority === undefined ? {} : { priority: expectPositiveInteger(raw.priority, `${field}.priority`) }),
     ...(raw.fallback === undefined ? {} : { fallback: expectStringArray(raw.fallback, `${field}.fallback`) }),
-    ...(raw.maxRetries === undefined ? {} : { maxRetries: expectNonNegativeNumber(raw.maxRetries, `${field}.maxRetries`) }),
+    ...(raw.maxRetries === undefined ? {} : { maxRetries: expectNonNegativeInteger(raw.maxRetries, `${field}.maxRetries`) }),
     ...(raw.retryBackoffMs === undefined ? {} : { retryBackoffMs: expectPositiveInteger(raw.retryBackoffMs, `${field}.retryBackoffMs`) }),
   };
 

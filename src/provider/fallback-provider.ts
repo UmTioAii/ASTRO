@@ -50,7 +50,16 @@ export class FallbackProvider implements Provider {
   async complete(req: CompletionRequest): Promise<CompletionResponse> {
     let lastError: unknown;
     for (const entry of this.#chain) {
-      const provider = entry.create();
+      let provider: Provider;
+      try {
+        provider = entry.create();
+      } catch (error) {
+        // Falha de fábrica (ex.: credencial ausente) não aborta a cadeia:
+        // vira evento de falha e o próximo provider saudável é tentado
+        lastError = error;
+        this.#log("provider.failure", { provider: entry.name, errorClass: "invalid_request", attempt: 1 });
+        continue;
+      }
       for (let attempt = 1; attempt <= this.#maxRetries + 1; attempt++) {
         const startedAt = Date.now();
         try {
