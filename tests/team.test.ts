@@ -8,6 +8,8 @@ import { Ledger } from "../src/ledger";
 import {
   assertAgentQuota,
   assertProjectBudget,
+  costByAgent,
+  formatCostByAgent,
   sendAuditWebhook,
   TeamQuotaError,
 } from "../src/team";
@@ -98,6 +100,31 @@ describe("assertAgentQuota (F7-5)", () => {
     expect(err).toBeInstanceOf(TeamQuotaError);
     expect(err.message).toContain("coder");
     expect(err.message).toContain("quota do agent");
+  });
+});
+
+describe("custo por agente com profile (F-30)", () => {
+  test("costByAgent acumula do ledger com agent + profile; tabela do CLI", () => {
+    const ledger = new Ledger(join(mkdtempSync(join(tmpdir(), "astro-f30-")), "ledger.jsonl"));
+    const price = { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false };
+    ledger.record({ run: "r1", agent: "planner", profile: "premium", provider: "openai", model: "gpt-4o", credentialRef: "K", quotaDomain: "d", tokensIn: 1000, tokensOut: 500 }, price);
+    ledger.record({ run: "r1", agent: "planner", provider: "openai", model: "gpt-4o-mini", credentialRef: "K", quotaDomain: "d", tokensIn: 100, tokensOut: 50 }, price);
+    ledger.record({ run: "r1", agent: "coder", provider: "openai", model: "gpt-4o-mini", credentialRef: "K", quotaDomain: "d", tokensIn: 200, tokensOut: 100 }, price);
+
+    const costs = costByAgent(ledger);
+    expect(costs).toHaveLength(3);
+    expect(costs.find((c) => c.profile === "premium")).toMatchObject({ agent: "planner", profile: "premium", costUsd: 0.0015 });
+    expect(costs.find((c) => c.agent === "planner" && c.profile === undefined)!.costUsd).toBeCloseTo(0.00015, 12);
+    const sum = costs.reduce((acc, c) => acc + c.costUsd, 0);
+    expect(sum).toBeCloseTo(ledger.total().costUsd, 12); // D-10: leitura do ledger, sem segundo contador
+
+    const table = formatCostByAgent(ledger);
+    expect(table).toContain("planner");
+    expect(table).toContain("premium");
+    expect(table).toContain("gpt-4o");
+    expect(table).toContain("US$");
+    const empty = formatCostByAgent(new Ledger(join(mkdtempSync(join(tmpdir(), "astro-f30-")), "vazio.jsonl")));
+    expect(empty).toContain("sem entradas"); // ledger vazio: mensagem clara
   });
 });
 
