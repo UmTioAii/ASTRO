@@ -25,6 +25,8 @@ export interface LedgerEntry {
   costUsd: number | null;
   /** Hash SHA-256 por tool call do step (F-02/I-03); array vazio sem calls. */
   callHashes?: string[];
+  /** Profile da model pool do agent (F-29, ADR-0007); ausente sem profile. */
+  profile?: string;
   /** Discriminador do JSONL; entradas antigas (pré-v1) não têm. */
   kind?: "usage";
   /** Ordem monotônica no arquivo (F-25, ADR-0006); entradas antigas não têm. */
@@ -149,6 +151,7 @@ export class Ledger {
       ts: new Date().toISOString(),
       ...e,
       run: redactSecrets(e.run), agent: redactSecrets(e.agent),
+      ...(e.profile === undefined ? {} : { profile: redactSecrets(e.profile) }),
       costUsd,
       seq: this.takeSeq(),
     };
