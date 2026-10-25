@@ -45,7 +45,7 @@ test("tool desconhecida, args ilegíveis e fora do allow → erro, não crash", 
 test("timeout devolve erro", async () => {
   const cwd = dir();
   const slow: Tool = {
-    manifest: { name: "slow", description: "x", parameters: {}, risk: "low", permission: "read", timeoutMs: 30, retryable: false },
+    manifest: { name: "slow", description: "x", parameters: {}, risk: "low", permission: "read", timeoutMs: 30, retryable: false, idempotent: true, sideEffects: "none" },
     execute: () => new Promise<ToolResult>(() => {}),
   };
   const ex = new ToolExecutor({ tools: [slow], allow: ["slow"], audit: new Auditor(join(cwd, ".astro", "audit.jsonl")) });

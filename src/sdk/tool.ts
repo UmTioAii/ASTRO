@@ -17,6 +17,7 @@ export type { Tool, ToolContext, ToolManifest, ToolResult };
 export { ToolError };
 
 const RISKS: ReadonlySet<string> = new Set(["low", "medium", "high"]);
+const SIDE_EFFECTS: ReadonlySet<string> = new Set(["none", "filesystem", "network", "process"]);
 
 /** Valida um manifesto de tool (I-12); lança ToolError com campo culpado. */
 export function validateManifest(value: unknown): ToolManifest {
@@ -50,6 +51,12 @@ export function validateManifest(value: unknown): ToolManifest {
   if (typeof m.retryable !== "boolean") {
     throw new ToolError("manifesto.retryable deve ser booleano");
   }
+  if (typeof m.idempotent !== "boolean") {
+    throw new ToolError("manifesto.idempotent deve ser booleano");
+  }
+  if (typeof m.sideEffects !== "string" || !SIDE_EFFECTS.has(m.sideEffects)) {
+    throw new ToolError('manifesto.sideEffects deve ser "none", "filesystem", "network" ou "process"');
+  }
 
   return {
     name: m.name,
@@ -59,6 +66,8 @@ export function validateManifest(value: unknown): ToolManifest {
     permission: m.permission,
     timeoutMs: m.timeoutMs,
     retryable: m.retryable,
+    idempotent: m.idempotent,
+    sideEffects: m.sideEffects as ToolManifest["sideEffects"],
   };
 }
 

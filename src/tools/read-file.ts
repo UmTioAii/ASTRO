@@ -36,6 +36,8 @@ export const readFileTool: Tool = {
     permission: "read",
     timeoutMs: 5_000,
     retryable: true,
+    idempotent: true,
+    sideEffects: "none",
   },
 
   async execute(input, ctx): Promise<ToolResult> {

@@ -282,6 +282,8 @@ export const lspTool: Tool = {
     permission: "read",
     timeoutMs: 15_000,
     retryable: true,
+    idempotent: true,
+    sideEffects: "none",
   },
 
   async execute(input, ctx): Promise<ToolResult> {

@@ -90,6 +90,8 @@ export const pipelineTool: Tool = {
     permission: "write",
     timeoutMs: 120_000,
     retryable: false,
+    idempotent: false,
+    sideEffects: "process",
   },
 
   async execute(input, ctx): Promise<ToolResult> {
