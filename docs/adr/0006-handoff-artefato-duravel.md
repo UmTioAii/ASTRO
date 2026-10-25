@@ -17,6 +17,8 @@ Gravado no ledger append-only como `handoff.created` antes da troca de agente; c
 
 Compactação é lossy por design, com recuperação por `source_refs = {ledger_id, seq_start, seq_end}`; entradas do ledger ganham `seq` monotônico opcional (aditivo; `schemaVersion` permanece 1, ADR-0002). Erros de handoff usam códigos estáveis — `handoff_target_not_found`, `handoff_mismatch`, `handoff_artifact_mismatch` são não retentáveis; `handoff_ack_timeout` é retriable — mapeados à taxonomia fixa de D-18, sem classe nova. Sem broker externo (D-02).
 
+CAS de via única (F-26): `handoff.created`/`handoff.received` existentes com o mesmo `handoff_id` são devolvidos sem duplicar (idempotentes). O CAS depende do append atômico do ledger; a seção crítica checar-then-append é serializada entre processos por lock de arquivo (`<ledger>.lock`, exclusivo com timeout) — se o lock estiver quebrado além do timeout, o CAS segue em melhor esforço. O verifier de identidade na recepção compara `run|from|to|taskHash` exatos e tolera `source_step ± 1` como desempate, sem re-derivar step do ledger; divergência → `handoff_mismatch` não retentável (I-18).
+
 ## Consequências
 
 - Ganho: entrega garantida (I-19), trilha auditável (I-04), idempotência por `handoff_id`.
