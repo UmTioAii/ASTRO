@@ -311,11 +311,12 @@ export class Ledger {
     return { tokensIn, tokensOut, costUsd };
   }
 
-  /** Agregação por agent: tokens e custo de cada agent no ledger. */
-  byAgent(): Record<string, { tokensIn: number; tokensOut: number; costUsd: number }> {
-    const result: Record<string, { tokensIn: number; tokensOut: number; costUsd: number }> = Object.create(null);
+  /** Agregação por agent (F-30): tokens e custo por agent (+profile quando presente); provider/model do primeiro uso do bucket. */
+  byAgent(): Record<string, { agent: string; profile?: string; provider: string; model: string; tokensIn: number; tokensOut: number; costUsd: number }> {
+    const result: Record<string, { agent: string; profile?: string; provider: string; model: string; tokensIn: number; tokensOut: number; costUsd: number }> = Object.create(null);
     for (const entry of this.readAll()) {
-      const agg = (result[entry.agent] ??= { tokensIn: 0, tokensOut: 0, costUsd: 0 });
+      const key = entry.profile === undefined ? entry.agent : `${entry.agent}|${entry.profile}`;
+      const agg = (result[key] ??= { agent: entry.agent, ...(entry.profile === undefined ? {} : { profile: entry.profile }), provider: entry.provider, model: entry.model, tokensIn: 0, tokensOut: 0, costUsd: 0 });
       agg.tokensIn += entry.tokensIn;
       agg.tokensOut += entry.tokensOut;
       agg.costUsd += entry.costUsd ?? 0;

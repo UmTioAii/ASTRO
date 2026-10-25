@@ -89,6 +89,22 @@ export function assertAgentQuota(
   }
 }
 
+/** Custo acumulado por agente (F-30): agent + profile quando presente. D-10: sempre leitura do ledger. */
+export function costByAgent(ledger: Ledger): Array<{ agent: string; profile?: string; costUsd: number }> {
+  return Object.values(ledger.byAgent()).map(({ agent, profile, costUsd }) => ({
+    agent, ...(profile === undefined ? {} : { profile }), costUsd,
+  }));
+}
+
+/** Tabela de custo por agente do `astro cost --by-agent` (F-30). */
+export function formatCostByAgent(ledger: Ledger): string {
+  const rows = Object.values(ledger.byAgent());
+  if (rows.length === 0) return "sem entradas de uso no ledger";
+  const lines = rows.map((r) =>
+    `${r.agent}${r.profile === undefined ? "" : ` (${r.profile})`} · ${r.provider}/${r.model} · ${r.tokensIn}/${r.tokensOut} tokens · US$ ${r.costUsd.toFixed(6)}`);
+  return ["agente · modelo · tokens in/out · custo", ...lines].join("\n");
+}
+
 /**
  * Envia um AuditEvent ao webhook (POST JSON) com até 3 tentativas.
  * Fire-and-forget: falha silenciosa — auditoria local já gravou o evento.
