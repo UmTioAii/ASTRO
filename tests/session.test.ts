@@ -113,6 +113,7 @@ describe("estado de execução e callHashes no ledger (F-02)", () => {
       resp({ toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "planner", task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] }) }] }),
     ]);
     s.opts.executor = new ToolExecutor({ tools: [handoffTool], allow: ["handoff"], audit: s.opts.audit });
+    s.opts.knownAgents = ["planner"];
     const err = await runSession(s.opts, "transfira").then(() => null).catch((e: unknown) => e);
     expect((err as { name?: string }).name).toBe("HandoffSignal");
     expect(s.ledger.lastState("r1")).toBeUndefined();

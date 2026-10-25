@@ -40,6 +40,8 @@ export interface SessionOptions {
   secretEnvNames?: readonly string[];
   /** Profile da model pool usado pelo agent (F-23/F-27); vai no artefato de handoff. */
   agentProfile?: string;
+  /** Agents nomeados disponíveis; ausente = nenhum (destino de handoff é sempre inválido). */
+  knownAgents?: readonly string[];
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -63,13 +65,8 @@ interface HandoffResult {
 /** Verifica se o output de uma tool é um handoff com artefato. */
 function isHandoffResult(output: string): HandoffResult | null {
   try {
-    const parsed = JSON.parse(output);
-    if (
-      parsed.handoff === true &&
-      typeof parsed.to === "string" &&
-      typeof parsed.draft === "object" &&
-      parsed.draft !== null
-    ) {
+    const parsed = JSON.parse(output) as { handoff?: unknown; to?: unknown; draft?: unknown };
+    if (parsed.handoff === true && typeof parsed.to === "string" && typeof parsed.draft === "object" && parsed.draft !== null) {
       return { handoff: true, to: parsed.to, draft: parsed.draft as HandoffDraft };
     }
   } catch {
@@ -78,55 +75,27 @@ function isHandoffResult(output: string): HandoffResult | null {
   return null;
 }
 
-/**
- * Valida o destino antes de executar a tool handoff (F-23): alvo fora da
- * configuração é fatal em vez de virar erro de tool para o modelo retentar.
- */
-function assertKnownTarget(
-  call: { name: string; arguments: string },
-  knownAgents: readonly string[] | undefined,
-): void {
+/** Valida o destino antes de executar a tool handoff (F-23): alvo fora da configuração é fatal. */
+function assertKnownTarget(call: { name: string; arguments: string }, knownAgents: readonly string[] | undefined): void {
   if (call.name !== "handoff" || knownAgents === undefined) return;
-  let parsed: { to?: unknown };
-  try {
-    parsed = JSON.parse(call.arguments);
-  } catch {
-    return; // argumentos ilegíveis ficam com o erro do executor
-  }
-  const to = parsed?.to;
+  let to: unknown;
+  try { to = (JSON.parse(call.arguments) as { to?: unknown }).to; } catch { return; }
   if (typeof to === "string" && !knownAgents.includes(to)) {
-    throw new HandoffError(
-      "handoff_target_not_found",
-      `agent destino "${to}" não encontrado na configuração`,
-    );
+    throw new HandoffError("handoff_target_not_found", `agent destino "${to}" não encontrado na configuração`);
   }
 }
 
 /** Custo do run até agora, lido do ledger (D-10: nunca contador paralelo). */
 function budgetSpent(ledger: Ledger, run: string): { tokens: number; usd: number } {
-  return ledger.readAll().reduce(
-    (acc, entry) =>
-      entry.run === run
-        ? { tokens: acc.tokens + entry.tokensIn + entry.tokensOut, usd: acc.usd + (entry.costUsd ?? 0) }
-        : acc,
-    { tokens: 0, usd: 0 },
-  );
+  return ledger.readAll().reduce((acc, e) => e.run === run
+    ? { tokens: acc.tokens + e.tokensIn + e.tokensOut, usd: acc.usd + (e.costUsd ?? 0) } : acc,
+    { tokens: 0, usd: 0 });
 }
 
 /** Grava o evento no ledger e espelha no audit sanitizado (I-04). */
-function recordHandoffEvent(
-  kind: "handoff.created" | "handoff.received",
-  deps: { ledger: Ledger; audit: Auditor; run: string },
-  artifact: HandoffArtifactV1,
-  agent: string,
-): LedgerHandoffEntry {
+function recordHandoffEvent(kind: "handoff.created" | "handoff.received", deps: { ledger: Ledger; audit: Auditor; run: string }, artifact: HandoffArtifactV1, agent: string): LedgerHandoffEntry {
   const entry = deps.ledger.recordHandoff(kind, deps.run, artifact, { agent });
-  deps.audit.append({
-    run: deps.run,
-    agent,
-    tipo: kind,
-    payload: { handoff_id: entry.handoff_id, artifact: entry.artifact },
-  });
+  deps.audit.append({ run: deps.run, agent, tipo: kind, payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
   return entry;
 }
 
@@ -150,6 +119,7 @@ export async function runSession(
   ];
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step. */
   const journal = new CallJournal();
+  const knownAgents = opts.knownAgents ?? [];
 
   try {
     for (let step = 1; step <= opts.maxSteps; step++) {
@@ -207,6 +177,7 @@ export async function runSession(
       });
 
       for (const call of response.toolCalls) {
+        assertKnownTarget(call, knownAgents);
         const toolSpan = tracer?.start(
           "tool.exec",
           { tool: call.name, agent: opts.agent },
@@ -219,6 +190,7 @@ export async function runSession(
             agent: opts.agent,
             step,
             journal,
+            knownAgents,
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
@@ -229,18 +201,14 @@ export async function runSession(
         messages.push({ role: "tool", content: result.output, toolCallId: call.id });
 
         // Detectar handoff no resultado: artefato durável gravado antes do sinal
-        const handoff = isHandoffResult(result.output);
+        const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {
           const entry = recordHandoffEvent(
             "handoff.created",
             { ledger: opts.ledger, audit: opts.audit, run: opts.run },
             buildHandoffArtifact({
-              run: opts.run,
-              from: opts.agent,
-              to: handoff.to,
-              sourceStep: step,
-              budgetSpent: budgetSpent(opts.ledger, opts.run),
-              draft: handoff.draft,
+              run: opts.run, from: opts.agent, to: handoff.to, sourceStep: step,
+              budgetSpent: budgetSpent(opts.ledger, opts.run), draft: handoff.draft,
               ...(opts.agentProfile === undefined ? {} : { fromProfile: opts.agentProfile }),
             }),
             opts.agent,
@@ -344,6 +312,7 @@ export async function runMultiAgentSession(
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
   const journal = new CallJournal();
   const knownAgents = opts.registry.listAgentNames?.();
+  const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run };
 
   const tracer = opts.tracer;
   const rootSpan = tracer?.start("run", {
@@ -453,34 +422,18 @@ export async function runMultiAgentSession(
         tracer?.end(toolSpan, { isError: result.isError === true });
         messages.push({ role: "tool", content: result.output, toolCallId: call.id });
 
-        const handoff = isHandoffResult(result.output);
+        const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {
           const toAgent = opts.registry.getAgent(handoff.to);
-          if (toAgent === undefined) {
-            throw new HandoffError(
-              "handoff_target_not_found",
-              `agent destino "${handoff.to}" não encontrado na configuração`,
-            );
-          }
-          // Grava created ANTES de trocar o agent (ADR-0006): queda entre a
-          // gravação e a troca deixa o artefato recuperável no ledger.
-          const entry = recordHandoffEvent(
-            "handoff.created",
-            { ledger: opts.ledger, audit: opts.audit, run: opts.run },
-            buildHandoffArtifact({
-              run: opts.run,
-              from: currentAgentName,
-              to: handoff.to,
-              sourceStep: step,
-              budgetSpent: budgetSpent(opts.ledger, opts.run),
-              draft: handoff.draft,
-              ...(currentAgent.profile === undefined ? {} : { fromProfile: currentAgent.profile }),
-              ...(toAgent.profile === undefined ? {} : { toProfile: toAgent.profile }),
-            }),
-            currentAgentName,
-          );
-
-          // Trocar agent (só depois do created estar no ledger)
+          if (toAgent === undefined) throw new HandoffError("handoff_target_not_found",
+            `agent destino "${handoff.to}" não encontrado na configuração`);
+          // Grava created ANTES de trocar o agent (ADR-0006): queda deixa o artefato recuperável.
+          const entry = recordHandoffEvent("handoff.created", handoffDeps, buildHandoffArtifact({
+            run: opts.run, from: currentAgentName, to: handoff.to, sourceStep: step,
+            budgetSpent: budgetSpent(opts.ledger, opts.run), draft: handoff.draft,
+            ...(currentAgent.profile === undefined ? {} : { fromProfile: currentAgent.profile }),
+            ...(toAgent.profile === undefined ? {} : { toProfile: toAgent.profile }),
+          }), currentAgentName);
           currentAgentName = handoff.to;
           currentAgent = toAgent;
           currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
@@ -488,19 +441,9 @@ export async function runMultiAgentSession(
           currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
           agentSteps = 0; // reseta contador do novo agent
           agentsUsed.push(currentAgentName);
-
-          opts.audit.append({
-            run: opts.run,
-            agent: entry.artifact.from,
-            tipo: "agent.switch",
-            payload: { from: entry.artifact.from, to: currentAgentName, handoff_id: entry.handoff_id },
-          });
-          recordHandoffEvent(
-            "handoff.received",
-            { ledger: opts.ledger, audit: opts.audit, run: opts.run },
-            entry.artifact,
-            currentAgentName,
-          );
+          opts.audit.append({ run: opts.run, agent: entry.artifact.from, tipo: "agent.switch",
+            payload: { from: entry.artifact.from, to: currentAgentName, handoff_id: entry.handoff_id } });
+          recordHandoffEvent("handoff.received", handoffDeps, entry.artifact, currentAgentName);
           messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${currentAgentName}": ${JSON.stringify(entry.artifact)}]` });
           handoffTriggered = true;
           break; // interrompe execução das outras tools deste step

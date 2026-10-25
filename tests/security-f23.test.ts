@@ -20,7 +20,7 @@ describe("segurança F-23: segredo no handoff nunca chega ao ledger in natura (I
   test("recordHandoff sanitiza o artefato antes de gravar e preserva budget", () => {
     const path = join(mkdtempSync(join(tmpdir(), "astro-f23-sec-")), "ledger.jsonl");
     const artifact = buildHandoffArtifact({
-      run: "r1", from: "planner", to: "coder", sourceStep: 1,
+      run: `run ${NV}`, from: `from ${SK}`, to: `to ${BEARER}`, sourceStep: 1,
       budgetSpent: { tokens: 42, usd: 0.5 }, draft: draft(),
     });
     const entry = new Ledger(path).recordHandoff("handoff.created", "r1", artifact);
