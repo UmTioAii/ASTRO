@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import type { PriceConfig } from "./config";
@@ -7,6 +7,9 @@ import { redactSecrets } from "./sanitize-external";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
 export const LEDGER_SCHEMA_VERSION = 1;
+
+/** Timeout do lock de arquivo do CAS de handoff (F-26); depois segue em melhor esforço. */
+const LEDGER_LOCK_TIMEOUT_MS = 1_000;
 
 export interface LedgerEntry {
   schemaVersion: number;
@@ -218,6 +221,12 @@ export class Ledger {
   /**
    * Grava um evento de handoff (ADR-0006). O artefato é sanitizado antes de ir
    * ao disco (I-03); `handoff_id` é recalculado do artefato já sanitizado.
+   *
+   * CAS de via única (F-26, I-18): `handoff.created`/`handoff.received`
+   * existentes com o mesmo `handoff_id` são devolvidos sem duplicar. O CAS
+   * depende do append atômico do ledger; o lock de arquivo abaixo serializa a
+   * checagem+append entre processos — se o lock estiver quebrado/ocupado além
+   * do timeout, segue em melhor esforço (mitigação documentada no ADR-0006).
    */
   recordHandoff(
     kind: HandoffEventKind,
@@ -226,13 +235,52 @@ export class Ledger {
     opts?: { agent?: string; receiverAgent?: string; reason?: string },
   ): LedgerHandoffEntry {
     const safe = sanitizeHandoffArtifact(artifact);
+    const id = handoffId(safe);
+    if (kind === "handoff.created" || kind === "handoff.received") {
+      return this.withLedgerLock(() => {
+        const existing = this.readHandoffs().find((e) => e.kind === kind && e.handoff_id === id);
+        if (existing !== undefined) return existing;
+        return this.appendHandoff(kind, run, safe, id, opts);
+      });
+    }
+    return this.appendHandoff(kind, run, safe, id, opts);
+  }
+
+  /** Serializa a seção crítica do CAS com um lock de arquivo (F-26). */
+  private withLedgerLock<T>(critical: () => T): T {
+    const lockPath = `${this.path}.lock`;
+    const deadline = Date.now() + LEDGER_LOCK_TIMEOUT_MS;
+    for (;;) {
+      let fd: number | undefined;
+      try {
+        fd = openSync(lockPath, "wx"); // exclusivo: falha se outro processo segura o lock
+        try {
+          return critical();
+        } finally {
+          closeSync(fd);
+          rmSync(lockPath, { force: true });
+        }
+      } catch {
+        if (Date.now() >= deadline) return critical(); // lock quebrado: melhor esforço
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); // espera síncrona de 5ms
+      }
+    }
+  }
+
+  private appendHandoff(
+    kind: HandoffEventKind,
+    run: string,
+    safe: HandoffArtifactV1,
+    id: string,
+    opts?: { agent?: string; receiverAgent?: string; reason?: string },
+  ): LedgerHandoffEntry {
     const ts = new Date().toISOString();
     const entry: LedgerHandoffEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
       ts,
       run: redactSecrets(run),
       kind,
-      handoff_id: handoffId(safe),
+      handoff_id: id,
       artifact: safe,
       ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
       ...(opts?.receiverAgent === undefined ? {} : { receiver_agent: redactSecrets(opts.receiverAgent), received_at: ts }),
