@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { PriceConfig } from "./config";
 import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./handoff/types";
 import { redactSecrets } from "./sanitize-external";
@@ -24,6 +24,8 @@ export interface LedgerEntry {
   callHashes?: string[];
   /** Discriminador do JSONL; entradas antigas (pré-v1) não têm. */
   kind?: "usage";
+  /** Ordem monotônica no arquivo (F-25, ADR-0006); entradas antigas não têm. */
+  seq?: number;
 }
 
 /** Estado de execução de um run gravado no ledger (F-02). */
@@ -37,6 +39,8 @@ export interface LedgerStateEntry {
   state: RunState;
   agent?: string;
   reason?: string;
+  /** Ordem monotônica no arquivo (F-25). */
+  seq?: number;
 }
 
 export type LedgerAnyEntry = LedgerEntry | LedgerStateEntry | LedgerHandoffEntry;
@@ -58,6 +62,8 @@ export interface LedgerHandoffEntry {
   received_at?: string;
   /** Em `handoff.failed`/`handoff.ack_timeout`: razão redigida. */
   reason?: string;
+  /** Ordem monotônica no arquivo (F-25). */
+  seq?: number;
 }
 
 /**
@@ -97,12 +103,34 @@ export class Ledger {
   private readonly warn: (msg: string) => void;
   /** Callback opcional para observabilidade (F6-1: metrics). */
   private readonly onRecord?: (entry: LedgerEntry) => void;
+  /** Próximo `seq` monotônico (F-25); calculado do arquivo na primeira escrita. */
+  private nextSeq: number | undefined;
 
   constructor(path: string, opts?: { warn?: (msg: string) => void; onRecord?: (entry: LedgerEntry) => void }) {
     this.path = path;
     this.warn = opts?.warn ?? ((msg) => console.warn(msg));
     this.onRecord = opts?.onRecord;
     mkdirSync(dirname(path), { recursive: true });
+  }
+
+  /** Identificador estável do arquivo de ledger (F-25): sha256 do caminho absoluto. */
+  id(): string {
+    return createHash("sha256").update(resolve(this.path)).digest("hex");
+  }
+
+  /** Consome o próximo `seq`; retoma a numeração de reaberturas do arquivo. */
+  private takeSeq(): number {
+    if (this.nextSeq === undefined) {
+      let max = 0;
+      for (const line of this.readLines()) {
+        try {
+          const e = JSON.parse(line) as { seq?: unknown };
+          if (typeof e.seq === "number" && e.seq > max) max = e.seq;
+        } catch { /* linha legada ilegível não tem seq */ }
+      }
+      this.nextSeq = max + 1;
+    }
+    return this.nextSeq++;
   }
 
   record(e: Omit<LedgerEntry, "ts" | "costUsd" | "schemaVersion" | "kind">, price?: PriceConfig): LedgerEntry {
@@ -119,6 +147,7 @@ export class Ledger {
       ...e,
       run: redactSecrets(e.run), agent: redactSecrets(e.agent),
       costUsd,
+      seq: this.takeSeq(),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     if (this.onRecord !== undefined) this.onRecord(entry);
@@ -139,6 +168,7 @@ export class Ledger {
       state,
       ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
       ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
+      seq: this.takeSeq(),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     return entry;
@@ -154,6 +184,24 @@ export class Ledger {
   /** Todas as entradas do JSONL: uso, estado, handoff e legado, na ordem em que foram gravadas. */
   readAllEntries(): LedgerAnyEntry[] {
     return this.readLines().map((line) => JSON.parse(line) as LedgerAnyEntry);
+  }
+
+  /** Entradas com `seq` no intervalo [start, end], na ordem gravada (F-25). */
+  readSeqRange(start: number, end: number): LedgerAnyEntry[] {
+    return this.readAllEntries().filter((e) => typeof e.seq === "number" && e.seq >= start && e.seq <= end);
+  }
+
+  /** Primeiro e último `seq` das entradas de um run (F-25); undefined sem entradas. */
+  seqBoundsOfRun(run: string): { start: number; end: number } | undefined {
+    const target = redactSecrets(run);
+    let start: number | undefined;
+    let end: number | undefined;
+    for (const e of this.readAllEntries()) {
+      if (e.run !== target || typeof e.seq !== "number") continue;
+      if (start === undefined || e.seq < start) start = e.seq;
+      if (end === undefined || e.seq > end) end = e.seq;
+    }
+    return start === undefined || end === undefined ? undefined : { start, end };
   }
 
   /** Entradas de estado de execução, na ordem em que foram gravadas. */
@@ -189,6 +237,7 @@ export class Ledger {
       ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
       ...(opts?.receiverAgent === undefined ? {} : { receiver_agent: redactSecrets(opts.receiverAgent), received_at: ts }),
       ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
+      seq: this.takeSeq(),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     return entry;
