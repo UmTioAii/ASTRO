@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import type { PriceConfig } from "./config";
 import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./handoff/types";
+import { redactSecrets } from "./sanitize-external";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
 export const LEDGER_SCHEMA_VERSION = 1;
@@ -111,6 +112,7 @@ export class Ledger {
       kind: "usage",
       ts: new Date().toISOString(),
       ...e,
+      run: redactSecrets(e.run), agent: redactSecrets(e.agent),
       costUsd,
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
@@ -127,11 +129,11 @@ export class Ledger {
     const entry: LedgerStateEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
       ts: new Date().toISOString(),
-      run,
+      run: redactSecrets(run),
       kind: "run_state",
       state,
-      ...(opts?.agent === undefined ? {} : { agent: opts.agent }),
-      ...(opts?.reason === undefined ? {} : { reason: opts.reason }),
+      ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
+      ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     return entry;
@@ -156,8 +158,8 @@ export class Ledger {
 
   /** Último estado de execução do run (undefined quando não há). */
   lastState(run?: string): LedgerStateEntry | undefined {
-    const states = this.readStates().filter((e) => run === undefined || e.run === run);
-    return states.at(-1);
+    const target = run === undefined ? undefined : redactSecrets(run);
+    return this.readStates().filter((e) => target === undefined || e.run === target).at(-1);
   }
 
   /**
@@ -174,11 +176,11 @@ export class Ledger {
     const entry: LedgerHandoffEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
       ts: new Date().toISOString(),
-      run,
+      run: redactSecrets(run),
       kind,
       handoff_id: handoffId(safe),
       artifact: safe,
-      ...(opts?.agent === undefined ? {} : { agent: opts.agent }),
+      ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     return entry;

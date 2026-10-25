@@ -94,6 +94,8 @@ export class Registry {
     return [...this.#agents.values()];
   }
 
+  listAgentNames(): string[] { return [...this.#agents.keys()]; }
+
   /** Devolve o ModelEntry ativo resolvido do profile (F-27, ADR-0007). */
   resolveProfile(name: string): ModelEntry {
     const profile = this.#profiles.get(name);

@@ -7,6 +7,7 @@
 import type { Ledger } from "./ledger";
 import type { AuditEvent } from "./audit";
 import { ProviderError } from "./provider/types";
+import { redactSecrets } from "./sanitize-external";
 
 /** Erro de orçamento/quota de time; hard_quota, com sugestão de renovação. */
 export class TeamQuotaError extends ProviderError {
@@ -61,7 +62,7 @@ export function assertAgentQuota(
   agent: string,
   now: Date = new Date(),
 ): void {
-  const quota = agentQuotas[agent];
+  const safeAgent = redactSecrets(agent), quota = agentQuotas[agent] ?? agentQuotas[safeAgent];
   if (quota === undefined) return;
 
   const today = now.toISOString().slice(0, 10);
@@ -69,7 +70,7 @@ export function assertAgentQuota(
   let todayTokens = 0;
   let monthCost = 0;
   for (const entry of ledger.readAll()) {
-    if (entry.agent !== agent) continue;
+    if (entry.agent !== safeAgent) continue;
     if (dayOf(entry.ts) === today) todayTokens += entry.tokensIn + entry.tokensOut;
     if (monthOf(entry.ts) === month) monthCost += entry.costUsd ?? 0;
   }
@@ -84,7 +85,7 @@ export function assertAgentQuota(
     );
   }
   if (reasons.length > 0) {
-    throw new TeamQuotaError(`quota do agent "${agent}" excedida: ${reasons.join("; ")}`);
+    throw new TeamQuotaError(`quota do agent "${safeAgent}" excedida: ${reasons.join("; ")}`);
   }
 }
 

@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { redactSecrets } from "./sanitize-external";
 
 export interface AuditEvent {
   seq: number;
@@ -11,7 +12,6 @@ export interface AuditEvent {
 }
 
 const SECRET_KEY = /(^|[-_])(api[-_]?)?keys?$|tokens?$|secret|password|authorization/i;
-const SECRET_VALUE = /^sk-[A-Za-z0-9_-]{8,}$/;
 const REDACTED = "[REDACTED]";
 
 /**
@@ -20,7 +20,7 @@ const REDACTED = "[REDACTED]";
  */
 export function sanitize(value: unknown): unknown {
   if (typeof value === "string") {
-    return SECRET_VALUE.test(value) ? REDACTED : value;
+    return redactSecrets(value);
   }
 
   if (Array.isArray(value)) {
@@ -31,7 +31,7 @@ export function sanitize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [
         key,
-        SECRET_KEY.test(key) ? REDACTED : sanitize(child),
+        SECRET_KEY.test(key) && typeof child !== "number" ? REDACTED : sanitize(child),
       ]),
     );
   }
@@ -77,7 +77,7 @@ export class Auditor {
     };
     const sanitized = sanitize(event) as AuditEvent;
     appendFileSync(this.path, `${JSON.stringify(sanitized)}\n`, "utf8");
-    if (this.onEvent !== undefined) this.onEvent(event);
+    if (this.onEvent !== undefined) this.onEvent(sanitized);
     return sanitized;
   }
 
