@@ -48,6 +48,26 @@ test("readAll lê o JSONL persistido entre instâncias", () => {
   expect(all[0].ts).toBeTruthy();
 });
 
+describe("byAgent com profile (F-30)", () => {
+  test("granularidade de profile: chave agent|profile e campos de identidade", () => {
+    const l = new Ledger(join(dir(), "ledger.jsonl"));
+    const price = { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false };
+    l.record({ ...entry, agent: "planner", profile: "premium", model: "gpt-4o", tokensIn: 100, tokensOut: 50 }, price);
+    l.record({ ...entry, agent: "planner", profile: "premium", model: "gpt-4o", tokensIn: 100, tokensOut: 50 }, price);
+    l.record({ ...entry, agent: "planner", model: "gpt-4o-mini", tokensIn: 10, tokensOut: 5 }, price);
+    l.record({ ...entry, agent: "coder", model: "gpt-4o-mini", tokensIn: 200, tokensOut: 100 }, price); // legado sem profile
+
+    const byAgent = l.byAgent();
+    expect(Object.keys(byAgent).sort()).toEqual(["coder", "planner", "planner|premium"]);
+    expect(byAgent["planner|premium"]).toMatchObject({ agent: "planner", profile: "premium", provider: "openai", model: "gpt-4o", tokensIn: 200, tokensOut: 100 });
+    expect(byAgent.planner).toMatchObject({ agent: "planner", model: "gpt-4o-mini", tokensIn: 10, tokensOut: 5 }); // sem profile soma separado
+    expect("profile" in byAgent.planner && byAgent.planner.profile !== undefined).toBe(false);
+    expect(byAgent.coder).toMatchObject({ agent: "coder", tokensIn: 200, tokensOut: 100 }); // entrada antiga continua somando
+    const totalCost = Object.values(byAgent).reduce((acc, a) => acc + a.costUsd, 0);
+    expect(totalCost).toBeCloseTo(l.total().costUsd, 12); // custo por agente bate com o ledger
+  });
+});
+
 describe("byAgent (F3-3)", () => {
   test("agrega por agent no mesmo run", () => {
     const l = new Ledger(join(dir(), "ledger.jsonl"));

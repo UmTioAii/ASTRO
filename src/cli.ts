@@ -2,6 +2,7 @@ import { runTask, type RunReport, createProvider } from "./app";
 import { loadConfig, validateConfig } from "./config";
 import { Ledger } from "./ledger";
 import { formatHandoffShow } from "./handoff/lifecycle";
+import { formatCostByAgent } from "./team";
 import { Registry } from "./registry";
 import { formatPoolList } from "./pool";
 import { formatAgentsList } from "./agent-manager";
@@ -22,6 +23,7 @@ const USAGE = `Uso:
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
   bun src/cli.ts handoff show <handoff_id> [--config <path>]
+  bun src/cli.ts cost --by-agent [--config <path>]
   bun src/cli.ts pool list [--config <path>]
   bun src/cli.ts agents list [--config <path>]
   bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
@@ -102,6 +104,10 @@ interface HandoffShowCommand {
   configPath: string;
 }
 
+interface CostCommand {
+  configPath: string;
+}
+
 interface ConfigShareCommand {
   action: "push" | "pull";
   name: string;
@@ -121,6 +127,7 @@ type ParsedCommand =
   | { kind: "pool"; options: PoolCommand }
   | { kind: "agents"; options: AgentsCommand }
   | { kind: "handoff"; options: HandoffShowCommand }
+  | { kind: "cost"; options: CostCommand }
   | { kind: "config"; options: ConfigShareCommand };
 
 function parseArgs(argv: string[]): ParsedCommand {
@@ -132,9 +139,35 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health", "handoff", "pool", "agents", "config"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "health", "handoff", "cost", "pool", "agents", "config"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
+  }
+
+  if (command === "cost") {
+    let configPath = "astro.config.json";
+    let byAgent = false;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--config") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError("falta o valor de --config");
+        }
+        i++;
+        configPath = value;
+        continue;
+      }
+      if (arg === "--by-agent") {
+        byAgent = true;
+        continue;
+      }
+      throw new UsageError(`opção desconhecida: "${arg}"`);
+    }
+    if (!byAgent) {
+      throw new UsageError("use: cost --by-agent [--config <path>]");
+    }
+    return { kind: "cost", options: { configPath } };
   }
 
   if (command === "handoff") {
@@ -587,6 +620,14 @@ async function main(argv: string[]): Promise<number> {
       console.error(`erro: ${message}`);
       return 1;
     }
+  }
+
+  if (parsed.kind === "cost") {
+    const o = parsed.options;
+    const config = loadConfig(resolve(o.configPath));
+    const ledger = new Ledger(resolve(process.cwd(), config.paths.ledger));
+    console.log(formatCostByAgent(ledger));
+    return 0;
   }
 
   if (parsed.kind === "handoff") {
