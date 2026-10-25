@@ -137,14 +137,14 @@ export class Ledger {
     return entry;
   }
 
-  /** Entradas de uso (tokens/custo); ignora estado, handoff e legado sem kind. */
+  /** Entradas de uso (inclui legado sem kind); ignora estado e handoff. */
   readAll(): LedgerEntry[] {
     return this.readAllEntries().filter(
       (e): e is LedgerEntry => e.kind === undefined || e.kind === "usage",
     );
   }
 
-  /** Todas as entradas do JSONL: uso, estado e legado, na ordem em que foram gravadas. */
+  /** Todas as entradas do JSONL: uso, estado, handoff e legado, na ordem em que foram gravadas. */
   readAllEntries(): LedgerAnyEntry[] {
     return this.readLines().map((line) => JSON.parse(line) as LedgerAnyEntry);
   }

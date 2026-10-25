@@ -10,12 +10,7 @@ export type HandoffErrorCode =
   | "handoff_artifact_mismatch"
   | "handoff_ack_timeout";
 
-const RETRYABLE: Record<HandoffErrorCode, boolean> = {
-  handoff_target_not_found: false,
-  handoff_mismatch: false,
-  handoff_artifact_mismatch: false,
-  handoff_ack_timeout: true,
-};
+const RETRYABLE: ReadonlySet<HandoffErrorCode> = new Set(["handoff_ack_timeout"]);
 
 /** Erro de handoff com código estável; nenhuma classe nova em D-18. */
 export class HandoffError extends ToolError {
@@ -27,7 +22,7 @@ export class HandoffError extends ToolError {
     super(`${code}: ${message}`);
     this.name = "HandoffError";
     this.code = code;
-    this.retryable = RETRYABLE[code];
+    this.retryable = RETRYABLE.has(code);
     this.errClass = this.retryable ? "transient_rate_limit" : "invalid_request";
   }
 }
@@ -84,9 +79,13 @@ export function taskHash(task: string, objective: string): string {
  *
  * Mudanças em `decisions`/`constraints`/`next_steps` NÃO alteram o id — a
  * estabilidade é o que permite o verifier e o lock de via única (F-26).
+ * `task`/`objective` são sanitizados antes do hash (I-03), de modo que o id
+ * calculado aqui é o mesmo do artefato persistido.
  */
 export function handoffId(a: Pick<HandoffArtifactV1, "run" | "from" | "to" | "source_step" | "task" | "objective">): string {
-  return sha256(`${a.run}|${a.from}|${a.to}|${taskHash(a.task, a.objective)}|${a.source_step}`);
+  return sha256(
+    `${a.run}|${a.from}|${a.to}|${taskHash(redactSecrets(a.task), redactSecrets(a.objective))}|${a.source_step}`,
+  );
 }
 
 function mismatch(message: string): never {
@@ -107,8 +106,8 @@ function asString(value: unknown, field: string): string {
   return value;
 }
 
-function asStringArray(value: unknown, field: string): string[] {
-  if (value === undefined) return [];
+/** Valida lista de strings obrigatória (artefato v1). */
+function asRequiredStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     mismatch(`campo "${field}" deve ser lista de strings`);
   }
@@ -128,9 +127,9 @@ export function validateHandoffDraft(value: unknown): HandoffDraft {
   return {
     task: asString(raw.task, "task"),
     objective: asString(raw.objective, "objective"),
-    decisions: asStringArray(raw.decisions, "decisions"),
-    constraints: asStringArray(raw.constraints, "constraints"),
-    next_steps: asStringArray(raw.next_steps, "next_steps"),
+    decisions: asRequiredStringArray(raw.decisions, "decisions"),
+    constraints: asRequiredStringArray(raw.constraints, "constraints"),
+    next_steps: asRequiredStringArray(raw.next_steps, "next_steps"),
   };
 }
 
@@ -166,7 +165,13 @@ export function buildHandoffArtifact(args: HandoffBuildArgs): HandoffArtifactV1 
     to: args.to,
     source_step: args.sourceStep,
     budget_spent: args.budgetSpent,
-    ...args.draft,
+    // Copia só os campos do contrato: o draft não pode sobrescrever a
+    // identidade/execução vinda do runtime (F-23, D-10).
+    task: args.draft.task,
+    objective: args.draft.objective,
+    decisions: args.draft.decisions,
+    constraints: args.draft.constraints,
+    next_steps: args.draft.next_steps,
     ...(args.fromProfile === undefined ? {} : { from_profile: args.fromProfile }),
     ...(args.toProfile === undefined ? {} : { to_profile: args.toProfile }),
   });

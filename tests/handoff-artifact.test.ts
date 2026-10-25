@@ -33,23 +33,18 @@ const codeOf = (fn: () => unknown): string => {
 };
 
 describe("handoff_id determinístico (F-23, ADR-0006)", () => {
-  test("id = sha256(run|from|to|taskHash|source_step) e é estável", () => {
-    const a = build();
+  test("id = sha256(run|from|to|taskHash|source_step), estável e insensível ao conteúdo livre", () => {
+    const base = handoffId(build());
     const expected = createHash("sha256")
       .update(`r1|planner|coder|${taskHash(draft.task, draft.objective)}|1`)
       .digest("hex");
-    expect(handoffId(a)).toBe(expected);
+    expect(base).toBe(expected);
     expect(handoffId(build())).toBe(expected);
-  });
-
-  test("decisions/constraints/next_steps não mudam o id; run/to/source_step/objetivo mudam", () => {
-    const base = handoffId(build());
-    const outros = build({ draft: { ...draft, decisions: ["outra"], constraints: [], next_steps: [] } });
-    expect(handoffId(outros)).toBe(base);
-    expect(handoffId(build({ run: "r2" }))).not.toBe(base);
-    expect(handoffId(build({ to: "reviewer" }))).not.toBe(base);
-    expect(handoffId(build({ sourceStep: 2 }))).not.toBe(base);
-    expect(handoffId(build({ draft: { ...draft, objective: "outro" } }))).not.toBe(base);
+    const livre = build({ draft: { ...draft, decisions: ["outra"], constraints: [], next_steps: [] } });
+    expect(handoffId(livre)).toBe(base);
+    for (const over of [{ run: "r2" }, { to: "reviewer" }, { sourceStep: 2 }, { draft: { ...draft, objective: "outro" } }]) {
+      expect(handoffId(build(over))).not.toBe(base);
+    }
   });
 });
 
@@ -68,9 +63,20 @@ describe("HandoffArtifactV1 (F-23)", () => {
       { ...build(), version: 2 },
       { ...build(), source_step: -1 },
       { ...build(), decisions: [1] },
+      { ...build(), decisions: undefined },
       { ...build(), budget_spent: { tokens: -1, usd: 0 } },
     ];
     for (const value of bad) expect(codeOf(() => validateHandoffArtifact(value))).toBe("handoff_artifact_mismatch");
+  });
+
+  test("draft não sobrescreve run/from/to/source_step/budget do runtime", () => {
+    const forged = {
+      ...draft, run: "forged", from: "ghost", to: "ghost", source_step: 99,
+      budget_spent: { tokens: 1, usd: 1 },
+    } as HandoffDraft;
+    expect(build({ draft: forged })).toMatchObject({
+      run: "r1", from: "planner", to: "coder", source_step: 1, budget_spent: { tokens: 10, usd: 0.01 },
+    });
   });
 });
 
@@ -80,12 +86,14 @@ describe("ledger com handoff (F-23)", () => {
     const a = build();
     l.record({ run: "r1", agent: "planner", provider: "openai", model: "gpt-4o-mini", credentialRef: "K", quotaDomain: "d", tokensIn: 1, tokensOut: 1 }, price);
     const created = l.recordHandoff("handoff.created", "r1", a);
+    l.recordHandoff("handoff.received", "r1", a);
     expect(created.kind).toBe("handoff.created");
+    expect(created.schemaVersion).toBe(1);
     expect(created.handoff_id).toBe(handoffId(a));
     expect(l.readAll()).toHaveLength(1);
-    expect(l.readHandoffs().map((e) => e.kind)).toEqual(["handoff.created"]);
+    expect(l.readHandoffs().map((e) => e.kind)).toEqual(["handoff.created", "handoff.received"]);
     l.recordState("r1", "completed");
     expect(l.readAll()).toHaveLength(1);
-    expect(l.readAllEntries()).toHaveLength(3);
+    expect(l.readAllEntries()).toHaveLength(4);
   });
 });

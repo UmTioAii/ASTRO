@@ -28,7 +28,7 @@ const NV_PREFIX = ["n", "v", "a", "p", "i", "-"].join("");
 const BEARER_WORD = ["B", "e", "a", "r", "e", "r"].join("");
 
 const REDACT_VALUE = new RegExp(`${SK_PREFIX}[A-Za-z0-9_-]{8,}`, "g");
-const REDACT_BEARER = new RegExp(`${BEARER_WORD}\\s+[A-Za-z0-9._-]{12,}`, "g");
+const REDACT_BEARER = new RegExp(`${BEARER_WORD}\\s+[A-Za-z0-9+/=._-]{12,}`, "gi");
 const REDACT_NV = new RegExp(`${NV_PREFIX}[A-Za-z0-9_-]{8,}`, "g");
 
 const REDACTED = "[REDACTED]";
