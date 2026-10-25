@@ -183,6 +183,7 @@ export async function runSession(
           model: opts.model.id,
           credentialRef: opts.credentialRef,
           quotaDomain: opts.quotaDomain,
+          ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
           callHashes: hashToolCalls(response.toolCalls),
@@ -286,7 +287,7 @@ export interface MultiAgentSessionOptions {
   quotaDomain: string;
   cwd: string;
   provider: Provider;
-  registry: { requireAgent(name: string): AgentEntry; getAgent(name: string): AgentEntry | undefined; listAgentNames?(): string[] };
+  registry: { requireAgent(name: string): AgentEntry; getAgent(name: string): AgentEntry | undefined; listAgentNames?(): string[]; resolveModel?(agent: AgentEntry): ModelEntry };
   baseModel: ModelEntry;
   baseExecutor: ToolExecutor;
   ledger: Ledger;
@@ -327,8 +328,10 @@ export async function runMultiAgentSession(
   const agentsUsed: string[] = [];
   let currentAgentName = opts.entryAgent;
   let currentAgent = opts.registry.requireAgent(currentAgentName);
+  /** Resolve o model do agent no instanciamento (F-29, ADR-0007): profile da pool ou model direto; sem resolvedor usa o base (compat). */
+  const modelFor = (agent: AgentEntry): ModelEntry => opts.registry.resolveModel !== undefined ? opts.registry.resolveModel(agent) : opts.baseModel;
 
-  let currentModel = opts.baseModel;
+  let currentModel = modelFor(currentAgent);
   let currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
   let currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
   let currentTools: Set<string> = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
@@ -357,7 +360,7 @@ export async function runMultiAgentSession(
   const tracer = opts.tracer;
   const rootSpan = tracer?.start("run", {
     agent: redactSecrets(opts.entryAgent),
-    model: `${opts.baseModel.provider}/${opts.baseModel.id}`,
+    model: `${currentModel.provider}/${currentModel.id}`,
     run: redactSecrets(opts.run),
     multi: true,
   });
@@ -373,6 +376,7 @@ export async function runMultiAgentSession(
       const pending = resume;
       const toAgent = opts.registry.getAgent(pending.artifact.to);
       if (toAgent === undefined) throw new HandoffError("handoff_target_not_found", `agent destino "${pending.artifact.to}" não encontrado na configuração`);
+      currentModel = modelFor(toAgent); // profile resolvido antes da retomada (F-29)
       currentAgentName = pending.artifact.to;
       currentAgent = toAgent;
       currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
@@ -448,6 +452,7 @@ export async function runMultiAgentSession(
           model: currentModel.id,
           credentialRef: opts.credentialRef,
           quotaDomain: opts.quotaDomain,
+          ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
           callHashes: hashToolCalls(response.toolCalls),
@@ -498,6 +503,7 @@ export async function runMultiAgentSession(
           const toAgent = opts.registry.getAgent(handoff.to);
           if (toAgent === undefined) throw new HandoffError("handoff_target_not_found",
             `agent destino "${handoff.to}" não encontrado na configuração`);
+          const toModel = modelFor(toAgent); // profile do receptor resolvido ANTES do swap (F-29)
           // Compactação estruturada (F-25): nível compacto + source_refs do ledger
           const compacted = compactDraft(handoff.draft);
           const bounds = opts.ledger.seqBoundsOfRun(opts.run);
@@ -515,6 +521,7 @@ export async function runMultiAgentSession(
           if (scanHandoffs(opts.ledger, opts.run).find((h) => h.handoff_id === entry.handoff_id)?.state === "completed") continue;
           const emitterName = currentAgentName;
           if (handoff.to !== currentAgentName) agentSteps = 0;
+          currentModel = toModel;
           currentAgentName = handoff.to;
           currentAgent = toAgent;
           currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;

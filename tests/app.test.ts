@@ -69,3 +69,34 @@ test("tool desconhecida na config → erro claro", async () => {
   const err = (await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { TEST_KEY: "k" } }).catch((e) => e as Error)) as Error;
   expect(String(err.message)).toContain("ghost");
 });
+
+test("agent com profile: startup resolve o modelo da pool (F-29)", async () => {
+  const requested: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      const body = (await req.json()) as { model?: string };
+      requested.push(body.model ?? "");
+      return Response.json({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    },
+  });
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "astro-app-"));
+    const cfgPath = join(dir, "astro.config.json");
+    writeFileSync(cfgPath, JSON.stringify({
+      providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "TEST_KEY" } },
+      models: [
+        { provider: "mock", id: "mock-1", tags: ["writing-code"], context: 4096 },
+        { provider: "mock", id: "mock-2", tags: ["writing-code"], context: 4096 },
+      ],
+      modelPool: { pro: { model: "mock/mock-2" } },
+      agent: { profile: "pro", maxSteps: 2, tools: [] },
+      paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+    }));
+    const report = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { TEST_KEY: "test-key" } });
+    expect(report.final).toBe("ok");
+    expect(requested).toEqual(["mock-2"]); // profile substitui o model direto no startup
+  } finally {
+    server.stop(true);
+  }
+});
