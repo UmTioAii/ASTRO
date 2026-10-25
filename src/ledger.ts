@@ -42,7 +42,7 @@ export interface LedgerStateEntry {
 export type LedgerAnyEntry = LedgerEntry | LedgerStateEntry | LedgerHandoffEntry;
 
 /** Tipos de evento de handoff durável (ADR-0006). */
-export type HandoffEventKind = "handoff.created" | "handoff.received";
+export type HandoffEventKind = "handoff.created" | "handoff.received" | "handoff.failed" | "handoff.ack_timeout";
 
 /** Evento de handoff no ledger: artefato íntegro e id determinístico. */
 export interface LedgerHandoffEntry {
@@ -53,6 +53,11 @@ export interface LedgerHandoffEntry {
   handoff_id: string;
   artifact: HandoffArtifactV1;
   agent?: string;
+  /** Em `handoff.received`: quem recebeu e quando (F-24). */
+  receiver_agent?: string;
+  received_at?: string;
+  /** Em `handoff.failed`/`handoff.ack_timeout`: razão redigida. */
+  reason?: string;
 }
 
 /**
@@ -170,17 +175,20 @@ export class Ledger {
     kind: HandoffEventKind,
     run: string,
     artifact: HandoffArtifactV1,
-    opts?: { agent?: string },
+    opts?: { agent?: string; receiverAgent?: string; reason?: string },
   ): LedgerHandoffEntry {
     const safe = sanitizeHandoffArtifact(artifact);
+    const ts = new Date().toISOString();
     const entry: LedgerHandoffEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
-      ts: new Date().toISOString(),
+      ts,
       run: redactSecrets(run),
       kind,
       handoff_id: handoffId(safe),
       artifact: safe,
       ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
+      ...(opts?.receiverAgent === undefined ? {} : { receiver_agent: redactSecrets(opts.receiverAgent), received_at: ts }),
+      ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     return entry;
@@ -188,9 +196,7 @@ export class Ledger {
 
   /** Eventos de handoff na ordem em que foram gravados. */
   readHandoffs(): LedgerHandoffEntry[] {
-    return this.readAllEntries().filter(
-      (e): e is LedgerHandoffEntry => e.kind === "handoff.created" || e.kind === "handoff.received",
-    );
+    return this.readAllEntries().filter((e): e is LedgerHandoffEntry => (e.kind ?? "").startsWith("handoff."));
   }
 
   total(): { tokensIn: number; tokensOut: number; costUsd: number } {
