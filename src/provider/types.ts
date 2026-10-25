@@ -30,6 +30,8 @@ export interface CompletionResponse {
   content: string;
   toolCalls: ToolCall[];
   usage: { inputTokens: number; outputTokens: number };
+  /** Nome do provider que atendeu (C6); fallback registra o real, não o wrapper. */
+  provider?: string;
 }
 
 /** Contrato de um provider de chat completion. */
