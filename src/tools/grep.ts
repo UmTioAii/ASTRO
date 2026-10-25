@@ -96,6 +96,8 @@ export const grepTool: Tool = {
     permission: "read",
     timeoutMs: 30_000,
     retryable: true,
+    idempotent: true,
+    sideEffects: "none",
   },
 
   async execute(input, ctx): Promise<ToolResult> {

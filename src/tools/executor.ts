@@ -45,11 +45,13 @@ export class ToolExecutor {
   }
 
   async run(ctx: ToolContext, call: ToolCall): Promise<ToolResult> {
-    // Dedup por call_id determinístico (F-03): só quando a sessão fornece step + journal.
+    // Dedup por call_id determinístico (F-03), apenas para tools declaradas
+    // idempotentes (F-10, I-12); as demais sempre executam de verdade.
     const { step, journal } = ctx;
     if (step !== undefined && journal !== undefined) {
       const id = callId(ctx.run, step, call);
-      const cached = journal.lookup(id);
+      const tool = this.byName.get(call.name);
+      const cached = tool?.manifest.idempotent === true ? journal.lookup(id) : undefined;
       if (cached !== undefined) {
         // Chamada suprimida NÃO emite tool.call/tool.result: as métricas de
         // duração continuam medindo só execuções reais.

@@ -44,6 +44,8 @@ export const writeFileTool: Tool = {
     permission: "write",
     timeoutMs: 5_000,
     retryable: false,
+    idempotent: true,
+    sideEffects: "filesystem",
   },
 
   async execute(input, ctx): Promise<ToolResult> {

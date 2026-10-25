@@ -8,6 +8,7 @@ import { sqlTool } from "../examples/tool-sql/sql";
 const validManifest: ToolManifest = {
   name: "x", description: "d", parameters: { type: "object" },
   risk: "low", permission: "read", timeoutMs: 1000, retryable: true,
+  idempotent: true, sideEffects: "none",
 };
 
 const ctx = (cwd: string) => ({ cwd, run: "r1", agent: "coder" });
@@ -27,6 +28,8 @@ describe("tool SDK (F7-3)", () => {
       [{ timeoutMs: 0 }, /timeoutMs/],
       [{ timeoutMs: 1.5 }, /timeoutMs/],
       [{ retryable: "yes" }, /retryable/],
+      [{ idempotent: "sim" }, /idempotent/],
+      [{ sideEffects: "database" }, /sideEffects/],
     ];
     for (const [override, pattern] of cases) {
       const bad: unknown = { ...validManifest, ...override };

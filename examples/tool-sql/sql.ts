@@ -39,6 +39,8 @@ export const sqlTool = defineTool(
     permission: "execute",
     timeoutMs: 10_000,
     retryable: true,
+    idempotent: true,
+    sideEffects: "none",
   },
   async (input, ctx) => {
     const parsed = input as SqlInput;

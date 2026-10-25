@@ -87,6 +87,8 @@ export const listDirTool: Tool = {
     permission: "read",
     timeoutMs: 10_000,
     retryable: true,
+    idempotent: true,
+    sideEffects: "none",
   },
 
   async execute(input, ctx): Promise<ToolResult> {
