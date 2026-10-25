@@ -108,4 +108,9 @@ export class Registry {
     }
     return this.require(profile.model);
   }
+
+  /** Resolve o ModelEntry do agent: profile da pool (F-29, ADR-0007) ou model direto. */
+  resolveModel(agent: { model: string; profile?: string }): ModelEntry {
+    return agent.profile === undefined ? this.require(agent.model) : this.resolveProfile(agent.profile);
+  }
 }
