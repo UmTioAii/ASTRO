@@ -35,6 +35,14 @@ const REDACTED = "[REDACTED]";
 
 export const DEFAULT_MAX_TOKENS = 8_000;
 
+/** Redige padrões de segredo em um texto; reutilizado por ledger/audit (F-23). */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(REDACT_VALUE, REDACTED)
+    .replace(REDACT_BEARER, `${BEARER_WORD} ${REDACTED}`)
+    .replace(REDACT_NV, REDACTED);
+}
+
 /** Estimativa conservadora: ~4 chars por token. */
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -51,10 +59,7 @@ export function sanitizeExternal(
 ): SanitizedContent {
   const maxTokens = opts?.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  const cleaned = input
-    .replace(REDACT_VALUE, REDACTED)
-    .replace(REDACT_BEARER, `${BEARER_WORD} ${REDACTED}`)
-    .replace(REDACT_NV, REDACTED);
+  const cleaned = redactSecrets(input);
 
   const originalTokens = estimateTokens(cleaned);
   const maxChars = maxTokens * 4;
