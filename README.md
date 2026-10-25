@@ -33,13 +33,13 @@ export NVIDIA_API_KEY="..."      # credentialRef from your config
 bun src/cli.ts run "create a hello.ts that exports hello()"
 ```
 
-Secrets are read only from environment variables named by `credentialRef` — never from config files, never logged. The full three-provider example lives in `astro.config.example.json`; the provider guide is `docs/providers.md`.
+Secrets never live in config files and are never logged: `openai-compat` keys come only from environment variables named by `credentialRef`; `codex-oauth` reads a local credentials file (`credentialsPath`). The full three-provider example lives in `astro.config.example.json`; the provider guide is `docs/providers.md`.
 
 ## Configuration (`astro.config.json`)
 
 | Key | Shape | Default | Where |
 |---|---|---|---|
-| `providers` | `Record<string, { kind, credentialRef?, baseUrl?, quotaDomain?, priority?, fallback?, maxRetries?, retryBackoffMs? }>` | — | `src/config.ts` |
+| `providers` | `Record<string, { kind, credentialRef?, baseUrl?, credentialsPath?, quotaDomain?, priority?, fallback?, maxRetries?, retryBackoffMs? }>` | — | `src/config.ts` |
 | `models` | `{ provider, id, tags, context, price? }[]` | — | `src/config.ts` |
 | `modelPool` | `Record<profile, { model, capabilities?, fallback? }>` | absent | `src/registry.ts` |
 | `agent` | `{ model XOR profile, maxSteps, tools, entryAgent? }` | — | `src/config.ts` |
@@ -65,7 +65,7 @@ Minimal valid config (note: `id` is the bare model id; the `provider/id` form is
 }
 ```
 
-Model pool and profiles are implemented — a profile replaces `model` (both together are rejected), and pricing stays inherited from `models[]` (never per profile):
+Model pool and profiles are implemented — a profile replaces `model` (both together are rejected), and pricing stays inherited from `models[]` (never per profile). Fragment of `astro.config.example.json` (needs the `codex` provider and its `gpt-5.5` model from the full example):
 
 ```json
 {
@@ -110,7 +110,7 @@ All commands run as `bun src/cli.ts <command>`.
 | Paths confined to `--cwd` (symlink/junction resolved); optional sandbox for `run_command` | I-11 | `tests/security-f00.test.ts`, `tests/sandbox.test.ts` |
 | Child shell environment sanitized (credentialRefs and secret names removed) | I-03 | `tests/security-f00.test.ts` |
 | Harness state (`.astro/`) not writable by tools | I-11 | `tests/security-f00.test.ts` |
-| Prompts never persisted; `run.started` stores only `taskHash` | I-04 | `tests/app.test.ts` |
+| Prompts never persisted; `run.started` stores only `taskHash` | I-04 | `tests/golden-f2.test.ts`, `tests/app.test.ts` |
 | Quota and budget block before spending | I-17 | `tests/quota.test.ts`, `tests/team.test.ts` |
 | Handoff is single-path: idempotent by `handoff_id` (CAS), identity verified at reception, digest-checked artifacts | I-18 | `tests/handoff-cas.test.ts`, `tests/handoff-compact.test.ts` |
 
@@ -123,7 +123,7 @@ Determinism over flexibility; security as a contract; every action auditable; ex
 | Scope | State | Reference |
 |---|---|---|
 | F0–F7 (foundation, multi-agent, tools, eval, production, ecosystem) | done | `docs/roadmap.md` |
-| Layer 0 (durable handoff with ack/CAS/compaction, model pool and profiles, per-agent cost, provider fallback) | in progress | F-23..F-26, F-29, F-30 merged (#75–#102); C6 in PR #103; F-31 (#86) blocked on C6 |
+| Layer 0 (durable handoff with ack/CAS/compaction, model pool and profiles, per-agent cost, provider fallback) | in progress | F-03, F-07, F-10, F-23..F-30 merged (#67–#102); C6 in progress (#60, C6a merged in #103); F-31 (#86) blocked on C6 |
 | C1–C5, C7 (skills, MCP, web tools, advanced agents, quality, organization), T1–T4 (REPL, TUI, sessions) | planned | `docs/roadmap-complementar.md`, issues #55–#65 |
 
 ## Documentation
