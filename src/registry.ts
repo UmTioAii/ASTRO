@@ -1,4 +1,4 @@
-import type { AstroConfig, ModelConfig, ModelStatus, NamedAgentConfig } from "./config";
+import type { AstroConfig, ModelConfig, ModelStatus, NamedAgentConfig, ProfileConfig } from "./config";
 import { ConfigError } from "./config";
 import { missingCapabilities, type Capability } from "./capabilities";
 
@@ -14,11 +14,17 @@ export type AgentEntry = NamedAgentConfig;
 export class Registry {
   readonly #models = new Map<string, ModelEntry>();
   readonly #agents = new Map<string, AgentEntry>();
+  readonly #profiles = new Map<string, ProfileConfig>();
 
   constructor(config: AstroConfig) {
     for (const model of config.models) {
       const key = `${model.provider}/${model.id}`;
       this.#models.set(key, { ...model, status: model.status ?? "active" });
+    }
+    if (config.modelPool) {
+      for (const [name, profile] of Object.entries(config.modelPool)) {
+        this.#profiles.set(name, { ...profile });
+      }
     }
     if (config.agents) {
       for (const [name, agent] of Object.entries(config.agents)) {
@@ -86,5 +92,18 @@ export class Registry {
   /** Lista todos os agents nomeados. */
   listAgents(): AgentEntry[] {
     return [...this.#agents.values()];
+  }
+
+  /** Devolve o ModelEntry ativo resolvido do profile (F-27, ADR-0007). */
+  resolveProfile(name: string): ModelEntry {
+    const profile = this.#profiles.get(name);
+    if (profile === undefined) {
+      throw new ConfigError(
+        this.#profiles.size === 0
+          ? `profile "${name}" não encontrado: a config não declara "modelPool"`
+          : `profile "${name}" não encontrado na modelPool da configuração`,
+      );
+    }
+    return this.require(profile.model);
   }
 }
