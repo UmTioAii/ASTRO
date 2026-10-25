@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import type { PriceConfig } from "./config";
+import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./handoff/types";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
 export const LEDGER_SCHEMA_VERSION = 1;
@@ -37,7 +38,21 @@ export interface LedgerStateEntry {
   reason?: string;
 }
 
-export type LedgerAnyEntry = LedgerEntry | LedgerStateEntry;
+export type LedgerAnyEntry = LedgerEntry | LedgerStateEntry | LedgerHandoffEntry;
+
+/** Tipos de evento de handoff durável (ADR-0006). */
+export type HandoffEventKind = "handoff.created" | "handoff.received";
+
+/** Evento de handoff no ledger: artefato íntegro e id determinístico. */
+export interface LedgerHandoffEntry {
+  schemaVersion: number;
+  ts: string;
+  run: string;
+  kind: HandoffEventKind;
+  handoff_id: string;
+  artifact: HandoffArtifactV1;
+  agent?: string;
+}
 
 /**
  * Hash determinístico por tool call: SHA-256 de nome + arguments (F-02).
@@ -122,12 +137,14 @@ export class Ledger {
     return entry;
   }
 
-  /** Entradas de uso (tokens/custo); ignora entradas de estado e legado sem kind. */
+  /** Entradas de uso (inclui legado sem kind); ignora estado e handoff. */
   readAll(): LedgerEntry[] {
-    return this.readAllEntries().filter((e): e is LedgerEntry => e.kind !== "run_state");
+    return this.readAllEntries().filter(
+      (e): e is LedgerEntry => e.kind === undefined || e.kind === "usage",
+    );
   }
 
-  /** Todas as entradas do JSONL: uso, estado e legado, na ordem em que foram gravadas. */
+  /** Todas as entradas do JSONL: uso, estado, handoff e legado, na ordem em que foram gravadas. */
   readAllEntries(): LedgerAnyEntry[] {
     return this.readLines().map((line) => JSON.parse(line) as LedgerAnyEntry);
   }
@@ -141,6 +158,37 @@ export class Ledger {
   lastState(run?: string): LedgerStateEntry | undefined {
     const states = this.readStates().filter((e) => run === undefined || e.run === run);
     return states.at(-1);
+  }
+
+  /**
+   * Grava um evento de handoff (ADR-0006). O artefato é sanitizado antes de ir
+   * ao disco (I-03); `handoff_id` é recalculado do artefato já sanitizado.
+   */
+  recordHandoff(
+    kind: HandoffEventKind,
+    run: string,
+    artifact: HandoffArtifactV1,
+    opts?: { agent?: string },
+  ): LedgerHandoffEntry {
+    const safe = sanitizeHandoffArtifact(artifact);
+    const entry: LedgerHandoffEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run,
+      kind,
+      handoff_id: handoffId(safe),
+      artifact: safe,
+      ...(opts?.agent === undefined ? {} : { agent: opts.agent }),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    return entry;
+  }
+
+  /** Eventos de handoff na ordem em que foram gravados. */
+  readHandoffs(): LedgerHandoffEntry[] {
+    return this.readAllEntries().filter(
+      (e): e is LedgerHandoffEntry => e.kind === "handoff.created" || e.kind === "handoff.received",
+    );
   }
 
   total(): { tokensIn: number; tokensOut: number; costUsd: number } {
