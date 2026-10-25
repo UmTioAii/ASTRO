@@ -1,8 +1,9 @@
 import type { Auditor } from "./audit";
 import { CallJournal } from "./call-id";
 import { hashToolCalls, type HandoffEventKind, type Ledger } from "./ledger";
-import { buildHandoffArtifact, HandoffError, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
+import { buildHandoffArtifact, HandoffError, handoffId, sanitizeHandoffArtifact, taskHash, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
 import { ackHandoff, scanHandoffs, readSourceRefs, type HandoffStatus } from "./handoff/lifecycle";
+import { verifyHandoffIdentity } from "./handoff/verifier";
 import { compactDraft, digestArtifacts } from "./handoff/compact";
 import { DEFAULT_ACK_TIMEOUT_MS } from "./config";
 import type { ChatMessage, Provider } from "./provider/types";
@@ -92,6 +93,11 @@ function recordHandoffEvent(
   agent: string,
   extra?: { reason?: string },
 ) {
+  // CAS (F-26): evento deduplicado devolve o existente sem repetir o audit
+  if ((kind === "handoff.created" || kind === "handoff.received")
+    && deps.ledger.readHandoffs().some((e) => e.kind === kind && e.handoff_id === handoffId(sanitizeHandoffArtifact(artifact)))) {
+    return deps.ledger.recordHandoff(kind, deps.run, artifact, { agent, ...(extra ?? {}) });
+  }
   const entry = deps.ledger.recordHandoff(kind, deps.run, artifact, { agent, ...(extra ?? {}) });
   deps.audit.append({ run: deps.run, agent, tipo: kind, payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
   return entry;
@@ -235,6 +241,10 @@ export async function runSession(
               compaction: compacted.compaction,
               ...(compacted.truncated ? { truncation: { truncated: true, originalTokens: compacted.originalTokens, returnedTokens: compacted.returnedTokens } } : {}),
               ...(opts.agentProfile === undefined ? {} : { fromProfile: opts.agentProfile }) }), opts.agent);
+          // CAS (F-26): created já recebido em outro processo → sem reexecutar, segue o fluxo
+          if (scanHandoffs(opts.ledger, opts.run).find((h) => h.handoff_id === entry.handoff_id)?.state === "completed") {
+            continue;
+          }
           tracer?.end(stepSpan, { handoff: redactSecrets(handoff.to) });
           tracer?.end(rootSpan, { status: "handoff", to: redactSecrets(handoff.to) });
           throw { name: "HandoffSignal", to: handoff.to, artifact: entry.artifact, step };
@@ -369,6 +379,12 @@ export async function runMultiAgentSession(
       currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
       currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
       messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
+      // Verifier de identidade na retomada (F-26): o receptor começa em source_step+1
+      verifyHandoffIdentity(
+        { run: redactSecrets(opts.run), from: pending.artifact.from, to: redactSecrets(currentAgentName),
+          taskHash: taskHash(pending.artifact.task, pending.artifact.objective), source_step: pending.artifact.source_step + 1 },
+        pending.artifact,
+      );
       // Receptor retomado confirma no início: lê, valida e grava received (F-24)
       if (await ackWithTimeout(pending, currentAgentName) === "timeout") throw ackTimeoutError(pending);
       opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: pending.handoff_id, artifact: pending.artifact } });
@@ -495,6 +511,9 @@ export async function runMultiAgentSession(
             ...(currentAgent.profile === undefined ? {} : { fromProfile: currentAgent.profile }),
             ...(toAgent.profile === undefined ? {} : { toProfile: toAgent.profile }),
           }), currentAgentName);
+          // CAS (F-26, I-18): created já recebido em outro processo → devolve o existente, sem reexecutar
+          if (scanHandoffs(opts.ledger, opts.run).find((h) => h.handoff_id === entry.handoff_id)?.state === "completed") continue;
+          const emitterName = currentAgentName;
           if (handoff.to !== currentAgentName) agentSteps = 0;
           currentAgentName = handoff.to;
           currentAgent = toAgent;
@@ -504,6 +523,12 @@ export async function runMultiAgentSession(
           agentsUsed.push(currentAgentName);
           opts.audit.append({ run: opts.run, agent: entry.artifact.from, tipo: "agent.switch",
             payload: { from: entry.artifact.from, to: entry.artifact.to, handoff_id: entry.handoff_id } });
+          // Verifier de identidade na recepção (F-26): run|from|to|taskHash; source_step ±1
+          verifyHandoffIdentity(
+            { run: redactSecrets(opts.run), from: redactSecrets(emitterName), to: redactSecrets(currentAgentName),
+              taskHash: taskHash(redactSecrets(handoff.draft.task), redactSecrets(handoff.draft.objective)), source_step: step },
+            entry.artifact,
+          );
           if (await ackWithTimeout(entry, currentAgentName) === "timeout") throw ackTimeoutError(entry);
           opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
           activeHandoff = entry;

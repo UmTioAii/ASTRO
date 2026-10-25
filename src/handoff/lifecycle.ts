@@ -6,7 +6,7 @@
  */
 import type { Ledger, LedgerAnyEntry } from "../ledger";
 import { redactSecrets } from "../sanitize-external";
-import { validateHandoffArtifact, HandoffError, type HandoffArtifactV1, type HandoffSourceRefs } from "./types";
+import { validateHandoffArtifact, handoffId as handoffIdOf, HandoffError, type HandoffArtifactV1, type HandoffSourceRefs } from "./types";
 import { validateArtifacts } from "./compact";
 
 /** Estado de um handoff na varredura: created sem received é retomável. */
@@ -54,6 +54,10 @@ export function ackHandoff(deps: { ledger: Ledger; run: string; cwd?: string }, 
     .find((e) => e.kind === "handoff.created" && e.handoff_id === handoffId);
   if (created === undefined) {
     throw new HandoffError("handoff_mismatch", `handoff ${handoffId} não encontrado no ledger`);
+  }
+  // Verifier de identidade (F-26): o id gravado precisa casar com o artefato
+  if (handoffIdOf(created.artifact) !== handoffId) {
+    throw new HandoffError("handoff_mismatch", `handoff_id divergente do artefato: ${handoffId}`);
   }
   const artifact = validateHandoffArtifact(created.artifact);
   // Recepção (F-25): artefatos citados existem dentro do cwd e o digest bate (I-11)
