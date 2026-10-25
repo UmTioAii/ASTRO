@@ -1,5 +1,7 @@
 import { runTask, type RunReport, createProvider } from "./app";
 import { loadConfig, validateConfig } from "./config";
+import { Ledger } from "./ledger";
+import { formatHandoffShow } from "./handoff/lifecycle";
 import { Registry } from "./registry";
 import { formatPoolList } from "./pool";
 import { formatAgentsList } from "./agent-manager";
@@ -19,6 +21,7 @@ const USAGE = `Uso:
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
+  bun src/cli.ts handoff show <handoff_id> [--config <path>]
   bun src/cli.ts pool list [--config <path>]
   bun src/cli.ts agents list [--config <path>]
   bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
@@ -94,6 +97,11 @@ interface AgentsCommand {
   configPath: string;
 }
 
+interface HandoffShowCommand {
+  handoffId: string;
+  configPath: string;
+}
+
 interface ConfigShareCommand {
   action: "push" | "pull";
   name: string;
@@ -112,6 +120,7 @@ type ParsedCommand =
   | { kind: "health"; options: HealthCommand }
   | { kind: "pool"; options: PoolCommand }
   | { kind: "agents"; options: AgentsCommand }
+  | { kind: "handoff"; options: HandoffShowCommand }
   | { kind: "config"; options: ConfigShareCommand };
 
 function parseArgs(argv: string[]): ParsedCommand {
@@ -123,9 +132,38 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health", "pool", "agents", "config"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "health", "handoff", "pool", "agents", "config"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
+  }
+
+  if (command === "handoff") {
+    let configPath = "astro.config.json";
+    let handoffId: string | undefined;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--config") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError("falta o valor de --config");
+        }
+        i++;
+        configPath = value;
+        continue;
+      }
+      if (arg.startsWith("-")) {
+        throw new UsageError(`opção desconhecida: "${arg}"`);
+      }
+      if (arg === "show") continue;
+      if (handoffId !== undefined) {
+        throw new UsageError(`argumento inesperado: "${arg}"`);
+      }
+      handoffId = arg;
+    }
+    if (handoffId === undefined) {
+      throw new UsageError("use: handoff show <handoff_id> [--config <path>]");
+    }
+    return { kind: "handoff", options: { handoffId, configPath } };
   }
 
   if (command === "config") {
@@ -544,6 +582,20 @@ async function main(argv: string[]): Promise<number> {
       console.log(`  resposta: ${result.replay.final}`);
       console.log(result.identical ? "  ✓ idêntico ao original" : "  ✗ divergente do original");
       return result.identical ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${message}`);
+      return 1;
+    }
+  }
+
+  if (parsed.kind === "handoff") {
+    const o = parsed.options;
+    try {
+      const config = loadConfig(resolve(o.configPath));
+      const ledger = new Ledger(resolve(process.cwd(), config.paths.ledger));
+      console.log(formatHandoffShow(ledger, o.handoffId));
+      return 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`erro: ${message}`);
