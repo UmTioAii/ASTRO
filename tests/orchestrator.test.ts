@@ -97,7 +97,7 @@ describe("runMultiAgentSession supervisor (F3-4)", () => {
         step++;
         // alterna handoff a→b→a→b...
         const to = step % 2 === 1 ? "b" : "a";
-        return resp({ toolCalls: [{ id: `c${step}`, name: "handoff", arguments: JSON.stringify({ to }) }] });
+        return resp({ toolCalls: [{ id: `c${step}`, name: "handoff", arguments: JSON.stringify({ to, task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] }) }] });
       },
     };
 
@@ -137,7 +137,7 @@ describe("runMultiAgentSession supervisor (F3-4)", () => {
         step++;
         if (step === 1) {
           // planner: delega ao coder
-          return resp({ toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", payload: { plan: "create hello and utils" } }) }] });
+          return resp({ toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", task: "criar hello e utils", objective: "arquivos prontos", decisions: ["plano definido"], constraints: [], next_steps: [] }) }] });
         }
         if (step === 2) {
           // coder: escreve hello.ts
@@ -149,7 +149,7 @@ describe("runMultiAgentSession supervisor (F3-4)", () => {
         }
         if (step === 4) {
           // coder: delega ao reviewer
-          return resp({ toolCalls: [{ id: "c4", name: "handoff", arguments: JSON.stringify({ to: "reviewer", payload: { files: ["hello.ts", "utils.ts"] } }) }] });
+          return resp({ toolCalls: [{ id: "c4", name: "handoff", arguments: JSON.stringify({ to: "reviewer", task: "revisar arquivos", objective: "revisão aprovada", decisions: [], constraints: [], next_steps: ["revisar hello.ts", "revisar utils.ts"] }) }] });
         }
         if (step === 5) {
           // reviewer: lê hello.ts

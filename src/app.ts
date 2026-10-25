@@ -324,6 +324,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ledger,
           audit,
           maxSteps: config.agent.maxSteps,
+          ...(config.agent.profile === undefined ? {} : { agentProfile: config.agent.profile }),
           ...(config.agent.systemPrompt === undefined
             ? {}
             : { systemPrompt: config.agent.systemPrompt }),

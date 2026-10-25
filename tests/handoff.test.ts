@@ -47,7 +47,9 @@ describe("handoff tool (F3-2)", () => {
     expect(handoffTool.manifest.permission).toBe("handoff");
     const params = handoffTool.manifest.parameters as { properties: Record<string, unknown> };
     expect(params.properties).toHaveProperty("to");
-    expect(params.properties).toHaveProperty("payload");
+    expect(params.properties).toHaveProperty("task");
+    expect(params.properties).toHaveProperty("objective");
+    expect(params.properties).toHaveProperty("decisions");
   });
 
   test("handoff válido troca agent no contexto via runMultiAgentSession", async () => {
@@ -68,7 +70,7 @@ describe("handoff tool (F3-2)", () => {
         step++;
         if (step === 1) {
           return resp({
-            toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", payload: { task: "write file" } }) }],
+            toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", task: "write file", objective: "arquivo escrito", decisions: [], constraints: [], next_steps: [] }) }],
           });
         }
         return resp({ content: "done" });
@@ -109,7 +111,7 @@ describe("handoff tool (F3-2)", () => {
 
     const provider: Provider = {
       complete: async () => resp({
-        toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "ghost", payload: {} }) }],
+        toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "ghost", task: "x", objective: "y", decisions: [], constraints: [], next_steps: [] }) }],
       }),
     };
 
@@ -152,10 +154,10 @@ describe("runMultiAgentSession (F3-2)", () => {
       complete: async () => {
         step++;
         if (step === 1) {
-          return resp({ toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", payload: {} }) }] });
+          return resp({ toolCalls: [{ id: "c1", name: "handoff", arguments: JSON.stringify({ to: "coder", task: "implementar", objective: "código pronto", decisions: [], constraints: [], next_steps: [] }) }] });
         }
         if (step === 2) {
-          return resp({ toolCalls: [{ id: "c2", name: "handoff", arguments: JSON.stringify({ to: "reviewer", payload: {} }) }] });
+          return resp({ toolCalls: [{ id: "c2", name: "handoff", arguments: JSON.stringify({ to: "reviewer", task: "revisar", objective: "aprovação", decisions: [], constraints: [], next_steps: [] }) }] });
         }
         return resp({ content: "approved" });
       },
