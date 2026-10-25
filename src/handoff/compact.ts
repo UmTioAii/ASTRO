@@ -37,11 +37,11 @@ export function compactDraft(draft: HandoffDraft, maxTokens: number = DEFAULT_CO
   const originalTokens = estimateTokens(JSON.stringify(draft));
   const droppedFields: string[] = [];
   const kept: HandoffDraft = { ...draft };
-  if (estimateTokens(JSON.stringify(kept)) > maxTokens && kept.open_questions !== undefined) {
+  if (estimateTokens(JSON.stringify(kept)) > maxTokens && kept.open_questions !== undefined && kept.open_questions.length > 0) {
     droppedFields.push("open_questions");
     delete kept.open_questions;
   }
-  if (estimateTokens(JSON.stringify(kept)) > maxTokens) {
+  if (estimateTokens(JSON.stringify(kept)) > maxTokens && kept.decisions.length > 0) {
     droppedFields.push("decisions");
     kept.decisions = [];
   }
@@ -58,7 +58,14 @@ export function compactDraft(draft: HandoffDraft, maxTokens: number = DEFAULT_CO
 /** Digest dos artefatos declarados pelo emissor; lidos dentro do cwd (I-11). */
 export function digestArtifacts(cwd: string, paths: readonly string[]): HandoffArtifactRef[] {
   return paths.map((path) => {
-    const resolved = resolveWithin(cwd, path); // fora do cwd → ToolError
+    let resolved: string;
+    try {
+      resolved = resolveWithin(cwd, path);
+    } catch (error) {
+      // Emissor e receptor usam a mesma taxonomia (D-18): fora do cwd é mismatch
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new HandoffError("handoff_artifact_mismatch", detail);
+    }
     let content: string;
     try {
       content = readFileSync(resolved, "utf8");

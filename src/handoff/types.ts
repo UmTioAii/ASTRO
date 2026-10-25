@@ -167,6 +167,8 @@ function asPositiveInt(value: unknown, field: string): number {
 }
 
 const COMPACTION_STRATEGIES: readonly string[] = ["summary", "truncate", "none"];
+/** Campos que a compactação pode dropar (F-25): open_questions, depois decisions. */
+const DROPPABLE_FIELDS: readonly string[] = ["open_questions", "decisions"];
 
 /** Valida os campos opcionais de compactação/referência (F-25). */
 function validateCompactFields(raw: Record<string, unknown>): {
@@ -177,7 +179,11 @@ function validateCompactFields(raw: Record<string, unknown>): {
 } {
   const refs = raw.source_refs === undefined ? undefined : (() => {
     const o = asObject(raw.source_refs, "source_refs");
-    return { ledger_id: asString(o.ledger_id, "source_refs.ledger_id"), seq_start: asPositiveInt(o.seq_start, "source_refs.seq_start"), seq_end: asPositiveInt(o.seq_end, "source_refs.seq_end") };
+    const ledgerId = asString(o.ledger_id, "source_refs.ledger_id");
+    if (!/^[0-9a-f]{64}$/.test(ledgerId)) mismatch('campo "source_refs.ledger_id" deve ser sha256 em hex');
+    const seq_start = asPositiveInt(o.seq_start, "source_refs.seq_start"), seq_end = asPositiveInt(o.seq_end, "source_refs.seq_end");
+    if (seq_start > seq_end) mismatch('campo "source_refs" precisa de seq_start <= seq_end');
+    return { ledger_id: ledgerId, seq_start, seq_end };
   })();
   const artifacts = raw.artifacts === undefined ? undefined : (() => {
     if (!Array.isArray(raw.artifacts)) mismatch('campo "artifacts" deve ser lista');
@@ -191,7 +197,9 @@ function validateCompactFields(raw: Record<string, unknown>): {
   const compaction = raw.compaction === undefined ? undefined : (() => {
     const o = asObject(raw.compaction, "compaction");
     if (!COMPACTION_STRATEGIES.includes(o.strategy as string)) mismatch(`campo "compaction.strategy" deve ser um de ${COMPACTION_STRATEGIES.join(", ")}`);
-    return { strategy: o.strategy as HandoffCompaction["strategy"], droppedFields: asRequiredStringArray(o.droppedFields, "compaction.droppedFields") };
+    const droppedFields = asRequiredStringArray(o.droppedFields, "compaction.droppedFields");
+    if (droppedFields.some((f) => !DROPPABLE_FIELDS.includes(f))) mismatch(`campo "compaction.droppedFields" aceita só ${DROPPABLE_FIELDS.join(", ")}`);
+    return { strategy: o.strategy as HandoffCompaction["strategy"], droppedFields };
   })();
   const truncation = raw.truncated === undefined && raw.originalTokens === undefined && raw.returnedTokens === undefined
     ? undefined
