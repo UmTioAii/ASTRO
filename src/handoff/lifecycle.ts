@@ -2,10 +2,12 @@
  * Ciclo de vida do handoff (F-24, ADR-0006): varredura de pendências do run
  * no ledger do cwd corrente e ack do receptor — ler o artefato, validar o
  * schema e gravar `handoff.received` com `receiver_agent`.
+ * F-25: recuperação por `source_refs` e saída do `astro handoff show`.
  */
-import type { Ledger } from "../ledger";
+import type { Ledger, LedgerAnyEntry } from "../ledger";
 import { redactSecrets } from "../sanitize-external";
-import { validateHandoffArtifact, HandoffError, type HandoffArtifactV1 } from "./types";
+import { validateHandoffArtifact, HandoffError, type HandoffArtifactV1, type HandoffSourceRefs } from "./types";
+import { validateArtifacts } from "./compact";
 
 /** Estado de um handoff na varredura: created sem received é retomável. */
 export type HandoffState = "pending" | "completed" | "failed";
@@ -46,7 +48,7 @@ export function scanHandoffs(ledger: Ledger, run?: string): HandoffStatus[] {
  * `received_at` e `receiver_agent`. Artefato ausente ou inválido falha com
  * código estável; nada é gravado nesse caso.
  */
-export function ackHandoff(deps: { ledger: Ledger; run: string }, handoffId: string, receiverAgent: string): HandoffArtifactV1 {
+export function ackHandoff(deps: { ledger: Ledger; run: string; cwd?: string }, handoffId: string, receiverAgent: string): HandoffArtifactV1 {
   const created = deps.ledger
     .readHandoffs()
     .find((e) => e.kind === "handoff.created" && e.handoff_id === handoffId);
@@ -54,6 +56,40 @@ export function ackHandoff(deps: { ledger: Ledger; run: string }, handoffId: str
     throw new HandoffError("handoff_mismatch", `handoff ${handoffId} não encontrado no ledger`);
   }
   const artifact = validateHandoffArtifact(created.artifact);
+  // Recepção (F-25): artefatos citados existem dentro do cwd e o digest bate (I-11)
+  if (deps.cwd !== undefined && artifact.artifacts !== undefined) {
+    validateArtifacts(deps.cwd, artifact.artifacts);
+  }
   deps.ledger.recordHandoff("handoff.received", deps.run, artifact, { agent: receiverAgent, receiverAgent });
   return artifact;
+}
+
+/**
+ * Recupera o detalhe do intervalo de `source_refs` no ledger (F-25): o
+ * receptor com `truncated: true` relê a origem. Ledger estranho → mismatch.
+ */
+export function readSourceRefs(ledger: Ledger, refs: HandoffSourceRefs): LedgerAnyEntry[] {
+  if (refs.ledger_id !== ledger.id()) {
+    throw new HandoffError("handoff_mismatch", `source_refs aponta para outro ledger: ${refs.ledger_id}`);
+  }
+  return ledger.readSeqRange(refs.seq_start, refs.seq_end);
+}
+
+/** Saída do `astro handoff show <handoff_id>` (F-25): artefato + compactação. */
+export function formatHandoffShow(ledger: Ledger, handoffId: string): string {
+  const events = ledger.readHandoffs().filter((e) => e.handoff_id === handoffId);
+  if (events.length === 0) {
+    throw new HandoffError("handoff_mismatch", `handoff ${handoffId} não encontrado no ledger`);
+  }
+  const latest = events.at(-1)!;
+  const a = latest.artifact;
+  const compaction = a.compaction ?? { strategy: "none" as const, droppedFields: [] };
+  return [
+    `handoff ${handoffId} [${latest.kind}]`,
+    `  run: ${a.run} · de "${a.from}" para "${a.to}" · passo ${a.source_step}`,
+    `  budget: ${a.budget_spent.tokens} tokens · US$ ${a.budget_spent.usd}`,
+    `  compactação: ${compaction.strategy}${compaction.droppedFields.length > 0 ? ` (dropou: ${compaction.droppedFields.join(", ")})` : ""}${a.truncated === true ? ` · truncado (${a.originalTokens} → ${a.returnedTokens} tokens)` : ""}`,
+    `  artefatos: ${a.artifacts === undefined || a.artifacts.length === 0 ? "nenhum" : a.artifacts.map((r) => `${r.path} (${r.digest.slice(0, 12)}…)`).join(", ")}`,
+    `  artefato: ${JSON.stringify(a)}`,
+  ].join("\n");
 }
