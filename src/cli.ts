@@ -2,6 +2,7 @@ import { runTask, type RunReport, createProvider } from "./app";
 import { loadConfig, validateConfig } from "./config";
 import { Registry } from "./registry";
 import { formatPoolList } from "./pool";
+import { formatAgentsList } from "./agent-manager";
 import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./eval/harness";
 import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
@@ -19,6 +20,7 @@ const USAGE = `Uso:
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
   bun src/cli.ts pool list [--config <path>]
+  bun src/cli.ts agents list [--config <path>]
   bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
   bun src/cli.ts --help
 
@@ -87,6 +89,11 @@ interface PoolCommand {
   configPath: string;
 }
 
+interface AgentsCommand {
+  action: "list";
+  configPath: string;
+}
+
 interface ConfigShareCommand {
   action: "push" | "pull";
   name: string;
@@ -104,6 +111,7 @@ type ParsedCommand =
   | { kind: "replay"; options: ReplayCommand }
   | { kind: "health"; options: HealthCommand }
   | { kind: "pool"; options: PoolCommand }
+  | { kind: "agents"; options: AgentsCommand }
   | { kind: "config"; options: ConfigShareCommand };
 
 function parseArgs(argv: string[]): ParsedCommand {
@@ -115,7 +123,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health", "pool", "config"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "health", "pool", "agents", "config"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
   }
@@ -208,6 +216,34 @@ function parseArgs(argv: string[]): ParsedCommand {
       throw new UsageError("use: pool list [--config <path>]");
     }
     return { kind: "pool", options: { action: "list", configPath } };
+  }
+
+  if (command === "agents") {
+    let configPath = "astro.config.json";
+    let action: string | undefined;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--config") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError("falta o valor de --config");
+        }
+        i++;
+        configPath = value;
+        continue;
+      }
+      if (arg.startsWith("-")) {
+        throw new UsageError(`opção desconhecida: "${arg}"`);
+      }
+      if (action !== undefined) {
+        throw new UsageError(`argumento inesperado: "${arg}"`);
+      }
+      action = arg;
+    }
+    if (action !== "list") {
+      throw new UsageError("use: agents list [--config <path>]");
+    }
+    return { kind: "agents", options: { action: "list", configPath } };
   }
 
   if (command === "replay") {
@@ -546,6 +582,18 @@ async function main(argv: string[]): Promise<number> {
       const configPath = resolve(o.configPath);
       writeFileSync(configPath, pulled, "utf8");
       console.log(`config "${o.name}" validada e gravada em ${o.configPath}`);
+      return 0;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${message}`);
+      return 1;
+    }
+  }
+
+  if (parsed.kind === "agents") {
+    try {
+      const config = loadConfig(resolve(parsed.options.configPath));
+      console.log(formatAgentsList(config));
       return 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
