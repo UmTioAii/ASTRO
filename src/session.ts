@@ -2,7 +2,8 @@ import type { Auditor } from "./audit";
 import { CallJournal } from "./call-id";
 import { hashToolCalls, type HandoffEventKind, type Ledger } from "./ledger";
 import { buildHandoffArtifact, HandoffError, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
-import { ackHandoff, scanHandoffs, type HandoffStatus } from "./handoff/lifecycle";
+import { ackHandoff, scanHandoffs, readSourceRefs, type HandoffStatus } from "./handoff/lifecycle";
+import { compactDraft, digestArtifacts } from "./handoff/compact";
 import { DEFAULT_ACK_TIMEOUT_MS } from "./config";
 import type { ChatMessage, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
@@ -61,6 +62,8 @@ interface HandoffResult {
   handoff: true;
   to: string;
   draft: HandoffDraft;
+  /** Caminhos citados pelo emissor; digeridos no created (F-25). */
+  artifacts?: string[];
 }
 
 /** Verifica se o output de uma tool é um handoff. */
@@ -105,6 +108,12 @@ async function awaitAck(perform: () => unknown, timeoutMs: number): Promise<"ok"
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/** Detalhe recuperado do ledger quando o nível compacto foi truncado (F-25). */
+function resumeDetail(ledger: Ledger, artifact: HandoffArtifactV1): string {
+  if (artifact.truncated !== true || artifact.source_refs === undefined) return "";
+  return ` recuperação: ${JSON.stringify(readSourceRefs(ledger, artifact.source_refs))}`;
 }
 /** Remove segredos do prompt antes de enviar ao provider (I-03). */
 function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
@@ -215,9 +224,16 @@ export async function runSession(
         // Detectar handoff no resultado
         const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {
+          // Compactação estruturada (F-25): nível compacto + source_refs do ledger
+          const compacted = compactDraft(handoff.draft);
+          const bounds = opts.ledger.seqBoundsOfRun(opts.run);
           const entry = recordHandoffEvent("handoff.created", { ledger: opts.ledger, audit: opts.audit, run: opts.run },
             buildHandoffArtifact({ run: opts.run, from: opts.agent, to: handoff.to, sourceStep: step,
-              budgetSpent: budgetSpent(opts.ledger, opts.run), draft: handoff.draft,
+              budgetSpent: budgetSpent(opts.ledger, opts.run), draft: compacted.draft,
+              sourceRefs: { ledger_id: opts.ledger.id(), seq_start: bounds?.start ?? 1, seq_end: bounds?.end ?? 1 },
+              ...(handoff.artifacts === undefined ? {} : { artifacts: digestArtifacts(opts.cwd, handoff.artifacts) }),
+              compaction: compacted.compaction,
+              ...(compacted.truncated ? { truncation: { truncated: true, originalTokens: compacted.originalTokens, returnedTokens: compacted.returnedTokens } } : {}),
               ...(opts.agentProfile === undefined ? {} : { fromProfile: opts.agentProfile }) }), opts.agent);
           tracer?.end(stepSpan, { handoff: redactSecrets(handoff.to) });
           tracer?.end(rootSpan, { status: "handoff", to: redactSecrets(handoff.to) });
@@ -319,7 +335,7 @@ export async function runMultiAgentSession(
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
   const journal = new CallJournal();
   const knownAgents = opts.registry.listAgentNames?.();
-  const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run };
+  const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run, cwd: opts.cwd };
   /** Ack do receptor com timeout (F-24): hook de teste ou o ciclo padrão do ledger. */
   const ackWithTimeout = (h: { handoff_id: string; artifact: HandoffArtifactV1 }, receiver: string) =>
     awaitAck(() => (opts.ackHandoff !== undefined ? opts.ackHandoff(h.artifact, receiver) : ackHandoff(handoffDeps, h.handoff_id, receiver)), ackTimeoutMs);
@@ -357,7 +373,8 @@ export async function runMultiAgentSession(
       if (await ackWithTimeout(pending, currentAgentName) === "timeout") throw ackTimeoutError(pending);
       opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: pending.handoff_id, artifact: pending.artifact } });
       activeHandoff = pending;
-      messages.push({ role: "system", content: `[Sistema: handoff ${pending.handoff_id} para "${pending.artifact.to}": ${JSON.stringify(pending.artifact)}]` });
+      const resumo = resumeDetail(opts.ledger, pending.artifact);
+      messages.push({ role: "system", content: `[Sistema: handoff ${pending.handoff_id} para "${pending.artifact.to}": ${JSON.stringify(pending.artifact)}]${resumo}` });
     }
     agentsUsed.push(currentAgentName);
 
@@ -465,9 +482,16 @@ export async function runMultiAgentSession(
           const toAgent = opts.registry.getAgent(handoff.to);
           if (toAgent === undefined) throw new HandoffError("handoff_target_not_found",
             `agent destino "${handoff.to}" não encontrado na configuração`);
+          // Compactação estruturada (F-25): nível compacto + source_refs do ledger
+          const compacted = compactDraft(handoff.draft);
+          const bounds = opts.ledger.seqBoundsOfRun(opts.run);
           const entry = recordHandoffEvent("handoff.created", handoffDeps, buildHandoffArtifact({
-            run: opts.run, from: currentAgentName, to: handoff.to, sourceStep: step, draft: handoff.draft,
+            run: opts.run, from: currentAgentName, to: handoff.to, sourceStep: step, draft: compacted.draft,
             budgetSpent: budgetSpent(opts.ledger, opts.run),
+            sourceRefs: { ledger_id: opts.ledger.id(), seq_start: bounds?.start ?? 1, seq_end: bounds?.end ?? 1 },
+            ...(handoff.artifacts === undefined ? {} : { artifacts: digestArtifacts(opts.cwd, handoff.artifacts) }),
+            compaction: compacted.compaction,
+            ...(compacted.truncated ? { truncation: { truncated: true, originalTokens: compacted.originalTokens, returnedTokens: compacted.returnedTokens } } : {}),
             ...(currentAgent.profile === undefined ? {} : { fromProfile: currentAgent.profile }),
             ...(toAgent.profile === undefined ? {} : { toProfile: toAgent.profile }),
           }), currentAgentName);
@@ -484,7 +508,7 @@ export async function runMultiAgentSession(
           opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
           activeHandoff = entry;
           for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
-          messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]` });
+          messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]${resumeDetail(opts.ledger, entry.artifact)}` });
           handoffTriggered = true;
           break; // interrompe execução das outras tools deste step
         }
