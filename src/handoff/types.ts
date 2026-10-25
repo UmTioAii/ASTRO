@@ -34,12 +34,41 @@ export interface HandoffDraft {
   decisions: string[];
   constraints: string[];
   next_steps: string[];
+  /** Questões abertas; primeiro campo dropado na compactação (F-25). */
+  open_questions?: string[];
 }
 
 /** Custo gasto até o handoff; leitura do ledger, nunca contador paralelo (D-10). */
 export interface HandoffBudget {
   tokens: number;
   usd: number;
+}
+
+/** Intervalo do ledger de onde o artefato veio (F-25, ADR-0006). */
+export interface HandoffSourceRefs {
+  /** sha256 do caminho absoluto do ledger; sobrevive a renomeação de rotação. */
+  ledger_id: string;
+  seq_start: number;
+  seq_end: number;
+}
+
+/** Artefato citado pelo emissor: caminho relativo ao cwd + digest do conteúdo. */
+export interface HandoffArtifactRef {
+  path: string;
+  digest: string;
+}
+
+/** Auditoria da compactação lossy (F-25): o que foi perdido e como. */
+export interface HandoffCompaction {
+  strategy: "summary" | "truncate" | "none";
+  droppedFields: string[];
+}
+
+/** Metadados de truncamento do nível compacto, consistentes com F-09. */
+export interface HandoffTruncation {
+  truncated: boolean;
+  originalTokens: number;
+  returnedTokens: number;
 }
 
 /** Artefato durável v1 (ADR-0006): versionado e idempotente por `handoff_id`. */
@@ -52,6 +81,12 @@ export interface HandoffArtifactV1 extends HandoffDraft {
   budget_spent: HandoffBudget;
   from_profile?: string;
   to_profile?: string;
+  source_refs?: HandoffSourceRefs;
+  artifacts?: HandoffArtifactRef[];
+  compaction?: HandoffCompaction;
+  truncated?: boolean;
+  originalTokens?: number;
+  returnedTokens?: number;
 }
 
 export interface HandoffBuildArgs {
@@ -63,6 +98,10 @@ export interface HandoffBuildArgs {
   draft: HandoffDraft;
   fromProfile?: string;
   toProfile?: string;
+  sourceRefs?: HandoffSourceRefs;
+  artifacts?: HandoffArtifactRef[];
+  compaction?: HandoffCompaction;
+  truncation?: HandoffTruncation;
 }
 
 function sha256(value: string): string {
@@ -121,6 +160,53 @@ function asNonNegative(value: unknown, field: string): number {
   return value;
 }
 
+function asPositiveInt(value: unknown, field: string): number {
+  const n = asNonNegative(value, field);
+  if (!Number.isInteger(n) || n < 1) mismatch(`campo "${field}" deve ser inteiro positivo`);
+  return n;
+}
+
+const COMPACTION_STRATEGIES: readonly string[] = ["summary", "truncate", "none"];
+
+/** Valida os campos opcionais de compactação/referência (F-25). */
+function validateCompactFields(raw: Record<string, unknown>): {
+  source_refs?: HandoffSourceRefs;
+  artifacts?: HandoffArtifactRef[];
+  compaction?: HandoffCompaction;
+  truncation?: HandoffTruncation;
+} {
+  const refs = raw.source_refs === undefined ? undefined : (() => {
+    const o = asObject(raw.source_refs, "source_refs");
+    return { ledger_id: asString(o.ledger_id, "source_refs.ledger_id"), seq_start: asPositiveInt(o.seq_start, "source_refs.seq_start"), seq_end: asPositiveInt(o.seq_end, "source_refs.seq_end") };
+  })();
+  const artifacts = raw.artifacts === undefined ? undefined : (() => {
+    if (!Array.isArray(raw.artifacts)) mismatch('campo "artifacts" deve ser lista');
+    return raw.artifacts.map((item: unknown) => {
+      const o = asObject(item, "artifacts[]");
+      const digest = asString(o.digest, "artifacts[].digest");
+      if (!/^[0-9a-f]{64}$/.test(digest)) mismatch('campo "artifacts[].digest" deve ser sha256 em hex');
+      return { path: asString(o.path, "artifacts[].path"), digest };
+    });
+  })();
+  const compaction = raw.compaction === undefined ? undefined : (() => {
+    const o = asObject(raw.compaction, "compaction");
+    if (!COMPACTION_STRATEGIES.includes(o.strategy as string)) mismatch(`campo "compaction.strategy" deve ser um de ${COMPACTION_STRATEGIES.join(", ")}`);
+    return { strategy: o.strategy as HandoffCompaction["strategy"], droppedFields: asRequiredStringArray(o.droppedFields, "compaction.droppedFields") };
+  })();
+  const truncation = raw.truncated === undefined && raw.originalTokens === undefined && raw.returnedTokens === undefined
+    ? undefined
+    : (() => {
+      if (raw.truncated !== true) mismatch('campo "truncated" deve ser true quando os metadados existem');
+      return { truncated: true, originalTokens: asNonNegative(raw.originalTokens, "originalTokens"), returnedTokens: asNonNegative(raw.returnedTokens, "returnedTokens") };
+    })();
+  return {
+    ...(refs === undefined ? {} : { source_refs: refs }),
+    ...(artifacts === undefined ? {} : { artifacts }),
+    ...(compaction === undefined ? {} : { compaction }),
+    ...(truncation === undefined ? {} : truncation),
+  };
+}
+
 /** Valida e normaliza o conteúdo declarado pelo emissor (payload da tool). */
 export function validateHandoffDraft(value: unknown): HandoffDraft {
   const raw = asObject(value, "handoff");
@@ -130,6 +216,7 @@ export function validateHandoffDraft(value: unknown): HandoffDraft {
     decisions: asRequiredStringArray(raw.decisions, "decisions"),
     constraints: asRequiredStringArray(raw.constraints, "constraints"),
     next_steps: asRequiredStringArray(raw.next_steps, "next_steps"),
+    ...(raw.open_questions === undefined ? {} : { open_questions: asRequiredStringArray(raw.open_questions, "open_questions") }),
   };
 }
 
@@ -153,6 +240,7 @@ export function validateHandoffArtifact(value: unknown): HandoffArtifactV1 {
     ...validateHandoffDraft(raw),
     ...(raw.from_profile === undefined ? {} : { from_profile: asString(raw.from_profile, "from_profile") }),
     ...(raw.to_profile === undefined ? {} : { to_profile: asString(raw.to_profile, "to_profile") }),
+    ...validateCompactFields(raw),
   };
 }
 
@@ -172,8 +260,14 @@ export function buildHandoffArtifact(args: HandoffBuildArgs): HandoffArtifactV1 
     decisions: args.draft.decisions,
     constraints: args.draft.constraints,
     next_steps: args.draft.next_steps,
+    ...(args.draft.open_questions === undefined ? {} : { open_questions: args.draft.open_questions }),
     ...(args.fromProfile === undefined ? {} : { from_profile: args.fromProfile }),
     ...(args.toProfile === undefined ? {} : { to_profile: args.toProfile }),
+    ...(args.sourceRefs === undefined ? {} : { source_refs: args.sourceRefs }),
+    ...(args.artifacts === undefined || args.artifacts.length === 0 ? {} : { artifacts: args.artifacts }),
+    // Compactação sempre auditada: sem perda é strategy "none" (F-25)
+    compaction: args.compaction ?? { strategy: "none", droppedFields: [] },
+    ...(args.truncation === undefined ? {} : args.truncation),
   });
 }
 
@@ -189,7 +283,10 @@ export function sanitizeHandoffArtifact(a: HandoffArtifactV1): HandoffArtifactV1
     decisions: a.decisions.map(redactSecrets),
     constraints: a.constraints.map(redactSecrets),
     next_steps: a.next_steps.map(redactSecrets),
+    ...(a.open_questions === undefined ? {} : { open_questions: a.open_questions.map(redactSecrets) }),
     ...(a.from_profile === undefined ? {} : { from_profile: redactSecrets(a.from_profile) }),
     ...(a.to_profile === undefined ? {} : { to_profile: redactSecrets(a.to_profile) }),
+    ...(a.artifacts === undefined ? {} : { artifacts: a.artifacts.map((r) => ({ ...r, path: redactSecrets(r.path) })) }),
+    ...(a.compaction === undefined ? {} : { compaction: { ...a.compaction, droppedFields: a.compaction.droppedFields.map(redactSecrets) } }),
   };
 }
