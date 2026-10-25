@@ -125,6 +125,14 @@ export interface TeamSectionConfig {
   auditWebhook?: string;
 }
 
+/** Handoff (F-24): timeout do ack de recebimento (D-15). */
+export interface HandoffConfig {
+  ackTimeoutMs: number;
+}
+
+/** Default do timeout de ack (F-24, D-15). */
+export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
+
 export interface PathsConfig {
   ledger: string;
   audit: string;
@@ -148,6 +156,8 @@ export interface AstroConfig {
   version?: string;
   /** Recursos de time (F7-5). */
   team?: TeamSectionConfig;
+  /** Handoff (F-24): timeout do ack; default 30000ms (D-15). */
+  handoff?: HandoffConfig;
   paths: PathsConfig;
 }
 
@@ -568,6 +578,17 @@ function validateTeam(value: unknown): TeamSectionConfig {
   return result;
 }
 
+/** Valida a seção `handoff` (F-24); ausente aplica o default 30000ms (D-15). */
+function validateHandoff(value: unknown): HandoffConfig {
+  const raw = value === undefined ? {} : expectObject(value, "handoff");
+  return {
+    ackTimeoutMs:
+      raw.ackTimeoutMs === undefined
+        ? DEFAULT_ACK_TIMEOUT_MS
+        : expectPositiveInteger(raw.ackTimeoutMs, "handoff.ackTimeoutMs"),
+  };
+}
+
 /** Valida a seção opcional `telemetry` (F5-5): off por default, sem PII. */
 function validateTelemetry(value: unknown): TelemetryConfig {
   const raw = expectObject(value, "telemetry");
@@ -680,9 +701,12 @@ export function validateConfig(raw: unknown): AstroConfig {
   // Team features (F7-5)
   const team = root.team === undefined ? undefined : validateTeam(root.team);
 
+  // Handoff (F-24): timeout do ack com default seguro (D-15)
+  const handoff = validateHandoff(root.handoff);
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, paths };
+  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */

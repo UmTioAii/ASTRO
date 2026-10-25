@@ -1,7 +1,9 @@
 import type { Auditor } from "./audit";
 import { CallJournal } from "./call-id";
-import { hashToolCalls, type Ledger } from "./ledger";
+import { hashToolCalls, type HandoffEventKind, type Ledger } from "./ledger";
 import { buildHandoffArtifact, HandoffError, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
+import { ackHandoff, scanHandoffs, type HandoffStatus } from "./handoff/lifecycle";
+import { DEFAULT_ACK_TIMEOUT_MS } from "./config";
 import type { ChatMessage, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
@@ -80,10 +82,29 @@ function budgetSpent(ledger: Ledger, run: string): { tokens: number; usd: number
   return ledger.readAll().reduce((acc, e) => e.run === redactSecrets(run)
     ? { tokens: acc.tokens + e.tokensIn + e.tokensOut, usd: acc.usd + (e.costUsd ?? 0) } : acc, { tokens: 0, usd: 0 });
 }
-function recordHandoffEvent(kind: "handoff.created" | "handoff.received", deps: { ledger: Ledger; audit: Auditor; run: string }, artifact: HandoffArtifactV1, agent: string) {
-  const entry = deps.ledger.recordHandoff(kind, deps.run, artifact, { agent });
+function recordHandoffEvent(
+  kind: HandoffEventKind,
+  deps: { ledger: Ledger; audit: Auditor; run: string },
+  artifact: HandoffArtifactV1,
+  agent: string,
+  extra?: { reason?: string },
+) {
+  const entry = deps.ledger.recordHandoff(kind, deps.run, artifact, { agent, ...(extra ?? {}) });
   deps.audit.append({ run: deps.run, agent, tipo: kind, payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
   return entry;
+}
+
+/** Espera o ack do receptor com timeout (F-24); devolve "timeout" se estourou. */
+async function awaitAck(perform: () => unknown, timeoutMs: number): Promise<"ok" | "timeout"> {
+  const TIMEOUT = Symbol("ack_timeout");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMEOUT>((resolve) => { timer = setTimeout(() => resolve(TIMEOUT), timeoutMs); });
+  try {
+    const outcome = await Promise.race([Promise.resolve(perform()), timeout]);
+    return outcome === TIMEOUT ? "timeout" : "ok";
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 /** Remove segredos do prompt antes de enviar ao provider (I-03). */
 function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
@@ -262,6 +283,10 @@ export interface MultiAgentSessionOptions {
   protectedPaths?: readonly string[];
   /** Nomes exatos de variáveis removidos do shell (ex.: credentialRef). */
   secretEnvNames?: readonly string[];
+  /** Timeout do ack de handoff (F-24, D-15); default 30000ms. */
+  ackTimeoutMs?: number;
+  /** Ack do receptor (F-24); default lê o artefato do ledger e grava received. */
+  ackHandoff?: (artifact: HandoffArtifactV1, receiverAgent: string) => unknown;
 }
 
 /**
@@ -276,7 +301,6 @@ export async function runMultiAgentSession(
   const agentsUsed: string[] = [];
   let currentAgentName = opts.entryAgent;
   let currentAgent = opts.registry.requireAgent(currentAgentName);
-  agentsUsed.push(currentAgentName);
 
   let currentModel = opts.baseModel;
   let currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
@@ -284,6 +308,9 @@ export async function runMultiAgentSession(
   let currentTools: Set<string> = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
   let step = 0;
   let agentSteps = 0; // steps do agent atual
+  /** Handoff ack nesta sessão; falha pós-ack grava handoff.failed (F-24). */
+  let activeHandoff: { handoff_id: string; artifact: HandoffArtifactV1 } | undefined;
+  const ackTimeoutMs = opts.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS;
 
   const messages: ChatMessage[] = [
     { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT },
@@ -293,6 +320,13 @@ export async function runMultiAgentSession(
   const journal = new CallJournal();
   const knownAgents = opts.registry.listAgentNames?.();
   const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run };
+  /** Ack do receptor com timeout (F-24): hook de teste ou o ciclo padrão do ledger. */
+  const ackWithTimeout = (h: { handoff_id: string; artifact: HandoffArtifactV1 }, receiver: string) =>
+    awaitAck(() => (opts.ackHandoff !== undefined ? opts.ackHandoff(h.artifact, receiver) : ackHandoff(handoffDeps, h.handoff_id, receiver)), ackTimeoutMs);
+  const ackTimeoutError = (h: { handoff_id: string; artifact: HandoffArtifactV1 }) => {
+    recordHandoffEvent("handoff.ack_timeout", handoffDeps, h.artifact, h.artifact.from, { reason: `sem ack em ${ackTimeoutMs}ms` });
+    return new HandoffError("handoff_ack_timeout", `handoff ${h.handoff_id} sem ack em ${ackTimeoutMs}ms`);
+  };
 
   const tracer = opts.tracer;
   const rootSpan = tracer?.start("run", {
@@ -303,6 +337,30 @@ export async function runMultiAgentSession(
   });
 
   try {
+    // Varredura de retomada (F-24): pendências do run no ledger do cwd corrente
+    const resume = scanHandoffs(opts.ledger, opts.run).at(-1);
+    if (resume !== undefined && resume.state === "failed") {
+      // Falho permanente: reporta e não reexecuta (I-19)
+      throw new Error(`handoff ${resume.handoff_id} falhou permanentemente e não será reexecutado${resume.reason === undefined ? "" : `: ${resume.reason}`}`);
+    }
+    if (resume !== undefined && resume.state === "pending") {
+      const pending = resume;
+      const toAgent = opts.registry.getAgent(pending.artifact.to);
+      if (toAgent === undefined) throw new HandoffError("handoff_target_not_found", `agent destino "${pending.artifact.to}" não encontrado na configuração`);
+      currentAgentName = pending.artifact.to;
+      currentAgent = toAgent;
+      currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
+      currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
+      currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+      messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
+      // Receptor retomado confirma no início: lê, valida e grava received (F-24)
+      if (await ackWithTimeout(pending, currentAgentName) === "timeout") throw ackTimeoutError(pending);
+      opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: pending.handoff_id, artifact: pending.artifact } });
+      activeHandoff = pending;
+      messages.push({ role: "system", content: `[Sistema: handoff ${pending.handoff_id} para "${pending.artifact.to}": ${JSON.stringify(pending.artifact)}]` });
+    }
+    agentsUsed.push(currentAgentName);
+
     while (step < opts.baseMaxSteps) {
       // Verificar limite do agent atual
       if (agentSteps >= currentMaxSteps) {
@@ -422,7 +480,9 @@ export async function runMultiAgentSession(
           agentsUsed.push(currentAgentName);
           opts.audit.append({ run: opts.run, agent: entry.artifact.from, tipo: "agent.switch",
             payload: { from: entry.artifact.from, to: entry.artifact.to, handoff_id: entry.handoff_id } });
-          recordHandoffEvent("handoff.received", handoffDeps, entry.artifact, currentAgentName);
+          if (await ackWithTimeout(entry, currentAgentName) === "timeout") throw ackTimeoutError(entry);
+          opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
+          activeHandoff = entry;
           for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
           messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]` });
           handoffTriggered = true;
@@ -441,6 +501,12 @@ export async function runMultiAgentSession(
     tracer?.end(rootSpan, { status: "max_steps" });
     throw new MaxStepsError(opts.baseMaxSteps);
   } catch (error) {
+    // Falha pós-ack é terminal para o handoff: grava handoff.failed (F-24, I-19)
+    if (activeHandoff !== undefined && !(error instanceof HandoffError && error.code === "handoff_ack_timeout")) {
+      recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {
+        reason: error instanceof Error ? error.name : String(error),
+      });
+    }
     opts.ledger.recordState(opts.run, "interrupted", {
       agent: currentAgentName,
       reason: error instanceof Error ? error.name : String(error),
