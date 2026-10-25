@@ -179,7 +179,7 @@ export async function runSession(
         {
           run: opts.run,
           agent: opts.agent,
-          provider: opts.model.provider,
+          provider: response.provider ?? opts.model.provider, // C6: provider real, não o wrapper
           model: opts.model.id,
           credentialRef: opts.credentialRef,
           quotaDomain: opts.quotaDomain,
@@ -448,7 +448,7 @@ export async function runMultiAgentSession(
         {
           run: opts.run,
           agent: currentAgentName,
-          provider: currentModel.provider,
+          provider: response.provider ?? currentModel.provider, // C6: provider real, não o wrapper
           model: currentModel.id,
           credentialRef: opts.credentialRef,
           quotaDomain: opts.quotaDomain,
