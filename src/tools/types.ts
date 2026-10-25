@@ -42,6 +42,8 @@ export interface ToolContext {
   step?: number;
   /** Journal de resultados por call_id; presente quando a sessão habilita dedup (F-03). */
   journal?: CallJournal;
+  /** Agents nomeados disponíveis; permite à tool handoff validar o destino (F-23). */
+  knownAgents?: readonly string[];
 }
 
 /**

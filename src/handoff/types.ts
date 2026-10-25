@@ -19,7 +19,7 @@ export class HandoffError extends ToolError {
   readonly errClass: ErrorClass;
 
   constructor(code: HandoffErrorCode, message: string) {
-    super(`${code}: ${message}`);
+    super(`${code}: ${redactSecrets(message)}`);
     this.name = "HandoffError";
     this.code = code;
     this.retryable = RETRYABLE.has(code);
@@ -79,12 +79,12 @@ export function taskHash(task: string, objective: string): string {
  *
  * Mudanças em `decisions`/`constraints`/`next_steps` NÃO alteram o id — a
  * estabilidade é o que permite o verifier e o lock de via única (F-26).
- * `task`/`objective` são sanitizados antes do hash (I-03), de modo que o id
- * calculado aqui é o mesmo do artefato persistido.
+ * `run`/`from`/`to` e `task`/`objective` são sanitizados antes do hash (I-03),
+ * de modo que o id calculado aqui é o mesmo do artefato persistido.
  */
 export function handoffId(a: Pick<HandoffArtifactV1, "run" | "from" | "to" | "source_step" | "task" | "objective">): string {
   return sha256(
-    `${a.run}|${a.from}|${a.to}|${taskHash(redactSecrets(a.task), redactSecrets(a.objective))}|${a.source_step}`,
+    `${redactSecrets(a.run)}|${redactSecrets(a.from)}|${redactSecrets(a.to)}|${taskHash(redactSecrets(a.task), redactSecrets(a.objective))}|${a.source_step}`,
   );
 }
 
@@ -179,12 +179,12 @@ export function buildHandoffArtifact(args: HandoffBuildArgs): HandoffArtifactV1 
 
 /**
  * Sanitiza o artefato antes de persistir (I-03): redige padrões de segredo nos
- * campos livres. `budget_spent` é numérico e permanece intacto.
+ * campos textuais. `budget_spent` é numérico e permanece intacto.
  */
 export function sanitizeHandoffArtifact(a: HandoffArtifactV1): HandoffArtifactV1 {
   return {
     ...a,
-    task: redactSecrets(a.task),
+    run: redactSecrets(a.run), from: redactSecrets(a.from), to: redactSecrets(a.to), task: redactSecrets(a.task),
     objective: redactSecrets(a.objective),
     decisions: a.decisions.map(redactSecrets),
     constraints: a.constraints.map(redactSecrets),

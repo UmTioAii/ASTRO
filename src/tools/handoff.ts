@@ -1,9 +1,9 @@
+import { HandoffError, validateHandoffDraft, type HandoffDraft } from "../handoff/types";
 import type { Tool, ToolContext, ToolManifest, ToolResult } from "./types";
-import { ToolError } from "./types";
 
-export interface HandoffInput {
+/** Entrada da tool: destino + conteúdo do artefato declarado pelo emissor. */
+export interface HandoffInput extends HandoffDraft {
   to: string;
-  payload?: Record<string, unknown>;
 }
 
 export const handoffManifest: ToolManifest = {
@@ -13,9 +13,9 @@ export const handoffManifest: ToolManifest = {
     type: "object",
     properties: {
       to: { type: "string", description: "Nome do agent destino (deve existir em agents)" },
-      payload: { type: "object", description: "Dados opcionais para passar ao próximo agent" },
+      task: { type: "string" }, objective: { type: "string" }, decisions: { type: "array", items: { type: "string" } }, constraints: { type: "array", items: { type: "string" } }, next_steps: { type: "array", items: { type: "string" } },
     },
-    required: ["to"],
+    required: ["to", "task", "objective", "decisions", "constraints", "next_steps"],
     additionalProperties: false,
   },
   risk: "medium",
@@ -29,15 +29,11 @@ export const handoffManifest: ToolManifest = {
 /** Tool de handoff — a execução real é feita pelo runtime multi-agent. */
 export const handoffTool: Tool = {
   manifest: handoffManifest,
-  async execute(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
-    const parsed = input as HandoffInput;
-    if (!parsed.to || typeof parsed.to !== "string") {
-      throw new ToolError("handoff: campo 'to' (string) é obrigatório");
-    }
-    // O runtime intercepta este resultado e faz a troca de agent
-    return {
-      output: JSON.stringify({ handoff: true, to: parsed.to, payload: parsed.payload ?? {} }),
-      isError: false,
-    };
+  async execute(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+    const raw = (typeof input === "object" && input !== null ? input : {}) as Partial<HandoffInput>;
+    if (typeof raw.to !== "string" || raw.to.trim().length === 0) throw new HandoffError("handoff_artifact_mismatch", "campo 'to' (string) é obrigatório");
+    const draft = validateHandoffDraft(raw);
+    if (ctx.knownAgents !== undefined && !ctx.knownAgents.includes(raw.to)) throw new HandoffError("handoff_target_not_found", `agent destino "${raw.to}" não encontrado na configuração`);
+    return { output: JSON.stringify({ handoff: true, to: raw.to, draft }), isError: false };
   },
 };
