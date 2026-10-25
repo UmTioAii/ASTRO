@@ -82,6 +82,22 @@ describe("agents (F3-1)", () => {
   });
 });
 
+describe("handoff (F-24)", () => {
+  test("sem seção handoff o ackTimeoutMs default é 30000 (D-15)", () => {
+    const cfg = validateConfig(structuredClone(valid));
+    expect(cfg.handoff?.ackTimeoutMs).toBe(30_000);
+  });
+  test("ackTimeoutMs inválido → ConfigError", () => {
+    const bad = structuredClone(valid) as typeof valid & { handoff?: { ackTimeoutMs?: unknown } };
+    bad.handoff = { ackTimeoutMs: 0 };
+    expect(() => validateConfig(bad)).toThrow(/handoff\.ackTimeoutMs/);
+  });
+  test("ackTimeoutMs válido é preservado", () => {
+    const cfg = validateConfig({ ...structuredClone(valid), handoff: { ackTimeoutMs: 5_000 } });
+    expect(cfg.handoff?.ackTimeoutMs).toBe(5_000);
+  });
+});
+
 test("vocabulário de tags é fechado", () => {
   expect(isKnownTag("writing-code")).toBe(true);
   expect(isKnownTag("telepathy")).toBe(false);

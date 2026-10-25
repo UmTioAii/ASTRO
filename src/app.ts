@@ -308,6 +308,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         env,
         protectedPaths: [ledgerPath, auditPath],
         secretEnvNames,
+        // Handoff (F-24): timeout do ack; default 30000ms (D-15)
+        ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
       };
       result = await runMultiAgentSession(multiOpts, opts.task);
     } else {
