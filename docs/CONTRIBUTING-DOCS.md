@@ -19,6 +19,7 @@ Objetivo: definir o formato de toda documentação publicada no repositório.
 | 6 | Sem emojis, sem marketing, sem "vamos", "nosso"; linguagem direta e impessoal. |
 | 7 | Todo item de roadmap tem: ID, título, fase, status (`concluído` \| `em andamento` \| `planejado` \| `bloqueado`), issue (`#n`) e dependências. |
 | 8 | Datas só quando houver evento verificável (merge, release). |
+| 9 | `README.md` é escrito em inglês (decisão do dono: face pública do repositório), no formato de face pública (tagline, badges, tabela "Why") — isento da regra 1; os demais docs de `docs/` seguem em português. |
 
 ## Verificação
 
