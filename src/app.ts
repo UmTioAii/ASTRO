@@ -7,6 +7,7 @@ import { ConfigError, loadConfig } from "./config";
 import { Ledger } from "./ledger";
 import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
+import { FallbackProvider, DEFAULT_PRIORITY } from "./provider/fallback-provider";
 import type { Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
 import { sendTelemetry } from "./telemetry";
@@ -221,12 +222,32 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   const { provider, credentialRef, quotaDomain } = createProvider(config, model, env, loaded.providerFactories);
 
-  // Completion cache (F6-4): wrap do provider com cache SQLite
+  // Fallback entre providers (C6, D-14): cadeia por prioridade; `fallback: []` desliga
+  const primaryConfig = config.providers[model.provider];
+  const fallbackNames = primaryConfig?.fallback ?? [];
   let effectiveProvider = provider;
+  if (fallbackNames.length > 0) {
+    effectiveProvider = new FallbackProvider({
+      providers: [
+        { name: model.provider, priority: primaryConfig?.priority ?? DEFAULT_PRIORITY, create: () => provider },
+        ...fallbackNames.map((name) => ({
+          name,
+          priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
+          create: () => createProvider(config, { ...model, provider: name }, env, loaded.providerFactories).provider,
+        })),
+      ],
+      maxRetries: primaryConfig?.maxRetries,
+      retryBackoffMs: primaryConfig?.retryBackoffMs,
+      audit,
+      run,
+    });
+  }
+
+  // Completion cache (F6-4): wrap do provider com cache SQLite (por cima do fallback quando ativo)
   if (config.cache?.enabled === true) {
     const cacheDbPath = join(dirname(ledgerPath), "cache.db");
     const cache = new CompletionCache(cacheDbPath);
-    effectiveProvider = cachedProvider(provider, {
+    effectiveProvider = cachedProvider(effectiveProvider, {
       cache,
       ttlHours: config.cache.ttlHours,
       maxEntries: config.cache.maxEntries,

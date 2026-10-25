@@ -8,6 +8,14 @@ interface ProviderConfigBase {
   quotaDomain?: string;
   /** Headers extras enviados ao provider (ex.: HTTP-Referer, X-Title). */
   headers?: Record<string, string>;
+  /** Ordem na cadeia de fallback (C6); menor atende primeiro. Default 100 (D-15). */
+  priority?: number;
+  /** Providers a tentar em falha (C6, D-14); `[]` desabilita o fallback. */
+  fallback?: string[];
+  /** Retries por provider além da primeira tentativa (C6). Default 2. */
+  maxRetries?: number;
+  /** Base do backoff linear entre retries em ms (C6). Default 1000. */
+  retryBackoffMs?: number;
 }
 
 /** Provider OpenAI-compatible (NVIDIA NIM, OpenRouter). */
@@ -158,6 +166,8 @@ export interface AstroConfig {
   team?: TeamSectionConfig;
   /** Handoff (F-24): timeout do ack; default 30000ms (D-15). */
   handoff?: HandoffConfig;
+  /** Tabela de preços global (C6): key `provider/model-id` sobrescreve `model.price` para custo. */
+  pricing?: Record<string, PriceConfig>;
   paths: PathsConfig;
 }
 
@@ -243,6 +253,13 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
   const quotaDomain =
     raw.quotaDomain === undefined ? "default" : expectString(raw.quotaDomain, `${field}.quotaDomain`);
   const headers = raw.headers === undefined ? undefined : validateHeaders(raw.headers, `${field}.headers`);
+  // C6: campos de fallback — prioridade/retries validados; nomes cruzados depois
+  const fallbackFields = {
+    ...(raw.priority === undefined ? {} : { priority: expectPositiveInteger(raw.priority, `${field}.priority`) }),
+    ...(raw.fallback === undefined ? {} : { fallback: expectStringArray(raw.fallback, `${field}.fallback`) }),
+    ...(raw.maxRetries === undefined ? {} : { maxRetries: expectNonNegativeNumber(raw.maxRetries, `${field}.maxRetries`) }),
+    ...(raw.retryBackoffMs === undefined ? {} : { retryBackoffMs: expectPositiveInteger(raw.retryBackoffMs, `${field}.retryBackoffMs`) }),
+  };
 
   if (kind === "openai-compat") {
     return {
@@ -251,6 +268,7 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
       credentialRef: expectString(raw.credentialRef, `${field}.credentialRef`),
       quotaDomain,
       ...(headers === undefined ? {} : { headers }),
+      ...fallbackFields,
     };
   }
 
@@ -262,6 +280,7 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
       quotaDomain,
       ...(baseUrl === undefined ? {} : { baseUrl }),
       ...(headers === undefined ? {} : { headers }),
+      ...fallbackFields,
     };
   }
 
@@ -271,6 +290,7 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
     kind,
     quotaDomain,
     ...(headers === undefined ? {} : { headers }),
+    ...fallbackFields,
   } as PluginProviderConfig;
 }
 
@@ -649,6 +669,29 @@ export function validateConfig(raw: unknown): AstroConfig {
     seenModels.add(key);
   }
 
+  // C6: cadeia de fallback referencia providers declarados
+  for (const [name, provider] of Object.entries(providers)) {
+    for (const target of provider.fallback ?? []) {
+      if (!Object.hasOwn(providers, target)) {
+        fail(`config inválida: "providers.${name}.fallback" aponta para o provider "${target}", que não está declarado`);
+      }
+    }
+  }
+
+  // C6: tabela de preços global — key `provider/model-id` de modelo declarado
+  let pricing: Record<string, PriceConfig> | undefined;
+  if (root.pricing !== undefined) {
+    const pricingRaw = expectObject(root.pricing, "pricing");
+    const table: Record<string, PriceConfig> = Object.create(null);
+    for (const [key, priceRaw] of Object.entries(pricingRaw)) {
+      if (!seenModels.has(key)) {
+        fail(`config inválida: "pricing.${key}" não corresponde a um modelo declarado em "models"`);
+      }
+      table[key] = validatePrice(priceRaw, `pricing.${key}`);
+    }
+    pricing = table;
+  }
+
   // Model pool (F-27, ADR-0007): profiles resolvem para modelos de models[]
   const modelPool =
     root.modelPool === undefined ? undefined : validateModelPool(root.modelPool, models);
@@ -706,7 +749,7 @@ export function validateConfig(raw: unknown): AstroConfig {
 
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, paths };
+  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, ...(pricing === undefined ? {} : { pricing }), paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
