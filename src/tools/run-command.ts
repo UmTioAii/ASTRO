@@ -209,6 +209,8 @@ export const runCommandTool: Tool = {
     permission: "execute",
     timeoutMs: 30_000,
     retryable: false,
+    idempotent: false,
+    sideEffects: "process",
   },
 
   async execute(input, ctx): Promise<ToolResult> {
