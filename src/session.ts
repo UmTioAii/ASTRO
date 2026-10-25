@@ -1,10 +1,12 @@
 import type { Auditor } from "./audit";
 import { CallJournal } from "./call-id";
 import { hashToolCalls, type Ledger } from "./ledger";
+import { buildHandoffArtifact, HandoffError, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
 import type { ChatMessage, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
 import type { AgentEntry } from "./registry";
+import { redactSecrets } from "./sanitize-external";
 import type { SpanHandle, TracerLike } from "./tracing";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
@@ -37,6 +39,8 @@ export interface SessionOptions {
   protectedPaths?: readonly string[];
   /** Nomes exatos de variáveis removidos do shell (ex.: credentialRef). */
   secretEnvNames?: readonly string[];
+  agentProfile?: string;
+  knownAgents?: readonly string[];
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -54,20 +58,36 @@ export class MaxStepsError extends Error {
 interface HandoffResult {
   handoff: true;
   to: string;
-  payload?: Record<string, unknown>;
+  draft: HandoffDraft;
 }
 
 /** Verifica se o output de uma tool é um handoff. */
 function isHandoffResult(output: string): HandoffResult | null {
   try {
-    const parsed = JSON.parse(output);
-    if (parsed.handoff === true && typeof parsed.to === "string") {
-      return { handoff: true, to: parsed.to, payload: parsed.payload };
-    }
-  } catch {
-    // não é JSON ou não é handoff
-  }
+    const p = JSON.parse(output);
+    if (p?.handoff === true && typeof p.to === "string" && typeof p.draft === "object" && p.draft !== null) return p as HandoffResult;
+  } catch { /* não é JSON ou não é handoff */ }
   return null;
+}
+
+function assertKnownTarget(call: { name: string; arguments: string }, knownAgents: readonly string[] | undefined): void {
+  if (call.name !== "handoff" || knownAgents === undefined) return;
+  const parsed = (() => { try { return JSON.parse(call.arguments) as { to?: unknown }; } catch { return {}; } })();
+  if (typeof parsed.to === "string" && !knownAgents.includes(parsed.to)) throw new HandoffError("handoff_target_not_found", `agent destino "${parsed.to}" não encontrado na configuração`);
+}
+
+function budgetSpent(ledger: Ledger, run: string): { tokens: number; usd: number } {
+  return ledger.readAll().reduce((acc, e) => e.run === redactSecrets(run)
+    ? { tokens: acc.tokens + e.tokensIn + e.tokensOut, usd: acc.usd + (e.costUsd ?? 0) } : acc, { tokens: 0, usd: 0 });
+}
+function recordHandoffEvent(kind: "handoff.created" | "handoff.received", deps: { ledger: Ledger; audit: Auditor; run: string }, artifact: HandoffArtifactV1, agent: string) {
+  const entry = deps.ledger.recordHandoff(kind, deps.run, artifact, { agent });
+  deps.audit.append({ run: deps.run, agent, tipo: kind, payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
+  return entry;
+}
+/** Remove segredos do prompt antes de enviar ao provider (I-03). */
+function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
+  return JSON.parse(redactSecrets(JSON.stringify(messages))) as ChatMessage[];
 }
 
 /**
@@ -82,7 +102,7 @@ export async function runSession(
   const tracer = opts.tracer;
   const rootSpan = tracer?.start(
     "run",
-    { agent: opts.agent, model: `${opts.model.provider}/${opts.model.id}`, run: opts.run },
+    { agent: redactSecrets(opts.agent), model: `${opts.model.provider}/${opts.model.id}`, run: redactSecrets(opts.run) },
   );
   const messages: ChatMessage[] = [
     { role: "system", content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
@@ -90,6 +110,7 @@ export async function runSession(
   ];
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step. */
   const journal = new CallJournal();
+  const knownAgents = opts.knownAgents ?? [];
 
   try {
     for (let step = 1; step <= opts.maxSteps; step++) {
@@ -102,7 +123,7 @@ export async function runSession(
       if (opts.teamLimits?.agentQuotas !== undefined) {
         assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, opts.agent);
       }
-      const stepSpan = tracer?.start("step", { step, agent: opts.agent }, rootSpan);
+      const stepSpan = tracer?.start("step", { step, agent: redactSecrets(opts.agent) }, rootSpan);
       const providerSpan = tracer?.start(
         "provider.complete",
         { model: opts.model.id, provider: opts.model.provider },
@@ -110,7 +131,7 @@ export async function runSession(
       );
       const response = await opts.provider.complete({
         model: opts.model.id,
-        messages,
+        messages: safePrompt(messages),
         tools: opts.executor.defs(),
       });
       tracer?.end(providerSpan, {
@@ -147,9 +168,10 @@ export async function runSession(
       });
 
       for (const call of response.toolCalls) {
+        assertKnownTarget(call, knownAgents);
         const toolSpan = tracer?.start(
           "tool.exec",
-          { tool: call.name, agent: opts.agent },
+          { tool: call.name, agent: redactSecrets(opts.agent) },
           stepSpan ?? rootSpan,
         );
         const result = await opts.executor.run(
@@ -159,6 +181,7 @@ export async function runSession(
             agent: opts.agent,
             step,
             journal,
+            knownAgents,
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
@@ -169,11 +192,15 @@ export async function runSession(
         messages.push({ role: "tool", content: result.output, toolCallId: call.id });
 
         // Detectar handoff no resultado
-        const handoff = isHandoffResult(result.output);
+        const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {
-          tracer?.end(stepSpan, { handoff: handoff.to });
-          tracer?.end(rootSpan, { status: "handoff", to: handoff.to });
-          throw { name: "HandoffSignal", to: handoff.to, payload: handoff.payload, step };
+          const entry = recordHandoffEvent("handoff.created", { ledger: opts.ledger, audit: opts.audit, run: opts.run },
+            buildHandoffArtifact({ run: opts.run, from: opts.agent, to: handoff.to, sourceStep: step,
+              budgetSpent: budgetSpent(opts.ledger, opts.run), draft: handoff.draft,
+              ...(opts.agentProfile === undefined ? {} : { fromProfile: opts.agentProfile }) }), opts.agent);
+          tracer?.end(stepSpan, { handoff: redactSecrets(handoff.to) });
+          tracer?.end(rootSpan, { status: "handoff", to: redactSecrets(handoff.to) });
+          throw { name: "HandoffSignal", to: handoff.to, artifact: entry.artifact, step };
         }
       }
       tracer?.end(stepSpan);
@@ -212,7 +239,7 @@ export interface MultiAgentSessionOptions {
   quotaDomain: string;
   cwd: string;
   provider: Provider;
-  registry: { requireAgent(name: string): AgentEntry; getAgent(name: string): AgentEntry | undefined };
+  registry: { requireAgent(name: string): AgentEntry; getAgent(name: string): AgentEntry | undefined; listAgentNames?(): string[] };
   baseModel: ModelEntry;
   baseExecutor: ToolExecutor;
   ledger: Ledger;
@@ -264,12 +291,14 @@ export async function runMultiAgentSession(
   ];
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
   const journal = new CallJournal();
+  const knownAgents = opts.registry.listAgentNames?.();
+  const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run };
 
   const tracer = opts.tracer;
   const rootSpan = tracer?.start("run", {
-    agent: opts.entryAgent,
+    agent: redactSecrets(opts.entryAgent),
     model: `${opts.baseModel.provider}/${opts.baseModel.id}`,
-    run: opts.run,
+    run: redactSecrets(opts.run),
     multi: true,
   });
 
@@ -280,7 +309,7 @@ export async function runMultiAgentSession(
         tracer?.end(rootSpan, { status: "error", "error.class": "MaxStepsError" });
         throw new MaxStepsError(
           currentMaxSteps,
-          `agent "${currentAgentName}" excedeu o limite de ${currentMaxSteps} passos sem resposta final`,
+          `agent "${redactSecrets(currentAgentName)}" excedeu o limite de ${currentMaxSteps} passos sem resposta final`,
         );
       }
 
@@ -304,7 +333,7 @@ export async function runMultiAgentSession(
         audit: opts.audit,
       });
 
-      const stepSpan = tracer?.start("step", { step, agent: currentAgentName }, rootSpan);
+      const stepSpan = tracer?.start("step", { step, agent: redactSecrets(currentAgentName) }, rootSpan);
       const providerSpan = tracer?.start(
         "provider.complete",
         { model: currentModel.id, provider: currentModel.provider },
@@ -312,7 +341,7 @@ export async function runMultiAgentSession(
       );
       const response = await opts.provider.complete({
         model: currentModel.id,
-        messages,
+        messages: safePrompt(messages),
         tools: executor.defs(),
       });
       tracer?.end(providerSpan, {
@@ -339,7 +368,7 @@ export async function runMultiAgentSession(
         opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
-        return { final: response.content, steps: step, agentsUsed };
+        return { final: response.content, steps: step, agentsUsed: agentsUsed.map(redactSecrets) };
       }
 
       messages.push({
@@ -349,10 +378,11 @@ export async function runMultiAgentSession(
       });
 
       let handoffTriggered = false;
-      for (const call of response.toolCalls) {
+      for (const [callIndex, call] of response.toolCalls.entries()) {
+        assertKnownTarget(call, knownAgents);
         const toolSpan = tracer?.start(
           "tool.exec",
-          { tool: call.name, agent: currentAgentName },
+          { tool: call.name, agent: redactSecrets(currentAgentName) },
           stepSpan ?? rootSpan,
         );
         const result = await executor.run(
@@ -362,6 +392,7 @@ export async function runMultiAgentSession(
             agent: currentAgentName,
             step,
             journal,
+            ...(knownAgents === undefined ? {} : { knownAgents }),
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
@@ -371,37 +402,37 @@ export async function runMultiAgentSession(
         tracer?.end(toolSpan, { isError: result.isError === true });
         messages.push({ role: "tool", content: result.output, toolCallId: call.id });
 
-      const handoff = isHandoffResult(result.output);
-      if (handoff) {
-        // Log agent switch
-        opts.audit.append({
-          run: opts.run,
-          agent: currentAgentName,
-          tipo: "agent.switch",
-          payload: { from: currentAgentName, to: handoff.to, payload: handoff.payload },
-        });
-
-        // Trocar agent
-        const newAgent = opts.registry.requireAgent(handoff.to);
-        currentAgentName = handoff.to;
-        currentAgent = newAgent;
-        currentMaxSteps = newAgent.maxSteps ?? opts.baseMaxSteps;
-        currentSystemPrompt = newAgent.systemPrompt ?? opts.baseSystemPrompt;
-        currentTools = newAgent.tools ? new Set(newAgent.tools) : new Set();
-        agentSteps = 0; // reseta contador do novo agent
-        agentsUsed.push(currentAgentName);
-        handoffTriggered = true;
-        break; // interrompe execução das outras tools deste step
-      }
+        const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
+        if (handoff) {
+          const toAgent = opts.registry.getAgent(handoff.to);
+          if (toAgent === undefined) throw new HandoffError("handoff_target_not_found",
+            `agent destino "${handoff.to}" não encontrado na configuração`);
+          const entry = recordHandoffEvent("handoff.created", handoffDeps, buildHandoffArtifact({
+            run: opts.run, from: currentAgentName, to: handoff.to, sourceStep: step, draft: handoff.draft,
+            budgetSpent: budgetSpent(opts.ledger, opts.run),
+            ...(currentAgent.profile === undefined ? {} : { fromProfile: currentAgent.profile }),
+            ...(toAgent.profile === undefined ? {} : { toProfile: toAgent.profile }),
+          }), currentAgentName);
+          if (handoff.to !== currentAgentName) agentSteps = 0;
+          currentAgentName = handoff.to;
+          currentAgent = toAgent;
+          currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
+          currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
+          currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+          agentsUsed.push(currentAgentName);
+          opts.audit.append({ run: opts.run, agent: entry.artifact.from, tipo: "agent.switch",
+            payload: { from: entry.artifact.from, to: entry.artifact.to, handoff_id: entry.handoff_id } });
+          recordHandoffEvent("handoff.received", handoffDeps, entry.artifact, currentAgentName);
+          for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
+          messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]` });
+          handoffTriggered = true;
+          break; // interrompe execução das outras tools deste step
+        }
     }
 
     if (handoffTriggered) {
-      tracer?.end(stepSpan, { handoff: currentAgentName });
-      // Adicionar mensagem de sistema informando a troca
-      messages.push({
-        role: "system",
-        content: `[Sistema: controle transferido para agent "${currentAgentName}"]`,
-      });
+      tracer?.end(stepSpan, { handoff: redactSecrets(currentAgentName) });
+      messages.push({ role: "system", content: `[Sistema: controle transferido para agent "${redactSecrets(currentAgentName)}"]` });
       continue; // próximo step com novo agent
     }
     tracer?.end(stepSpan);
