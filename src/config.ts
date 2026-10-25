@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { CAPABILITY_KEYS, isKnownCapability, type Capability } from "./capabilities";
+import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
 /** Configuração comum a todos os providers. */
@@ -55,6 +55,16 @@ export interface ModelConfig {
   capabilities?: Partial<Record<Capability, boolean>>;
 }
 
+/** Profile da model pool (F-27, ADR-0007): alias declarativo para um modelo de `models[]`. */
+export interface ProfileConfig {
+  /** Modelo resolvido: precisa existir em "models" e estar active. */
+  model: string;
+  /** Capabilities exigidas do modelo (F-07); validadas no startup. */
+  capabilities?: Capability[];
+  /** Profiles alternativos; reservado à F-31 (validação de ciclos lá). */
+  fallback?: string[];
+}
+
 /** Configuração de um agent (pode ser o principal ou um agent nomeado em `agents`). */
 export interface AgentConfig {
   model: string;
@@ -63,6 +73,8 @@ export interface AgentConfig {
   systemPrompt?: string;
   /** Agent inicial para sessão multi-agent (default: "planner"). */
   entryAgent?: string;
+  /** Profile da model pool (F-27, ADR-0007); substitui `model` quando definido. */
+  profile?: string;
 }
 
 /** Configuração de agents nomeados (para multi-agent F3+). Campos opcionais herdam do agent principal. */
@@ -71,6 +83,8 @@ export interface NamedAgentConfig {
   maxSteps?: number;
   tools?: string[];
   systemPrompt?: string;
+  /** Profile da model pool (F-27, ADR-0007); substitui `model` quando definido. */
+  profile?: string;
 }
 
 /** Configuração de tools específicas (por nome da tool). */
@@ -119,6 +133,8 @@ export interface PathsConfig {
 export interface AstroConfig {
   providers: Record<string, ProviderConfig>;
   models: ModelConfig[];
+  /** Model pool (F-27, ADR-0007): profiles resolvem para modelos de `models[]`. */
+  modelPool?: Record<string, ProfileConfig>;
   agent: AgentConfig;
   agents?: Record<string, NamedAgentConfig>;
   tools?: ToolsConfig;
@@ -320,10 +336,97 @@ function validateModel(value: unknown, index: number): ModelConfig {
   };
 }
 
-function validateAgent(value: unknown): AgentConfig {
+/**
+ * Valida a seção opcional `modelPool` (F-27, ADR-0007): todo profile referencia
+ * um modelo `active` de `models[]`; capabilities exigidas são checadas no
+ * startup (F-07); `fallback` aponta para profiles existentes (ciclos: F-31).
+ */
+function validateModelPool(value: unknown, models: ModelConfig[]): Record<string, ProfileConfig> {
+  const raw = expectObject(value, "modelPool");
+  const result: Record<string, ProfileConfig> = Object.create(null);
+  const byKey = new Map(models.map((m) => [`${m.provider}/${m.id}`, m]));
+
+  for (const [name, profileRaw] of Object.entries(raw)) {
+    if (name.trim().length === 0) fail('config inválida: "modelPool" contém um nome de profile vazio');
+    const field = `modelPool.${name}`;
+    const p = expectObject(profileRaw, field);
+    const model = expectString(p.model, `${field}.model`);
+    const entry = byKey.get(model);
+    if (entry === undefined) {
+      fail(`config inválida: profile "${name}" referencia o modelo "${model}", que não está declarado em "models"`);
+    }
+    if (entry.status !== "active") {
+      fail(`config inválida: profile "${name}" referencia o modelo "${model}" que não está active (status: "${entry.status}")`);
+    }
+
+    let capabilities: Capability[] | undefined;
+    if (p.capabilities !== undefined) {
+      const capsRaw = expectStringArray(p.capabilities, `${field}.capabilities`);
+      for (const cap of capsRaw) {
+        if (!isKnownCapability(cap)) {
+          fail(`config inválida: capability "${cap}" desconhecida em "${field}.capabilities" (conhecidas: ${CAPABILITY_KEYS.join(", ")})`);
+        }
+      }
+      capabilities = capsRaw as Capability[];
+      const missing = missingCapabilities(entry, capabilities);
+      if (missing.length > 0) {
+        fail(`config inválida: profile "${name}" exige capabilities ausentes no modelo "${model}": ${missing.join(", ")}`);
+      }
+    }
+
+    let fallback: string[] | undefined;
+    if (p.fallback !== undefined) {
+      fallback = expectStringArray(p.fallback, `${field}.fallback`);
+      if (fallback.length === 0) fail(`config inválida: "${field}.fallback" não pode ser uma lista vazia`);
+    }
+
+    result[name] = { model, ...(capabilities === undefined ? {} : { capabilities }), ...(fallback === undefined ? {} : { fallback }) };
+  }
+
+  for (const [name, profile] of Object.entries(result)) {
+    for (const target of profile.fallback ?? []) {
+      if (!Object.hasOwn(result, target)) {
+        fail(`config inválida: "modelPool.${name}.fallback" aponta para o profile "${target}", que não está declarado em "modelPool"`);
+      }
+    }
+  }
+
+  return result;
+}
+
+/** Resolve o profile de um agent (F-27): XOR com `model`; devolve o model resolvido. */
+function resolveProfileField(
+  field: string,
+  raw: Record<string, unknown>,
+  modelPool?: Record<string, ProfileConfig>,
+): { profile: string; model: string } {
+  const profile = expectString(raw.profile, `${field}.profile`);
+  if (raw.model !== undefined) {
+    fail(`config inválida: "${field}" define "model" e "profile"; use apenas um — o profile substitui o model (ADR-0007)`);
+  }
+  const entry = modelPool?.[profile];
+  if (entry === undefined) {
+    fail(`config inválida: "${field}.profile" referencia o profile "${profile}", que não está declarado em "modelPool"`);
+  }
+  return { profile, model: entry.model };
+}
+
+function validateAgent(value: unknown, modelPool?: Record<string, ProfileConfig>): AgentConfig {
   const raw = expectObject(value, "agent");
   const systemPrompt =
     raw.systemPrompt === undefined ? undefined : expectString(raw.systemPrompt, "agent.systemPrompt");
+
+  // F-27 (ADR-0007): profile substitui model; os dois juntos são ambíguos.
+  if (raw.profile !== undefined) {
+    const { profile, model } = resolveProfileField("agent", raw, modelPool);
+    return {
+      model,
+      profile,
+      maxSteps: expectPositiveInteger(raw.maxSteps, "agent.maxSteps"),
+      tools: expectStringArray(raw.tools, "agent.tools"),
+      ...(systemPrompt === undefined ? {} : { systemPrompt }),
+    };
+  }
 
   return {
     model: expectString(raw.model, "agent.model"),
@@ -349,11 +452,28 @@ function validateNamedAgent(
   knownTools: Set<string>,
   knownModels: Set<string>,
   allModels: ModelConfig[],
+  modelPool?: Record<string, ProfileConfig>,
 ): NamedAgentConfig {
   const field = `agents.${name}`;
   const raw = expectObject(value, field);
 
   const systemPrompt = raw.systemPrompt === undefined ? undefined : expectString(raw.systemPrompt, `${field}.systemPrompt`);
+  const maxSteps = raw.maxSteps === undefined ? baseAgent.maxSteps : expectPositiveInteger(raw.maxSteps, `${field}.maxSteps`);
+  let tools = baseAgent.tools;
+  if (raw.tools !== undefined) {
+    tools = expectStringArray(raw.tools, `${field}.tools`);
+    for (const tool of tools) {
+      if (!knownTools.has(tool)) {
+        fail(`config inválida: agent "${name}" tool "${tool}" desconhecida (disponíveis: ${[...knownTools].join(", ")})`);
+      }
+    }
+  }
+
+  // F-27 (ADR-0007): profile substitui model; os dois juntos são ambíguos.
+  if (raw.profile !== undefined) {
+    const { profile, model } = resolveProfileField(field, raw, modelPool);
+    return { model, maxSteps, tools, profile, ...(systemPrompt === undefined ? {} : { systemPrompt }) };
+  }
 
   const model = raw.model === undefined ? baseAgent.model : expectString(raw.model, `${field}.model`);
   if (!knownModels.has(model)) {
@@ -363,18 +483,6 @@ function validateNamedAgent(
   const modelEntry = allModels.find((m) => `${m.provider}/${m.id}` === model);
   if (modelEntry && modelEntry.status !== "active") {
     fail(`config inválida: agent "${name}" referencia modelo "${model}" que não está active (status: "${modelEntry.status}")`);
-  }
-
-  const maxSteps = raw.maxSteps === undefined ? baseAgent.maxSteps : expectPositiveInteger(raw.maxSteps, `${field}.maxSteps`);
-
-  let tools = baseAgent.tools;
-  if (raw.tools !== undefined) {
-    tools = expectStringArray(raw.tools, `${field}.tools`);
-    for (const tool of tools) {
-      if (!knownTools.has(tool)) {
-        fail(`config inválida: agent "${name}" tool "${tool}" desconhecida (disponíveis: ${[...knownTools].join(", ")})`);
-      }
-    }
   }
 
   return { model, maxSteps, tools, ...(systemPrompt === undefined ? {} : { systemPrompt }) };
@@ -520,7 +628,11 @@ export function validateConfig(raw: unknown): AstroConfig {
     seenModels.add(key);
   }
 
-  const agent = validateAgent(root.agent);
+  // Model pool (F-27, ADR-0007): profiles resolvem para modelos de models[]
+  const modelPool =
+    root.modelPool === undefined ? undefined : validateModelPool(root.modelPool, models);
+
+  const agent = validateAgent(root.agent, modelPool);
   if (!seenModels.has(agent.model)) {
     fail(
       `config inválida: "agent.model" referencia o modelo "${agent.model}", ` +
@@ -534,7 +646,7 @@ export function validateConfig(raw: unknown): AstroConfig {
     const agentsRaw = expectObject(root.agents, "agents");
     const knownTools = new Set(agent.tools);
     for (const [name, agentRaw] of Object.entries(agentsRaw)) {
-      agents[name] = validateNamedAgent(name, agentRaw, agent, knownTools, seenModels, models);
+      agents[name] = validateNamedAgent(name, agentRaw, agent, knownTools, seenModels, models, modelPool);
     }
   }
 
@@ -570,7 +682,7 @@ export function validateConfig(raw: unknown): AstroConfig {
 
   const paths = validatePaths(root.paths);
 
-  return { providers, models, agent, agents, tools, telemetry, quota, cache, plugins, version, team, paths };
+  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
