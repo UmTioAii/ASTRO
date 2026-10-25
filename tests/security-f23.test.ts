@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Ledger } from "../src/ledger";
+import { assertAgentQuota } from "../src/team";
 import { buildHandoffArtifact, handoffId, type HandoffDraft } from "../src/handoff/types";
 
 // Segredos montados em runtime para não vazar literais no diff (G6)
@@ -30,5 +31,11 @@ describe("segurança F-23: segredo no handoff nunca chega ao ledger in natura (I
     expect(entry.artifact.budget_spent).toEqual({ tokens: 42, usd: 0.5 });
     expect(entry.handoff_id).toBe(handoffId(artifact));
     expect(entry.handoff_id).toMatch(/^[0-9a-f]{64}$/);
+  });
+  test("assertAgentQuota casa o agent redigido no ledger", () => {
+    const ledger = new Ledger(join(mkdtempSync(join(tmpdir(), "astro-f23-q-")), "ledger.jsonl"));
+    const agent = `agent-${NV}`;
+    ledger.record({ run: `run-${NV}`, agent, provider: "openai", model: "gpt-4o-mini", credentialRef: "K", quotaDomain: "d", tokensIn: 10, tokensOut: 5, callHashes: [] });
+    expect(() => assertAgentQuota(ledger, { [agent]: { dailyTokens: 10 } }, agent)).toThrow(/quota do agent "agent-\[REDACTED\]"/);
   });
 });

@@ -112,8 +112,7 @@ export class Ledger {
       kind: "usage",
       ts: new Date().toISOString(),
       ...e,
-      run: redactSecrets(e.run),
-      agent: redactSecrets(e.agent),
+      run: redactSecrets(e.run), agent: redactSecrets(e.agent),
       costUsd,
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
@@ -134,7 +133,7 @@ export class Ledger {
       kind: "run_state",
       state,
       ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
-      ...(opts?.reason === undefined ? {} : { reason: opts.reason }),
+      ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     return entry;
@@ -159,8 +158,8 @@ export class Ledger {
 
   /** Último estado de execução do run (undefined quando não há). */
   lastState(run?: string): LedgerStateEntry | undefined {
-    const states = this.readStates().filter((e) => run === undefined || e.run === run);
-    return states.at(-1);
+    const target = run === undefined ? undefined : redactSecrets(run);
+    return this.readStates().filter((e) => target === undefined || e.run === target).at(-1);
   }
 
   /**

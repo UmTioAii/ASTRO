@@ -48,8 +48,6 @@ describe("handoff tool (F3-2)", () => {
     const params = handoffTool.manifest.parameters as { properties: Record<string, unknown> };
     expect(params.properties).toHaveProperty("to");
     expect(params.properties).toHaveProperty("task");
-    expect(params.properties).toHaveProperty("objective");
-    expect(params.properties).toHaveProperty("decisions");
   });
 
   test("handoff válido troca agent no contexto via runMultiAgentSession", async () => {

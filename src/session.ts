@@ -72,30 +72,22 @@ function isHandoffResult(output: string): HandoffResult | null {
 
 function assertKnownTarget(call: { name: string; arguments: string }, knownAgents: readonly string[] | undefined): void {
   if (call.name !== "handoff" || knownAgents === undefined) return;
-  try {
-    const { to } = JSON.parse(call.arguments) as { to?: unknown };
-    if (typeof to === "string" && !knownAgents.includes(to))
-      throw new HandoffError("handoff_target_not_found", `agent destino "${to}" não encontrado na configuração`);
-  } catch (e) { if (e instanceof HandoffError) throw e; }
+  const parsed = (() => { try { return JSON.parse(call.arguments) as { to?: unknown }; } catch { return {}; } })();
+  if (typeof parsed.to === "string" && !knownAgents.includes(parsed.to)) throw new HandoffError("handoff_target_not_found", `agent destino "${parsed.to}" não encontrado na configuração`);
 }
 
 function budgetSpent(ledger: Ledger, run: string): { tokens: number; usd: number } {
-  return ledger.readAll().reduce((acc, e) => e.run === run
+  return ledger.readAll().reduce((acc, e) => e.run === redactSecrets(run)
     ? { tokens: acc.tokens + e.tokensIn + e.tokensOut, usd: acc.usd + (e.costUsd ?? 0) } : acc, { tokens: 0, usd: 0 });
 }
-
 function recordHandoffEvent(kind: "handoff.created" | "handoff.received", deps: { ledger: Ledger; audit: Auditor; run: string }, artifact: HandoffArtifactV1, agent: string) {
   const entry = deps.ledger.recordHandoff(kind, deps.run, artifact, { agent });
   deps.audit.append({ run: deps.run, agent, tipo: kind, payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
   return entry;
 }
-
 /** Remove segredos do prompt antes de enviar ao provider (I-03). */
 function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
-  return messages.map((m) => ({
-    ...m, content: redactSecrets(m.content),
-    ...(m.toolCalls === undefined ? {} : { toolCalls: m.toolCalls.map((c) => ({ ...c, arguments: redactSecrets(c.arguments) })) }),
-  }));
+  return JSON.parse(redactSecrets(JSON.stringify(messages))) as ChatMessage[];
 }
 
 /**
@@ -110,7 +102,7 @@ export async function runSession(
   const tracer = opts.tracer;
   const rootSpan = tracer?.start(
     "run",
-    { agent: opts.agent, model: `${opts.model.provider}/${opts.model.id}`, run: opts.run },
+    { agent: redactSecrets(opts.agent), model: `${opts.model.provider}/${opts.model.id}`, run: redactSecrets(opts.run) },
   );
   const messages: ChatMessage[] = [
     { role: "system", content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
@@ -131,7 +123,7 @@ export async function runSession(
       if (opts.teamLimits?.agentQuotas !== undefined) {
         assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, opts.agent);
       }
-      const stepSpan = tracer?.start("step", { step, agent: opts.agent }, rootSpan);
+      const stepSpan = tracer?.start("step", { step, agent: redactSecrets(opts.agent) }, rootSpan);
       const providerSpan = tracer?.start(
         "provider.complete",
         { model: opts.model.id, provider: opts.model.provider },
@@ -179,7 +171,7 @@ export async function runSession(
         assertKnownTarget(call, knownAgents);
         const toolSpan = tracer?.start(
           "tool.exec",
-          { tool: call.name, agent: opts.agent },
+          { tool: call.name, agent: redactSecrets(opts.agent) },
           stepSpan ?? rootSpan,
         );
         const result = await opts.executor.run(
@@ -304,9 +296,9 @@ export async function runMultiAgentSession(
 
   const tracer = opts.tracer;
   const rootSpan = tracer?.start("run", {
-    agent: opts.entryAgent,
+    agent: redactSecrets(opts.entryAgent),
     model: `${opts.baseModel.provider}/${opts.baseModel.id}`,
-    run: opts.run,
+    run: redactSecrets(opts.run),
     multi: true,
   });
 
@@ -317,7 +309,7 @@ export async function runMultiAgentSession(
         tracer?.end(rootSpan, { status: "error", "error.class": "MaxStepsError" });
         throw new MaxStepsError(
           currentMaxSteps,
-          `agent "${currentAgentName}" excedeu o limite de ${currentMaxSteps} passos sem resposta final`,
+          `agent "${redactSecrets(currentAgentName)}" excedeu o limite de ${currentMaxSteps} passos sem resposta final`,
         );
       }
 
@@ -341,7 +333,7 @@ export async function runMultiAgentSession(
         audit: opts.audit,
       });
 
-      const stepSpan = tracer?.start("step", { step, agent: currentAgentName }, rootSpan);
+      const stepSpan = tracer?.start("step", { step, agent: redactSecrets(currentAgentName) }, rootSpan);
       const providerSpan = tracer?.start(
         "provider.complete",
         { model: currentModel.id, provider: currentModel.provider },
@@ -390,7 +382,7 @@ export async function runMultiAgentSession(
         assertKnownTarget(call, knownAgents);
         const toolSpan = tracer?.start(
           "tool.exec",
-          { tool: call.name, agent: currentAgentName },
+          { tool: call.name, agent: redactSecrets(currentAgentName) },
           stepSpan ?? rootSpan,
         );
         const result = await executor.run(
@@ -431,9 +423,8 @@ export async function runMultiAgentSession(
           opts.audit.append({ run: opts.run, agent: entry.artifact.from, tipo: "agent.switch",
             payload: { from: entry.artifact.from, to: entry.artifact.to, handoff_id: entry.handoff_id } });
           recordHandoffEvent("handoff.received", handoffDeps, entry.artifact, currentAgentName);
+          for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
           messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]` });
-          for (const rest of response.toolCalls.slice(callIndex + 1))
-            messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
           handoffTriggered = true;
           break; // interrompe execução das outras tools deste step
         }

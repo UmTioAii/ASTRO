@@ -31,7 +31,7 @@ export function sanitize(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [
         key,
-        SECRET_KEY.test(key) && typeof child === "string" ? REDACTED : sanitize(child),
+        SECRET_KEY.test(key) && typeof child !== "number" ? REDACTED : sanitize(child),
       ]),
     );
   }

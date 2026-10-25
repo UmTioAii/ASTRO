@@ -30,7 +30,7 @@ export const handoffManifest: ToolManifest = {
 export const handoffTool: Tool = {
   manifest: handoffManifest,
   async execute(input: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const raw = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
+    const raw = (typeof input === "object" && input !== null ? input : {}) as Partial<HandoffInput>;
     if (typeof raw.to !== "string" || raw.to.trim().length === 0) throw new HandoffError("handoff_artifact_mismatch", "campo 'to' (string) é obrigatório");
     const draft = validateHandoffDraft(raw);
     if (ctx.knownAgents !== undefined && !ctx.knownAgents.includes(raw.to)) throw new HandoffError("handoff_target_not_found", `agent destino "${raw.to}" não encontrado na configuração`);
