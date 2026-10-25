@@ -19,7 +19,9 @@ export class Registry {
   constructor(config: AstroConfig) {
     for (const model of config.models) {
       const key = `${model.provider}/${model.id}`;
-      this.#models.set(key, { ...model, status: model.status ?? "active" });
+      // C6: a tabela global de preços sobrescreve model.price — uma só fonte para todos os consumidores (D-10)
+      const price = config.pricing?.[key] ?? model.price;
+      this.#models.set(key, { ...model, status: model.status ?? "active", ...(price === undefined ? {} : { price }) });
     }
     if (config.modelPool) {
       for (const [name, profile] of Object.entries(config.modelPool)) {
