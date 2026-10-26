@@ -2,6 +2,7 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync } 
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import type { PriceConfig } from "./config";
+import type { FallbackRecord } from "./provider/types";
 import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./handoff/types";
 import { redactSecrets } from "./sanitize-external";
 
@@ -27,6 +28,8 @@ export interface LedgerEntry {
   callHashes?: string[];
   /** Profile da model pool do agent (F-29, ADR-0007); ausente sem profile. */
   profile?: string;
+  /** Trocas de profile até o atendimento (F-31); ausente sem fallback. */
+  fallbacks?: FallbackRecord[];
   /** Discriminador do JSONL; entradas antigas (pré-v1) não têm. */
   kind?: "usage";
   /** Ordem monotônica no arquivo (F-25, ADR-0006); entradas antigas não têm. */
