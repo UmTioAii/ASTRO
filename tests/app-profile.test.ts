@@ -144,3 +144,34 @@ test("profile sem fallback de provider herda o retry da F-01 e o audit por profi
     up.stop(true);
   }
 });
+
+test("provider primário da cadeia C6 é memoizado entre completions (F-31c)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-f31c-"));
+  const pluginPath = join(dir, "count-plugin.ts");
+  writeFileSync(pluginPath, `
+export function definePlugin() {
+  const g = globalThis;
+  return { name: "count", tools: [], providers: [{ kind: "count", create() {
+    g.__astroCreates = (g.__astroCreates ?? 0) + 1;
+    return { async complete() {
+      g.__astroCompletes = (g.__astroCompletes ?? 0) + 1;
+      if (g.__astroCompletes === 1) return { content: "", toolCalls: [{ id: "c1", name: "list_dir", arguments: '{"path":"."}' }], usage: { inputTokens: 1, outputTokens: 1 } };
+      return { content: "ok", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } };
+    }};
+  }}]};
+}`);
+  const cfgPath = writeConfig(dir, {
+    providers: {
+      count: { kind: "count", fallback: ["b"] }, // cadeia C6 força o uso de create()
+      b: provider("http://127.0.0.1:1/v1", "KEY_B"),
+    },
+    models: [model("count", "m1"), model("b", "m1")],
+    agent: { model: "count/m1", maxSteps: 3, tools: ["list_dir"] },
+    plugins: [pluginPath],
+  });
+  (globalThis as { __astroCreates?: number; __astroCompletes?: number }).__astroCreates = 0;
+  (globalThis as { __astroCreates?: number; __astroCompletes?: number }).__astroCompletes = 0;
+  const report = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { KEY_B: "k" } });
+  expect(report.final).toBe("ok");
+  expect((globalThis as { __astroCreates?: number }).__astroCreates).toBe(1); // 2 steps, 1 provider
+});

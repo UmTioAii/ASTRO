@@ -109,7 +109,7 @@ function providerIdentity(
   if (isCodexOAuth(providerConfig)) {
     return { credentialRef: expandHome(providerConfig.credentialsPath), quotaDomain };
   }
-  const rawCredentialRef = (providerConfig as Record<string, unknown>).credentialRef;
+  const rawCredentialRef = providerConfig.credentialRef;
   return {
     credentialRef: typeof rawCredentialRef === "string" ? rawCredentialRef : providerConfig.kind,
     quotaDomain,
@@ -179,16 +179,26 @@ export function createProvider(
     );
   }
   return {
-    provider: factory.create(providerConfig as Record<string, unknown>, env),
+    provider: factory.create(providerConfig, env),
     credentialRef,
     quotaDomain,
   };
 }
 
+/**
+ * Memoiza a criação do provider na primeira chamada (F-31c). Falha de fábrica
+ * não fica cacheada: o próximo completion tenta de novo. Preserva o estado em
+ * memória do provider (ex.: refresh do Codex OAuth) entre steps.
+ */
+function memoizedCreate(create: () => Provider): () => Provider {
+  let provider: Provider | undefined;
+  return () => (provider ??= create());
+}
+
 /** Provider criado na primeira chamada (F-31c): credencial só resolve quando o provider entra em uso. */
 function lazyProvider(create: () => Provider): Provider {
-  let provider: Provider | undefined;
-  return { complete: (req) => (provider ??= create()).complete(req) };
+  const get = memoizedCreate(create);
+  return { complete: (req) => get().complete(req) };
 }
 
 /**
@@ -229,12 +239,14 @@ function providerChain(
       {
         name: model.provider,
         priority: primaryConfig?.priority ?? DEFAULT_PRIORITY,
-        create: () => createProvider(config, model, env, pluginFactories).provider,
+        create: memoizedCreate(() => createProvider(config, model, env, pluginFactories).provider),
       },
       ...(primaryConfig?.fallback ?? []).map((name) => ({
         name,
         priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
-        create: () => createProvider(config, { ...model, provider: name }, env, pluginFactories).provider,
+        create: memoizedCreate(
+          () => createProvider(config, { ...model, provider: name }, env, pluginFactories).provider,
+        ),
       })),
     ],
     maxRetries: primaryConfig?.maxRetries,
