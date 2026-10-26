@@ -38,6 +38,12 @@ Só `transient_rate_limit` e `outage` retryam (D-14); erros duros vão direto ao
 
 Gerenciamento: `bun src/cli.ts providers list` (prioridade e cadeia), `providers health` (relatório com prioridade) e `providers test <provider>` (1 chamada real mínima) — `src/health.ts`, `src/cli.ts`.
 
+## Fallback por profile (F-31)
+
+Profiles da model pool aceitam `fallback?: string[]` com nomes de outros profiles. A validação no startup rejeita profile inexistente, autorreferência e ciclo (a mensagem cita o caminho, ex.: `p1 -> p2 -> p1`); `[]` é aceita e equivale a não ter fallback. O consumo da cadeia no runtime entra na F-31b.
+
+`bun src/cli.ts pool health` estende `health` (F6-6): imprime `{status, profiles, providers}` em JSON, com status por profile — `ok` quando o provider primário responde, `degraded` quando ele está fora mas há fallback saudável na cadeia, `down` quando nenhum caminho responde. Sai 0 só com o agregado `ok`.
+
 ## SDK de provider (`src/sdk/provider.ts`)
 
 Contratos: `Provider`, `CompletionRequest/Response`, `ToolDef`, `ProviderError` com `ErrorClass` (D-18). Fábrica registrável: `defineProviderFactory(kind, create)`. Harness de teste: `createMockProvider(script)` com `mockResponse`/`mockToolCall`.

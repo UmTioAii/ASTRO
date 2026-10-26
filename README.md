@@ -88,7 +88,7 @@ All commands run as `bun src/cli.ts <command>`.
 | `health` | validates config, credentials and provider connectivity | `--config` |
 | `handoff show <handoff_id>` | inspects a durable handoff artifact with its compaction audit | `--config` |
 | `cost --by-agent` | cost per agent (and profile) read from the ledger | `--config` |
-| `pool list` / `agents list` | lists model-pool profiles / named agents | `--config` |
+| `pool <list\|health>` / `agents list` | lists model-pool profiles with per-profile health / lists named agents | `--config` |
 | `config <push\|pull> <name>` | publishes/retrieves a config in a GitHub registry | `--registry`, `--config`, `--token` |
 | `serve` | exposes `/metrics` in Prometheus format | `--port` |
 
@@ -123,7 +123,7 @@ Determinism over flexibility; security as a contract; every action auditable; ex
 | Scope | State | Reference |
 |---|---|---|
 | F0–F7 (foundation, multi-agent, tools, eval, production, ecosystem) | done | `docs/roadmap.md` |
-| Layer 0 (durable handoff with ack/CAS/compaction, model pool and profiles, per-agent cost, provider fallback) | in progress | F-03, F-07, F-10, F-23..F-30 merged (#75–#102); C6 in progress (#60, C6a merged in #103); F-31 (#86) blocked on C6 |
+| Layer 0 (durable handoff with ack/CAS/compaction, model pool and profiles, per-agent cost, provider fallback) | in progress | F-03, F-07, F-10, F-23..F-30 merged (#75–#102); C6 merged (#103, #106); F-31 in progress (#86) |
 | C1–C5, C7 (skills, MCP, web tools, advanced agents, quality, organization), T1–T4 (REPL, TUI, sessions) | planned | `docs/roadmap-complementar.md`, issues #55–#65 |
 
 ## Documentation

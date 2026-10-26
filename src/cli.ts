@@ -10,7 +10,7 @@ import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./e
 import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
 import { replayRun } from "./replay";
-import { runHealthCheck, formatProvidersList, testProvider } from "./health";
+import { runHealthCheck, runPoolHealthCheck, formatProvidersList, testProvider } from "./health";
 import { GitHubConfigRegistry } from "./config-share";
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -25,7 +25,7 @@ const USAGE = `Uso:
   bun src/cli.ts providers <health|list|test> [--config <path>]
   bun src/cli.ts handoff show <handoff_id> [--config <path>]
   bun src/cli.ts cost --by-agent [--config <path>]
-  bun src/cli.ts pool list [--config <path>]
+  bun src/cli.ts pool <list|health> [--config <path>]
   bun src/cli.ts agents list [--config <path>]
   bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
   bun src/cli.ts --help
@@ -97,7 +97,7 @@ interface ProvidersCommand {
 }
 
 interface PoolCommand {
-  action: "list";
+  action: "list" | "health";
   configPath: string;
 }
 
@@ -328,10 +328,10 @@ function parseArgs(argv: string[]): ParsedCommand {
       }
       action = arg;
     }
-    if (action !== "list") {
-      throw new UsageError("use: pool list [--config <path>]");
+    if (action !== "list" && action !== "health") {
+      throw new UsageError("use: pool <list|health> [--config <path>]");
     }
-    return { kind: "pool", options: { action: "list", configPath } };
+    return { kind: "pool", options: { action, configPath } };
   }
 
   if (command === "agents") {
@@ -743,6 +743,11 @@ async function main(argv: string[]): Promise<number> {
   if (parsed.kind === "pool") {
     try {
       const config = loadConfig(resolve(parsed.options.configPath));
+      if (parsed.options.action === "health") {
+        const report = await runPoolHealthCheck(config, process.env);
+        console.log(JSON.stringify(report, null, 2));
+        return report.status === "ok" ? 0 : 1;
+      }
       console.log(formatPoolList(config));
       return 0;
     } catch (error) {
