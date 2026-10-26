@@ -26,11 +26,17 @@ export class MCPClient {
       ...(server.env === undefined ? {} : { env: server.env }),
       timeoutMs: server.timeoutMs,
     });
-    const result = (await transport.request("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "astro", version: "0.1" },
-    })) as { serverInfo?: MCPServerInfo };
+    let result: { serverInfo?: MCPServerInfo };
+    try {
+      result = (await transport.request("initialize", {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "astro", version: "0.1" },
+      })) as { serverInfo?: MCPServerInfo };
+    } catch (error) {
+      transport.close(); // handshake travado/erro: nada de processo órfão
+      throw error;
+    }
     if (result?.serverInfo === undefined || typeof result.serverInfo.name !== "string") {
       transport.close();
       throw new MCPError("handshake MCP sem serverInfo");

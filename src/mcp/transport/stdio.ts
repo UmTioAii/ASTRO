@@ -8,18 +8,9 @@ import { MCPError } from "../types";
  * o mesmo sanitizado do run_command (I-03): nada de chaves do host, só o `env`
  * explícito da config.
  */
-export interface StdioTransportOptions {
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-  timeoutMs: number;
-}
+export interface StdioTransportOptions { command: string; args: string[]; env?: Record<string, string>; timeoutMs: number }
 
-interface Pending {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
+type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 export class StdioTransport {
   #proc: ReturnType<typeof spawn> | undefined;
@@ -104,14 +95,8 @@ export class StdioTransport {
   }
 
   notify(method: string, params: Record<string, unknown>): void {
-    if (!this.#closed && this.#proc !== undefined) {
-      this.#proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
-    }
+    if (!this.#closed && this.#proc !== undefined) this.#proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   }
 
-  close(): void {
-    this.#failAll(new MCPError("transport MCP fechado"));
-    this.#proc?.stdin?.end();
-    this.#proc?.kill();
-  }
+  close(): void { this.#failAll(new MCPError("transport MCP fechado")); this.#proc?.stdin?.end(); this.#proc?.kill(); }
 }

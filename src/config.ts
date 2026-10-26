@@ -655,6 +655,16 @@ function validateHandoff(value: unknown): HandoffConfig {
 
 const MCP_TRANSPORTS: readonly MCPServerConfig["transport"][] = ["stdio", "sse", "http"];
 
+/** Valida um registro de strings (env/headers de mcpServers). */
+function stringRecord(raw: Record<string, unknown>, field: string): Record<string, string> {
+  const out = Object.create(null) as Record<string, string>;
+  for (const [key, val] of Object.entries(raw)) {
+    if (typeof val !== "string") fail(`config inválida: "${field}.${key}" deve ser string`);
+    out[key] = val;
+  }
+  return out;
+}
+
 /** Valida a seção `mcpServers` (C2, #56); defaults timeoutMs 30000 e enabled true. */
 function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
   const raw = expectObject(value, "mcpServers");
@@ -683,24 +693,8 @@ function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
       }
       args = raw2.args as string[];
     }
-    let env: Record<string, string> | undefined;
-    if (raw2.env !== undefined) {
-      const envRaw = expectObject(raw2.env, `${field}.env`);
-      env = Object.create(null) as Record<string, string>;
-      for (const [key, val] of Object.entries(envRaw)) {
-        if (typeof val !== "string") fail(`config inválida: "${field}.env.${key}" deve ser string`);
-        env[key] = val;
-      }
-    }
-    let headers: Record<string, string> | undefined;
-    if (raw2.headers !== undefined) {
-      const headersRaw = expectObject(raw2.headers, `${field}.headers`);
-      headers = Object.create(null) as Record<string, string>;
-      for (const [key, val] of Object.entries(headersRaw)) {
-        if (typeof val !== "string") fail(`config inválida: "${field}.headers.${key}" deve ser string`);
-        headers[key] = val;
-      }
-    }
+    const env = raw2.env === undefined ? undefined : stringRecord(expectObject(raw2.env, `${field}.env`), `${field}.env`);
+    const headers = raw2.headers === undefined ? undefined : stringRecord(expectObject(raw2.headers, `${field}.headers`), `${field}.headers`);
     const timeoutMs = raw2.timeoutMs === undefined ? 30_000 : expectPositiveInteger(raw2.timeoutMs, `${field}.timeoutMs`);
     const enabled = raw2.enabled === undefined ? true : expectBoolean(raw2.enabled, `${field}.enabled`);
     result[name] = {
