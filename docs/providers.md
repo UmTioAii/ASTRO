@@ -21,8 +21,22 @@ Kinds de plugin são aceitos com `kind` custom e factory registrada por plugin (
 |---|---|---|
 | `price` | opcional por modelo | Sem preço curado, o ledger grava `costUsd: null` e o CLI mostra `n/d` |
 | `price.fonte` / `price.verificado` | string / boolean | Curadoria: mantenha `verificado: false` até conferir na fonte |
+| `pricing` (global) | `Record<"provider/model-id", PriceConfig>` | Sobrescreve `model.price` de modelos declarados para todo cálculo de custo; curadoria igual à de `price` |
 
-Cálculo em `src/ledger.ts` (`estimateCost`), por 1M de tokens.
+Cálculo em `src/ledger.ts` (`estimateCost`), por 1M de tokens. Preço nunca vive no profile (ADR-0007); a tabela global é a única sobrescrita.
+
+## Fallback entre providers (C6)
+
+| Campo | Default | Comportamento |
+|---|---|---|
+| `priority` | 100 | Ordem da cadeia: menor atende primeiro; empate mantém a ordem declarada |
+| `fallback` | `[]` (desligado) | Providers a tentar em falha, em ordem de prioridade |
+| `maxRetries` | 2 | Retries por provider além da primeira tentativa; inteiro não negativo |
+| `retryBackoffMs` | 1000 | Backoff linear entre retries (`retryBackoffMs × attempt`) |
+
+Só `transient_rate_limit` e `outage` retryam (D-14); erros duros vão direto ao próximo da cadeia; esgotada a cadeia, o último erro sobe. Cada tentativa audita `provider.failure` {provider, errorClass, attempt} e o atendimento audita `provider.success` {provider, latencyMs, attempt}; o ledger registra o provider real que atendeu, não o wrapper. Falha de fábrica (ex.: credencial de um fallback ausente) não aborta a cadeia: vira `provider.failure` e o próximo é tentado. Composição com o retry interno do openai-compat (F2, cap 3, janela 60s): o limite composto por provider é 3 × (1 + `maxRetries`) chamadas HTTP.
+
+Gerenciamento: `bun src/cli.ts providers list` (prioridade e cadeia), `providers health` (relatório com prioridade) e `providers test <provider>` (1 chamada real mínima) — `src/health.ts`, `src/cli.ts`.
 
 ## SDK de provider (`src/sdk/provider.ts`)
 

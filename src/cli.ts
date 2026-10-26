@@ -10,7 +10,7 @@ import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./e
 import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
 import { replayRun } from "./replay";
-import { runHealthCheck } from "./health";
+import { runHealthCheck, formatProvidersList, testProvider } from "./health";
 import { GitHubConfigRegistry } from "./config-share";
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -22,6 +22,7 @@ const USAGE = `Uso:
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
+  bun src/cli.ts providers <health|list|test> [--config <path>]
   bun src/cli.ts handoff show <handoff_id> [--config <path>]
   bun src/cli.ts cost --by-agent [--config <path>]
   bun src/cli.ts pool list [--config <path>]
@@ -89,6 +90,12 @@ interface HealthCommand {
   configPath: string;
 }
 
+interface ProvidersCommand {
+  action: "health" | "list" | "test";
+  name?: string;
+  configPath: string;
+}
+
 interface PoolCommand {
   action: "list";
   configPath: string;
@@ -124,6 +131,7 @@ type ParsedCommand =
   | { kind: "serve"; options: ServeCommand }
   | { kind: "replay"; options: ReplayCommand }
   | { kind: "health"; options: HealthCommand }
+  | { kind: "providers"; options: ProvidersCommand }
   | { kind: "pool"; options: PoolCommand }
   | { kind: "agents"; options: AgentsCommand }
   | { kind: "handoff"; options: HandoffShowCommand }
@@ -139,9 +147,46 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health", "handoff", "cost", "pool", "agents", "config"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "health", "providers", "handoff", "cost", "pool", "agents", "config"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
+  }
+
+  if (command === "providers") {
+    let configPath = "astro.config.json";
+    let action: "health" | "list" | "test" | undefined;
+    let name: string | undefined;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--config") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) {
+          throw new UsageError("falta o valor de --config");
+        }
+        i++;
+        configPath = value;
+        continue;
+      }
+      if (arg.startsWith("-")) {
+        throw new UsageError(`opção desconhecida: "${arg}"`);
+      }
+      if (action === undefined && (arg === "health" || arg === "list" || arg === "test")) {
+        action = arg;
+        continue;
+      }
+      if (action === "test" && name === undefined) {
+        name = arg;
+        continue;
+      }
+      throw new UsageError(`argumento inesperado: "${arg}"`);
+    }
+    if (action === undefined) {
+      throw new UsageError("use: providers <health|list|test> [--config <path>]");
+    }
+    if (action === "test" && name === undefined) {
+      throw new UsageError("use: providers test <provider> [--config <path>]");
+    }
+    return { kind: "providers", options: { action, ...(name === undefined ? {} : { name }), configPath } };
   }
 
   if (command === "cost") {
@@ -710,6 +755,29 @@ async function main(argv: string[]): Promise<number> {
   if (parsed.kind === "health") {
     try {
       const config = loadConfig(resolve(parsed.options.configPath));
+      const report = await runHealthCheck(config, process.env);
+      console.log(JSON.stringify(report, null, 2));
+      return report.status === "ok" ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${message}`);
+      return 1;
+    }
+  }
+
+  if (parsed.kind === "providers") {
+    const o = parsed.options;
+    try {
+      const config = loadConfig(resolve(o.configPath));
+      if (o.action === "list") {
+        console.log(formatProvidersList(config));
+        return 0;
+      }
+      if (o.action === "test") {
+        const check = await testProvider(config, o.name!, process.env);
+        console.log(JSON.stringify(check, null, 2));
+        return check.status === "ok" ? 0 : 1;
+      }
       const report = await runHealthCheck(config, process.env);
       console.log(JSON.stringify(report, null, 2));
       return report.status === "ok" ? 0 : 1;
