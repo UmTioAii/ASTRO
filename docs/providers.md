@@ -40,7 +40,9 @@ Gerenciamento: `bun src/cli.ts providers list` (prioridade e cadeia), `providers
 
 ## Fallback por profile (F-31)
 
-Profiles da model pool aceitam `fallback?: string[]` com nomes de outros profiles. A validação no startup rejeita profile inexistente, autorreferência e ciclo (a mensagem cita o caminho, ex.: `p1 -> p2 -> p1`); `[]` é aceita e equivale a não ter fallback. O consumo da cadeia no runtime entra na F-31b.
+Profiles da model pool aceitam `fallback?: string[]` com nomes de outros profiles. A validação no startup rejeita profile inexistente, autorreferência e ciclo (a mensagem cita o caminho, ex.: `p1 -> p2 -> p1`); `[]` é aceita e equivale a não ter fallback.
+
+O roteador `ProfileFallbackProvider` (`src/provider/profile-fallback-provider.ts`) tenta o profile pedido e percorre `fallback` em ordem declarada (profundidade primeiro, sem repetir profile), reescrevendo `model` para o modelo de cada profile. A política é a existente (F-01/D-14): `auth`/`invalid_request` abortam, `hard_quota` pula e `transient_rate_limit`/`outage` caem para o próximo profile depois dos retries internos. Cada troca audita `profile.failure`/`profile.fallback`; eventos `provider.*` do C6 carregam o `profile` afetado. A fiação no `app` e a trilha no ledger entram na F-31c; até lá, sessões já enviam `profile`, mas nenhum roteador está montado no run.
 
 `bun src/cli.ts pool health` estende `health` (F6-6): imprime `{status, profiles, providers}` em JSON, com status por profile — `ok` quando o provider primário responde, `degraded` quando ele está fora mas há fallback saudável na cadeia, `down` quando nenhum caminho responde. Sai 0 só com o agregado `ok`.
 
