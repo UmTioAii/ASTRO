@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { ConfigError, type AstroConfig, type CodexOAuthProviderConfig, type OpenAICompatProviderConfig, type ProviderConfig } from "./config";
 import { DEFAULT_PRIORITY } from "./provider/fallback-provider";
+import { Registry } from "./registry";
 
 // Predicates: PluginProviderConfig (kind: string) sobrepõe os literais dos
 // built-ins e desativa a discriminação automática da união.
@@ -214,4 +215,86 @@ export async function testProvider(
     }
   }
   return { name: `provider:${name}`, status: "ok", priority: provider.priority ?? DEFAULT_PRIORITY, detail: `kind "${provider.kind}" de plugin; sem check automático` };
+}
+
+/** Status de health de um profile da model pool (F-31). */
+export interface ProfileHealthCheck {
+  name: string;
+  model: string;
+  provider: string;
+  fallback: string[];
+  status: HealthStatus;
+  detail?: string;
+}
+
+/** Relatório do `pool health` (F-31): providers (F6-6) + status por profile. */
+export interface PoolHealthReport {
+  status: HealthStatus;
+  profiles: ProfileHealthCheck[];
+  providers: HealthReport;
+}
+
+/**
+ * `astro pool health` (F-31): estende o health de providers (F6-6) com status
+ * por profile. Um profile é `degraded` quando o provider primário está fora
+ * mas a cadeia de fallback tem ao menos um profile saudável; é `down` quando
+ * nenhum caminho da cadeia responde.
+ */
+export async function runPoolHealthCheck(
+  config: AstroConfig,
+  env: Record<string, string | undefined>,
+  opts: HealthOptions = {},
+): Promise<PoolHealthReport> {
+  const providers = await runHealthCheck(config, env, opts);
+  const pool = config.modelPool ?? {};
+  const names = Object.keys(pool);
+  if (names.length === 0) {
+    return { status: providers.status, profiles: [], providers };
+  }
+
+  const registry = new Registry(config);
+  const providerStatus = new Map(providers.checks.map((c) => [c.name, c.status]));
+  const memo = new Map<string, ProfileHealthCheck>();
+  const visiting = new Set<string>();
+
+  const resolve = (name: string): ProfileHealthCheck => {
+    const cached = memo.get(name);
+    if (cached !== undefined) return cached;
+    const profile = pool[name];
+    if (profile === undefined) {
+      const missing: ProfileHealthCheck = { name, model: "?", provider: "?", fallback: [], status: "down", detail: "profile não declarado" };
+      memo.set(name, missing);
+      return missing;
+    }
+    const model = registry.resolveProfile(name);
+    const fallback = profile.fallback ?? [];
+    const base = { name, model: `${model.provider}/${model.id}`, provider: model.provider, fallback };
+    const own = providerStatus.get(`provider:${model.provider}`) === "ok";
+    let result: ProfileHealthCheck;
+    if (own) {
+      result = { ...base, status: "ok" };
+    } else if (visiting.has(name)) {
+      result = { ...base, status: "down", detail: "ciclo de fallback" };
+    } else {
+      visiting.add(name);
+      const healthy = fallback.filter((target) => resolve(target).status !== "down");
+      visiting.delete(name);
+      result = healthy.length > 0
+        ? { ...base, status: "degraded", detail: `provider fora; fallback saudável: ${healthy.join(", ")}` }
+        : { ...base, status: "down", detail: "provider fora e sem fallback saudável" };
+    }
+    memo.set(name, result);
+    return result;
+  };
+
+  const profiles = names.map(resolve);
+  // Agregado: `ok` só com providers e todos os profiles ok; `down` quando
+  // nenhum profile tem caminho saudável; caso contrário, `degraded`.
+  const status: HealthStatus =
+    profiles.every((p) => p.status === "down")
+      ? "down"
+      : profiles.every((p) => p.status === "ok") && providers.status === "ok"
+        ? "ok"
+        : "degraded";
+  return { status, profiles, providers };
 }

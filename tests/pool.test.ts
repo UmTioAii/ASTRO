@@ -60,8 +60,33 @@ describe("modelPool no config (F-27)", () => {
     expect(failMessage(() => validateConfig({ ...disabled, modelPool: { p1: { model: "openai/gpt-4o-mini" } } }))).toContain("active");
     expect(failMessage(() => validateConfig(baseConfig({ modelPool: { p1: { model: "openai/llama-3", capabilities: ["vision"] } } })))).toContain("vision");
     expect(failMessage(() => validateConfig(baseConfig({ modelPool: { p1: { model: "openai/llama-3", capabilities: ["tools"] } } })))).toContain("tools");
-    expect(failMessage(() => validateConfig(baseConfig({ modelPool: { p1: { model: "openai/llama-3", fallback: [] } } })))).toContain("fallback");
     expect(failMessage(() => validateConfig(baseConfig({ modelPool: { p1: { model: "openai/llama-3", fallback: ["nao-existe"] } } })))).toContain("nao-existe");
+  });
+
+  test("fallback vazio é aceito e equivale a sem fallback (F-31)", () => {
+    const cfg = validateConfig(baseConfig({ modelPool: { p1: { model: "openai/llama-3", fallback: [] } } }));
+    expect(cfg.modelPool!["p1"].fallback).toEqual([]);
+    expect(formatPoolList(cfg)).not.toContain("fallback");
+  });
+
+  test("fallback com autorreferência ou ciclo → ConfigError (F-31)", () => {
+    const self = failMessage(() =>
+      validateConfig(baseConfig({ modelPool: { p1: { model: "openai/llama-3", fallback: ["p1"] } } })),
+    );
+    expect(self).toContain("autorreferência");
+    const cycle = failMessage(() =>
+      validateConfig(
+        baseConfig({
+          modelPool: {
+            p1: { model: "openai/llama-3", fallback: ["p2"] },
+            p2: { model: "openai/gpt-4o-mini", fallback: ["p1"] },
+          },
+        }),
+      ),
+    );
+    expect(cycle).toContain("ciclo");
+    expect(cycle).toContain("p1");
+    expect(cycle).toContain("p2");
   });
 });
 
