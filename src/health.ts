@@ -6,7 +6,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
+import { ConfigError, type AstroConfig, type CodexOAuthProviderConfig, type OpenAICompatProviderConfig, type ProviderConfig } from "./config";
+import { DEFAULT_PRIORITY } from "./provider/fallback-provider";
 
 // Predicates: PluginProviderConfig (kind: string) sobrepõe os literais dos
 // built-ins e desativa a discriminação automática da união.
@@ -25,6 +26,8 @@ export interface HealthCheck {
   status: CheckStatus;
   latencyMs?: number;
   detail?: string;
+  /** Prioridade na cadeia de fallback (C6); default 100 (D-15). */
+  priority?: number;
 }
 
 export type HealthStatus = "ok" | "degraded" | "down";
@@ -101,6 +104,7 @@ export async function runHealthCheck(
         checks.push({
           name: `provider:${name}`,
           status: "down",
+          priority: provider.priority ?? DEFAULT_PRIORITY,
           detail: `defina ${credentialRef} no ambiente`,
         });
         continue;
@@ -112,6 +116,7 @@ export async function runHealthCheck(
         name: `provider:${name}`,
         status: result.ok ? "ok" : "down",
         latencyMs: result.latencyMs,
+        priority: provider.priority ?? DEFAULT_PRIORITY,
         ...(result.detail === undefined ? {} : { detail: result.detail }),
       });
       continue;
@@ -119,14 +124,14 @@ export async function runHealthCheck(
 
     if (isCodexOAuth(provider)) {
       // codex-oauth: arquivo de credenciais legível; conectividade exigiria
-      // refresh de token — fora do escopo do health, verifica o essencial
+      // refresh de token - fora do escopo do health, verifica o essencial
       const credentialsPath = expandHome(provider.credentialsPath);
       try {
         readFileSync(credentialsPath, "utf8");
-        checks.push({ name: `provider:${name}`, status: "ok", detail: "credenciais legíveis" });
+        checks.push({ name: `provider:${name}`, status: "ok", priority: provider.priority ?? DEFAULT_PRIORITY, detail: "credenciais legíveis" });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        checks.push({ name: `provider:${name}`, status: "down", detail });
+        checks.push({ name: `provider:${name}`, status: "down", priority: provider.priority ?? DEFAULT_PRIORITY, detail });
       }
       continue;
     }
@@ -135,6 +140,7 @@ export async function runHealthCheck(
     checks.push({
       name: `provider:${name}`,
       status: "ok",
+      priority: provider.priority ?? DEFAULT_PRIORITY,
       detail: `kind "${provider.kind}" de plugin; sem check automático`,
     });
   }
@@ -155,4 +161,57 @@ export async function runHealthCheck(
   }
 
   return { status, checks };
+}
+
+/** Lista de providers com prioridade e cadeia de fallback (C6): visão de gerenciamento. */
+export function formatProvidersList(config: AstroConfig): string {
+  const names = Object.keys(config.providers);
+  if (names.length === 0) return 'nenhum provider declarado em "providers"';
+  const lines = names.map((name) => {
+    const provider = config.providers[name]!;
+    const fallback = provider.fallback === undefined || provider.fallback.length === 0 ? "—" : provider.fallback.join(" → ");
+    return `${name} · ${provider.kind} · prioridade ${provider.priority ?? DEFAULT_PRIORITY} · fallback ${fallback} · quota ${provider.quotaDomain ?? "default"}`;
+  });
+  return ["provider · kind · prioridade · fallback · quota", ...lines].join("\n");
+}
+
+/**
+ * Teste real mínimo de um provider (C6): 1 chamada com a credencial
+ * (openai-compat) ou leitura do arquivo (codex-oauth); devolve o HealthCheck
+ * do alvo. Provider fora da config → ConfigError em português.
+ */
+export async function testProvider(
+  config: AstroConfig,
+  name: string,
+  env: Record<string, string | undefined>,
+  opts: HealthOptions = {},
+): Promise<HealthCheck> {
+  const provider = config.providers[name];
+  if (provider === undefined) {
+    throw new ConfigError(`provider "${name}" não declarado na configuração`);
+  }
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const fetchLike = opts.fetchLike ?? fetch;
+  if (isOpenAICompat(provider)) {
+    const apiKey = env[provider.credentialRef];
+    if (apiKey === undefined || apiKey.length === 0) {
+      return { name: `provider:${name}`, status: "down", priority: provider.priority ?? DEFAULT_PRIORITY, detail: `defina ${provider.credentialRef} no ambiente` };
+    }
+    const headers: Record<string, string> = { authorization: `Bearer ${apiKey}` };
+    for (const [h, v] of Object.entries(provider.headers ?? {})) headers[h] = v;
+    const result = await checkEndpoint(provider.baseUrl, headers, timeoutMs, fetchLike);
+    return {
+      name: `provider:${name}`, status: result.ok ? "ok" : "down", latencyMs: result.latencyMs, priority: provider.priority ?? DEFAULT_PRIORITY,
+      ...(result.detail === undefined ? {} : { detail: result.detail }),
+    };
+  }
+  if (isCodexOAuth(provider)) {
+    try {
+      readFileSync(expandHome(provider.credentialsPath), "utf8");
+      return { name: `provider:${name}`, status: "ok", priority: provider.priority ?? DEFAULT_PRIORITY, detail: "credenciais legíveis" };
+    } catch (error) {
+      return { name: `provider:${name}`, status: "down", priority: provider.priority ?? DEFAULT_PRIORITY, detail: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  return { name: `provider:${name}`, status: "ok", priority: provider.priority ?? DEFAULT_PRIORITY, detail: `kind "${provider.kind}" de plugin; sem check automático` };
 }
