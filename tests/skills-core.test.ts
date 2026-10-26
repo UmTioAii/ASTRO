@@ -89,3 +89,8 @@ test("parser não engole item irmão depois de lista aninhada no item", () => {
   const nested = SKILL.replace("  - name: check\n    command: git status --short", "  - name: a\n    command: x\n    args:\n      - one\n  - name: b\n    command: y");
   expect(parseSkill(nested, "project", "/p/SKILL.md").manifest.scripts).toEqual([{ name: "a", command: "x" }, { name: "b", command: "y" }]);
 });
+
+test("chave dedentada ao indent dos itens não sobrescreve o root", () => {
+  const stray = SKILL.replace("  - name: check\n    command: git status --short", "  - name: check\n    command: git status --short\n  version: 9.9.9");
+  expect(() => parseSkill(stray, "project", "/p/SKILL.md")).toThrow(/indentação/);
+});

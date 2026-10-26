@@ -40,6 +40,8 @@ function parseScalar(raw: string): unknown {
 
 interface YamlFrame {
   indent: number;
+  /** Indent da chave que abriu a lista (igual a `indent` em mapas). */
+  keyIndent: number;
   value: YamlMap | unknown[];
 }
 
@@ -56,7 +58,7 @@ function nextContentLine(lines: readonly string[], start: number): { indent: num
 /** Parser YAML mínimo do frontmatter: mapas, listas, escalares e arrays inline. */
 function parseYaml(text: string): YamlMap {
   const root: YamlMap = {};
-  const stack: YamlFrame[] = [{ indent: -1, value: root }];
+  const stack: YamlFrame[] = [{ indent: -1, keyIndent: -1, value: root }];
   const lines = text.split(/\r?\n/);
 
   for (let index = 0; index < lines.length; index++) {
@@ -65,10 +67,16 @@ function parseYaml(text: string): YamlMap {
     if (trimmed === "" || trimmed.startsWith("#")) continue;
     const indent = raw.length - raw.trimStart().length;
 
-    // Item pertence ao array cujos itens têm o mesmo indent; frames de lista guardam o indent dos itens.
+    // Item pertence ao array cujos itens têm o mesmo indent; chave só fecha a lista no indent da chave dela (ou menor).
     const item = trimmed.startsWith("- ");
-    const sibling = (frame: YamlFrame) => item && Array.isArray(frame.value) && indent === frame.indent;
-    while (stack.length > 1 && indent <= stack.at(-1)!.indent && !sibling(stack.at(-1)!)) stack.pop();
+    const sibling = (f: YamlFrame) => item && Array.isArray(f.value) && indent === f.indent;
+    while (stack.length > 1 && indent <= stack.at(-1)!.indent && !sibling(stack.at(-1)!)) {
+      const top = stack.at(-1)!;
+      if (Array.isArray(top.value) && indent > top.keyIndent) {
+        throw new SkillError(`frontmatter inválido: indentação inconsistente em "${trimmed}"`);
+      }
+      stack.pop();
+    }
     const frame = stack.at(-1)!;
 
     if (item) {
@@ -79,7 +87,7 @@ function parseYaml(text: string): YamlMap {
         const object: YamlMap = {};
         object[text.slice(0, colon).trim()] = parseScalar(text.slice(colon + 1));
         frame.value.push(object);
-        stack.push({ indent, value: object });
+        stack.push({ indent, keyIndent: indent, value: object });
       } else {
         frame.value.push(parseScalar(text));
       }
@@ -100,7 +108,7 @@ function parseYaml(text: string): YamlMap {
     const list = next !== undefined && next.indent >= indent && next.trimmed.startsWith("- ");
     const child: YamlMap | unknown[] = list ? [] : {};
     frame.value[key] = child;
-    stack.push({ indent: list ? next!.indent : indent, value: child });
+    stack.push({ indent: list ? next!.indent : indent, keyIndent: indent, value: child });
   }
 
   return root;
@@ -117,20 +125,12 @@ function parsePermissions(raw: unknown, label: string): Skill["manifest"]["permi
   if (!isRecord(raw)) throw new SkillError(`skill "${label}": "permissions" deve ser um objeto`);
 
   const rawTools = raw.tools ?? [];
-  if (!Array.isArray(rawTools) || rawTools.some((tool) => typeof tool !== "string" || tool.trim() === "")) {
-    throw new SkillError(`skill "${label}": "permissions.tools" deve ser uma lista de nomes`);
-  }
+  if (!Array.isArray(rawTools) || rawTools.some((tool) => typeof tool !== "string" || tool.trim() === "")) throw new SkillError(`skill "${label}": "permissions.tools" deve ser uma lista de nomes`);
   const network = raw.network ?? false;
   if (typeof network !== "boolean") throw new SkillError(`skill "${label}": "permissions.network" deve ser booleano`);
   const filesystem = raw.filesystem ?? "none";
-  if (filesystem !== "none" && filesystem !== "read" && filesystem !== "write") {
-    throw new SkillError(`skill "${label}": "permissions.filesystem" deve ser none, read ou write`);
-  }
-  return {
-    tools: rawTools.map((tool) => (tool as string).trim()),
-    network,
-    filesystem: filesystem as SkillFilesystem,
-  };
+  if (filesystem !== "none" && filesystem !== "read" && filesystem !== "write") throw new SkillError(`skill "${label}": "permissions.filesystem" deve ser none, read ou write`);
+  return { tools: rawTools.map((tool) => (tool as string).trim()), network, filesystem: filesystem as SkillFilesystem };
 }
 
 function parseScripts(raw: unknown, label: string): SkillScript[] {
@@ -162,13 +162,10 @@ export function parseSkill(content: string, source: SkillSource, path: string): 
 
   return {
     manifest: {
-      name,
-      description,
-      version,
+      name, description, version,
       permissions: parsePermissions(data.permissions, name),
       scripts: parseScripts(data.scripts, name),
-      source,
-      path: resolve(path),
+      source, path: resolve(path),
       sha256: createHash("sha256").update(text).digest("hex"),
     },
     prompt,
@@ -195,8 +192,7 @@ export function loadSkillsFromRoot(
 
   const skills: Skill[] = [];
   const entries = readdirSync(absolute, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {
     const file = join(absolute, entry.name, "SKILL.md");
