@@ -54,6 +54,10 @@ describe("cacheKey (F6-4)", () => {
     expect(cacheKey(req())).not.toBe(cacheKey(req({ model: "outro" })));
   });
 
+  test("profile diferente → chave diferente (F-31)", () => {
+    expect(cacheKey(req())).not.toBe(cacheKey(req({ profile: "p1" })));
+  });
+
   test("mensagem diferente → chave diferente", () => {
     expect(cacheKey(req())).not.toBe(
       cacheKey(req({ messages: [{ role: "user", content: "diga tchau" }] })),

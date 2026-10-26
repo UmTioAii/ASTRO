@@ -10,10 +10,11 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import type { CompletionRequest, CompletionResponse, Provider } from "./provider/types";
 
-/** Chave determinística da request: modelo + mensagens + tools. */
+/** Chave determinística da request: modelo + profile + mensagens + tools. */
 export function cacheKey(req: CompletionRequest): string {
   const canonical = JSON.stringify({
     model: req.model,
+    profile: req.profile ?? null,
     messages: req.messages,
     tools: req.tools ?? [],
   });
