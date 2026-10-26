@@ -27,11 +27,7 @@ test("installer copia skill local, grava sidecar, audita e verify detecta altera
   const file = join(target, "commit", "SKILL.md");
   expect(readFileSync(join(target, "commit", ".sha256"), "utf8").trim()).toBe(installed.manifest.sha256);
   expect(verifySkill(target, "commit").ok).toBe(true);
-  expect(audit.readAll()[0]).toMatchObject({
-    run: "r1",
-    tipo: "skill.installed",
-    payload: { name: "commit", version: "1.0.0", sha256: installed.manifest.sha256, source: "project" },
-  });
+  expect(audit.readAll()[0]).toMatchObject({ run: "r1", tipo: "skill.installed", payload: { name: "commit", version: "1.0.0", sha256: installed.manifest.sha256, source: "project" } });
 
   writeFileSync(file, `${readFileSync(file, "utf8")}Mudou.`);
   const tampered = verifySkill(target, "commit");
@@ -70,10 +66,12 @@ test("installer recusa origem que sobrepõe o destino e não apaga a skill", asy
   writeFileSync(join(wrapper, "SKILL.md"), SKILL);
   await expect(installSkill({ source: wrapper, root: wrapper, sourceKind: "project" })).rejects.toThrow(/sobrepõem/);
 
-  // mesma origem com grafia de caixa diferente (win32 é case-insensitive) também sobrepõe
-  const disguised = process.platform === "win32" ? dir.replace(/^([A-Za-z]):/, (drive) => drive.toLowerCase()) : dir;
-  await expect(installSkill({ source: disguised, root, sourceKind: "project", force: true })).rejects.toThrow(/sobrepõem/);
-  expect(existsSync(join(root, "commit", "SKILL.md"))).toBe(true);
+  // grafias diferentes do mesmo diretório (drive caixa-baixa, prefixo \\?\) também sobrepõem
+  const variants = process.platform === "win32" ? [dir.replace(/^([A-Za-z]):/, (d) => d.toLowerCase()), `\\\\?\\${dir}`] : [dir];
+  for (const variant of variants) {
+    await expect(installSkill({ source: variant, root, sourceKind: "project", force: true })).rejects.toThrow(/sobrepõem/);
+    expect(existsSync(join(root, "commit", "SKILL.md"))).toBe(true);
+  }
 });
 
 test("skills list/show/validate respeitam namespace, ambiguidade e uso", async () => {

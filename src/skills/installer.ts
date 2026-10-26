@@ -1,20 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Auditor } from "../audit";
 import { parseSkill } from "./loader";
 import { SKILL_NAME_RE, SkillError, type Skill, type SkillSource } from "./types";
 
-/** Teto do conteúdo baixado/instalado (sugestão 3 da revisão da C1a). */
-const MAX_SKILL_BYTES = 1_000_000;
+const MAX_SKILL_BYTES = 1_000_000; // teto do conteúdo baixado/instalado
 
-/** Caminho físico: realpath do ancestral existente mais fundo; normaliza caixa (win32) e junction. */
-function physicalPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    const parent = dirname(path);
-    return parent === path ? resolve(path) : join(physicalPath(parent), basename(path));
+/** Identidade física (dev+ino) do caminho se existir; imune a grafia (caixa, 8.3, `\\?\`, subst, junction). */
+function fileId(path: string): [number, number] | null {
+  try { const st = statSync(path); return [st.dev, st.ino]; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; return null; } // fail-closed
+}
+
+const sameFile = (a: [number, number] | null, b: [number, number] | null) => a !== null && b !== null && a[0] === b[0] && a[1] === b[1];
+
+/** `child` tem `ancestorId` entre seus diretórios existentes (sobe um nível por vez). */
+function insideExisting(child: string, ancestorId: [number, number]): boolean {
+  for (let current = resolve(child); ;) {
+    if (sameFile(fileId(current), ancestorId)) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
   }
 }
 
@@ -38,19 +45,14 @@ export interface VerifyResult {
   reason?: string;
 }
 
-function isUrl(source: string): boolean {
-  return /^https?:\/\//i.test(source);
-}
-
+/** Lê a origem: URL http(s) (teto de 1MB) ou caminho local de SKILL.md/diretório. */
 async function readSource(
   source: string,
   fetchFn: (url: string) => Promise<Response>,
 ): Promise<{ content: string; directory?: string }> {
-  if (isUrl(source)) {
+  if (/^https?:\/\//i.test(source)) {
     let response: Response;
-    try {
-      response = await fetchFn(source);
-    } catch (error) {
+    try { response = await fetchFn(source); } catch (error) {
       throw new SkillError(`falha ao baixar skill "${source}": ${error instanceof Error ? error.message : String(error)}`);
     }
     if (!response.ok) throw new SkillError(`falha ao baixar skill "${source}": HTTP ${response.status}`);
@@ -79,13 +81,13 @@ export async function installSkill(opts: InstallSkillOptions): Promise<Skill> {
 
   const targetDir = join(root, name);
   if (directory !== undefined) {
-    // Sobreposição é física (realpath) e, no win32, case-insensitive como o SO.
-    const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
-    const sourcePhys = norm(physicalPath(directory));
-    const destPhys = norm(physicalPath(targetDir));
-    if (sourcePhys === destPhys || sourcePhys.startsWith(`${destPhys}${sep}`) || destPhys.startsWith(`${sourcePhys}${sep}`)) {
-      throw new SkillError(`skill "${name}": origem e destino se sobrepõem (${directory} x ${targetDir})`);
-    }
+    // Sobreposição por identidade física (dev+ino): imune a caixa, 8.3, \\?\, subst e junction.
+    const sourceId = fileId(directory);
+    const targetId = fileId(targetDir);
+    const overlap = sameFile(sourceId, targetId)
+      || (targetId !== null && insideExisting(directory, targetId))
+      || (sourceId !== null && insideExisting(targetDir, sourceId));
+    if (overlap) throw new SkillError(`skill "${name}": origem e destino se sobrepõem (${directory} x ${targetDir})`);
   }
   if (existsSync(targetDir)) {
     if (opts.force !== true) {

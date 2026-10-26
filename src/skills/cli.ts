@@ -51,7 +51,6 @@ export async function runSkillsCommand(argv: string[], opts: SkillsCliOptions = 
     for (const skill of loadSkillsFromRoot(userRoot, "user", warn)) registry.register(skill);
     return registry;
   };
-  const needName = (): string | undefined => args[0];
 
   try {
     switch (sub) {
@@ -63,7 +62,7 @@ export async function runSkillsCommand(argv: string[], opts: SkillsCliOptions = 
       }
       case "show":
       case "validate": {
-        const name = needName();
+        const name = args[0];
         if (name === undefined) { out(USAGE_SKILLS); return 1; }
         const skill = loadRegistry().require(name);
         if (sub === "validate") { out(`ok: ${skill.manifest.source}/${skill.manifest.name} ${skill.manifest.version}`); return 0; }
@@ -80,22 +79,21 @@ export async function runSkillsCommand(argv: string[], opts: SkillsCliOptions = 
         if (source === undefined) { out(USAGE_SKILLS); return 1; }
         const audit = new Auditor(opts.auditPath ?? join(cwd, ".astro", "audit.jsonl"));
         const skill = await installSkill({
-          source, root, sourceKind, audit, force,
-          run: `skills-${randomUUID()}`,
+          source, root, sourceKind, audit, force, run: `skills-${randomUUID()}`,
           ...(opts.fetchFn === undefined ? {} : { fetchFn: opts.fetchFn }),
         });
         out(`instalada: ${skill.manifest.source}/${skill.manifest.name} ${skill.manifest.version} (sha256 ${skill.manifest.sha256.slice(0, 12)})`);
         return 0;
       }
       case "remove": {
-        const name = needName();
+        const name = args[0];
         if (name === undefined) { out(USAGE_SKILLS); return 1; }
         if (!removeSkill(root, name)) { out(`erro: skill "${name}" não encontrada em ${root}`); return 1; }
         out(`removida: ${name} (de ${root})`);
         return 0;
       }
       case "verify": {
-        const name = needName();
+        const name = args[0];
         if (name === undefined) { out(USAGE_SKILLS); return 1; }
         const result = verifySkill(root, name);
         if (!result.ok) { out(`erro: ${result.reason}`); return 1; }
