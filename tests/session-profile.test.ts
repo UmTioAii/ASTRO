@@ -39,13 +39,14 @@ const modelSequence = async () => {
   const o = opts(mkdtempSync(join(tmpdir(), "astro-f29-")), provider);
   const result = await runMultiAgentSession(o, "plan");
   expect(result.final).toBe("done");
-  return { requests: requests.map((r) => r.model), ledger: o.ledger };
+  return { requests: requests.map((r) => r.model), profiles: requests.map((r) => r.profile), ledger: o.ledger };
 };
 
 describe("runtime resolve profile por agente (F-29)", () => {
   test("sessão resolve o model via profile e o handoff resolve o receptor antes do swap", async () => {
     const first = await modelSequence();
     expect(first.requests).toEqual(["gpt-4o", "gpt-4o-mini"]); // planner via pool, receptor resolvido no swap
+    expect(first.profiles).toEqual(["premium", "cheap"]); // F-31: profile vai na requisição
     const usage = first.ledger.readAll();
     expect(usage[0]).toMatchObject({ profile: "premium", model: "gpt-4o", agent: "planner" });
     expect(usage[1]).toMatchObject({ profile: "cheap", model: "gpt-4o-mini", agent: "coder" });

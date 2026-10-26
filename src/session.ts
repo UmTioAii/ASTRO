@@ -169,6 +169,7 @@ export async function runSession(
         model: opts.model.id,
         messages: safePrompt(messages),
         tools: opts.executor.defs(),
+        ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
       });
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
@@ -438,6 +439,7 @@ export async function runMultiAgentSession(
         model: currentModel.id,
         messages: safePrompt(messages),
         tools: executor.defs(),
+        ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
       });
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
