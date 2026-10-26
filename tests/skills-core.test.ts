@@ -33,17 +33,12 @@ test("loader parseia frontmatter YAML, permissões, scripts e sha256", () => {
   const skill = loadSkillFile(path, "project");
 
   expect(skill.manifest).toMatchObject({
-    name: "commit",
-    description: "Cria um commit com a mudança atual",
-    version: "1.0.0",
-    source: "project",
+    name: "commit", description: "Cria um commit com a mudança atual", version: "1.0.0", source: "project",
     permissions: { tools: ["read_file", "run_command"], network: false, filesystem: "write" },
     scripts: [{ name: "check", command: "git status --short" }],
   });
   expect(skill.prompt).toContain("Revise o diff");
-  expect(skill.manifest.sha256).toBe(
-    new Bun.CryptoHasher("sha256").update(readFileSync(path, "utf8")).digest("hex"),
-  );
+  expect(skill.manifest.sha256).toBe(new Bun.CryptoHasher("sha256").update(readFileSync(path, "utf8")).digest("hex"));
 });
 
 test("loader rejeita manifesto incompleto ou nome inválido", () => {
@@ -63,8 +58,7 @@ test("registry separa fontes e recusa conflito de versão", () => {
   expect(registry.get("project/commit")?.manifest.description).toContain("atual");
   expect(registry.get("user/commit")?.manifest.description).toContain("usuário");
   expect(() => registry.get("commit")).toThrow(/ambíguo/);
-  expect(() => registry.register(parseSkill(SKILL.replace("1.0.0", "2.0.0"), "project", "/p/commit/SKILL.md")))
-    .toThrow(/conflito/);
+  expect(() => registry.register(parseSkill(SKILL.replace("1.0.0", "2.0.0"), "project", "/p/commit/SKILL.md"))).toThrow(/conflito/);
 });
 
 test("loadSkillsFromRoot isola skill inválida e mantém as válidas", () => {
@@ -76,4 +70,17 @@ test("loadSkillsFromRoot isola skill inválida e mantém as válidas", () => {
 
   expect(skills.map((skill) => skill.manifest.name)).toEqual(["commit"]);
   expect(warnings[0]).toContain("broken");
+});
+
+test("loader aceita YAML válido: versão numérica, lista no nível da chave e comentário inline", () => {
+  const numeric = parseSkill(SKILL.replace("version: 1.0.0", "version: 1.0"), "project", "/p/SKILL.md");
+  expect(numeric.manifest.version).toBe("1.0");
+  const flat = parseSkill(SKILL.replace("  - name: check\n    command: git status --short", "- name: check\n  command: git status --short"), "project", "/p/SKILL.md");
+  expect(flat.manifest.scripts).toEqual([{ name: "check", command: "git status --short" }]);
+  expect(parseSkill(SKILL.replace("version: 1.0.0", "version: 1.0.0 # estável"), "project", "/p/SKILL.md").manifest.version).toBe("1.0.0");
+});
+
+test("loader rejeita chave __proto__ no frontmatter", () => {
+  const polluted = SKILL.replace("name: commit\n", "__proto__:\n  name: evil\n");
+  expect(() => parseSkill(polluted, "project", "/p/SKILL.md")).toThrow(/__proto__/);
 });

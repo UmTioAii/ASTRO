@@ -15,12 +15,7 @@ export class SkillRegistry {
     const key = keyOf(skill);
     const existing = this.#skills.get(key);
     if (existing !== undefined) {
-      if (
-        existing.manifest.version === skill.manifest.version &&
-        existing.manifest.sha256 === skill.manifest.sha256
-      ) {
-        return;
-      }
+      if (existing.manifest.version === skill.manifest.version && existing.manifest.sha256 === skill.manifest.sha256) return;
       throw new SkillError(
         `skill "${key}": conflito com a versão ${existing.manifest.version} já registrada`,
       );
@@ -33,9 +28,7 @@ export class SkillRegistry {
     const exact = this.#skills.get(name);
     if (exact !== undefined) return exact;
     const matches = this.list().filter((skill) => skill.manifest.name === name);
-    if (matches.length > 1) {
-      throw new SkillError(`skill "${name}": nome ambíguo; use uma fonte (project/${name} ou user/${name})`);
-    }
+    if (matches.length > 1) throw new SkillError(`skill "${name}": nome ambíguo; use uma fonte (project/${name} ou user/${name})`);
     return matches[0];
   }
 
@@ -46,9 +39,7 @@ export class SkillRegistry {
   }
 
   list(): Skill[] {
-    return [...this.#skills.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, skill]) => skill);
+    return [...this.#skills.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, skill]) => skill);
   }
 
   get size(): number {

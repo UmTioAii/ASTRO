@@ -1,14 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-  SKILL_NAME_RE,
-  SkillError,
-  type Skill,
-  type SkillFilesystem,
-  type SkillScript,
-  type SkillSource,
-} from "./types";
+import { SKILL_NAME_RE, SkillError, type Skill, type SkillFilesystem, type SkillScript, type SkillSource } from "./types";
 
 type YamlMap = Record<string, unknown>;
 
@@ -16,8 +9,19 @@ function isRecord(value: unknown): value is YamlMap {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Remove comentário inline (`#` no início ou após espaço em branco), preservando aspas. */
+function stripComment(value: string): string {
+  const quote = value.charAt(0);
+  if (quote === '"' || quote === "'") {
+    const end = value.indexOf(quote, 1);
+    return end > 0 && value.slice(end + 1).trim().startsWith("#") ? value.slice(0, end + 1) : value;
+  }
+  const hash = value.search(/(^|\s)#/);
+  return hash < 0 ? value : value.slice(0, hash);
+}
+
 function parseScalar(raw: string): unknown {
-  const value = raw.trim();
+  const value = stripComment(raw.trim()).trim();
   if (value === "true") return true;
   if (value === "false") return false;
   if (value === "null" || value === "~") return null;
@@ -31,7 +35,6 @@ function parseScalar(raw: string): unknown {
   }
   const quote = value.charAt(0);
   if ((quote === '"' || quote === "'") && value.endsWith(quote)) return value.slice(1, -1);
-  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
   return value;
 }
 
@@ -40,12 +43,7 @@ interface YamlFrame {
   value: YamlMap | unknown[];
 }
 
-interface YamlLine {
-  indent: number;
-  trimmed: string;
-}
-
-function nextContentLine(lines: readonly string[], start: number): YamlLine | undefined {
+function nextContentLine(lines: readonly string[], start: number): { indent: number; trimmed: string } | undefined {
   for (let index = start; index < lines.length; index++) {
     const raw = lines[index]!;
     const trimmed = raw.trim();
@@ -67,20 +65,22 @@ function parseYaml(text: string): YamlMap {
     if (trimmed === "" || trimmed.startsWith("#")) continue;
     const indent = raw.length - raw.trimStart().length;
 
-    while (stack.length > 1 && indent <= stack.at(-1)!.indent) stack.pop();
+    // Item de lista no mesmo nível da chave (`chave:\n- item`) não desempilha o array.
+    const item = trimmed.startsWith("- ");
+    while (stack.length > 1 && indent <= stack.at(-1)!.indent && !(item && Array.isArray(stack.at(-1)!.value))) stack.pop();
     const frame = stack.at(-1)!;
 
-    if (trimmed.startsWith("- ")) {
+    if (item) {
       if (!Array.isArray(frame.value)) throw new SkillError("frontmatter inválido: lista sem chave");
-      const item = trimmed.slice(2).trim();
-      const colon = item.indexOf(":");
+      const text = trimmed.slice(2).trim();
+      const colon = text.indexOf(":");
       if (colon >= 0) {
         const object: YamlMap = {};
-        object[item.slice(0, colon).trim()] = parseScalar(item.slice(colon + 1));
+        object[text.slice(0, colon).trim()] = parseScalar(text.slice(colon + 1));
         frame.value.push(object);
         stack.push({ indent, value: object });
       } else {
-        frame.value.push(parseScalar(item));
+        frame.value.push(parseScalar(text));
       }
       continue;
     }
@@ -89,6 +89,7 @@ function parseYaml(text: string): YamlMap {
     if (colon < 0) throw new SkillError(`frontmatter inválido: esperado "chave: valor" em "${trimmed}"`);
     const key = trimmed.slice(0, colon).trim();
     if (key === "") throw new SkillError("frontmatter inválido: chave vazia");
+    if (key === "__proto__") throw new SkillError('frontmatter inválido: chave "__proto__" não permitida');
     if (!isRecord(frame.value)) throw new SkillError(`frontmatter inválido: "${key}" dentro de lista`);
 
     const rawValue = trimmed.slice(colon + 1).trim();
@@ -96,7 +97,7 @@ function parseYaml(text: string): YamlMap {
 
     const next = nextContentLine(lines, index + 1);
     const child: YamlMap | unknown[] =
-      next !== undefined && next.indent > indent && next.trimmed.startsWith("- ") ? [] : {};
+      next !== undefined && next.indent >= indent && next.trimmed.startsWith("- ") ? [] : {};
     frame.value[key] = child;
     stack.push({ indent, value: child });
   }
@@ -106,9 +107,7 @@ function parseYaml(text: string): YamlMap {
 
 function requiredString(data: YamlMap, key: string, label: string): string {
   const value = data[key];
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new SkillError(`skill "${label}": "${key}" obrigatório`);
-  }
+  if (typeof value !== "string" || value.trim() === "") throw new SkillError(`skill "${label}": "${key}" obrigatório`);
   return value.trim();
 }
 
@@ -137,11 +136,9 @@ function parseScripts(raw: unknown, label: string): SkillScript[] {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) throw new SkillError(`skill "${label}": "scripts" deve ser uma lista`);
   return raw.map((item, index) => {
+    const script = `${label}/script ${index + 1}`;
     if (!isRecord(item)) throw new SkillError(`skill "${label}": script ${index + 1} deve ser um objeto`);
-    return {
-      name: requiredString(item, "name", `${label}/script ${index + 1}`),
-      command: requiredString(item, "command", `${label}/script ${index + 1}`),
-    };
+    return { name: requiredString(item, "name", script), command: requiredString(item, "command", script) };
   });
 }
 
