@@ -18,7 +18,8 @@ import { CompletionCache, cachedProvider } from "./cache";
 import { loadPlugins, type PluginProviderFactory } from "./plugins";
 import { sendAuditWebhook } from "./team";
 import type { AuditEvent } from "./audit";
-import { MaxStepsError, runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "./session";
+import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
+import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
@@ -101,9 +102,12 @@ function providerConfigFor(config: AstroConfig, model: ModelEntry): ProviderConf
  */
 function providerIdentity(
   config: AstroConfig,
-  model: ModelEntry,
+  provider: string,
 ): { credentialRef: string; quotaDomain: string } {
-  const providerConfig = providerConfigFor(config, model);
+  const providerConfig = config.providers[provider];
+  if (providerConfig === undefined) {
+    throw new ConfigError(`provider "${provider}" não encontrado na configuração`);
+  }
   const quotaDomain = providerConfig.quotaDomain ?? "default";
   if (isOpenAICompat(providerConfig)) return { credentialRef: providerConfig.credentialRef, quotaDomain };
   if (isCodexOAuth(providerConfig)) {
@@ -139,7 +143,7 @@ export function createProvider(
   pluginFactories: Map<string, PluginProviderFactory> = new Map(),
 ): ProviderSetup {
   const providerConfig = providerConfigFor(config, model);
-  const { credentialRef, quotaDomain } = providerIdentity(config, model);
+  const { credentialRef, quotaDomain } = providerIdentity(config, model.provider);
 
   if (isOpenAICompat(providerConfig)) {
     const apiKey = env[credentialRef];
@@ -182,6 +186,65 @@ export function createProvider(
     provider: factory.create(providerConfig, env),
     credentialRef,
     quotaDomain,
+  };
+}
+
+/**
+ * Resolve a identidade efetiva (F-31d) para o ledger e a quota. O preço vem do
+ * Registry (com override global de pricing); provider desconhecido é erro de
+ * config, não identidade silenciosa.
+ */
+function identityResolver(config: AstroConfig, registry: Registry): IdentityResolver {
+  return (provider: string, model: string): EffectiveIdentity | undefined => {
+    // Provider de plugin pode devolver um nome próprio fora da config; nesse
+    // caso a sessão mantém a identidade base (comportamento anterior).
+    if (!Object.hasOwn(config.providers, provider)) return undefined;
+    const { credentialRef, quotaDomain } = providerIdentity(config, provider);
+    const price = registry.get(`${provider}/${model}`)?.price;
+    return {
+      provider,
+      model,
+      credentialRef,
+      quotaDomain,
+      ...(price === undefined ? {} : { price }),
+    };
+  };
+}
+
+/**
+ * Cria o provider com audit verídico e quota no domínio de destino (F-31d).
+ * `credential.acquired` só sai quando a credencial é resolvida de fato; a quota
+ * é checada por entry, antes da chamada, permitindo pular o profile esgotado.
+ */
+function createGuardedProvider(
+  config: AstroConfig,
+  model: ModelEntry,
+  env: Record<string, string | undefined>,
+  pluginFactories: Map<string, PluginProviderFactory>,
+  audit: Auditor,
+  run: string,
+  ledger: Ledger,
+  quotaLimits: Record<string, QuotaLimit> | undefined,
+  profile?: string,
+): Provider {
+  const setup = createProvider(config, model, env, pluginFactories);
+  audit.append({
+    run,
+    agent: AGENT_NAME,
+    tipo: "credential.acquired",
+    payload: {
+      provider: model.provider,
+      credentialRef: setup.credentialRef,
+      quotaDomain: setup.quotaDomain,
+      ...(profile === undefined ? {} : { profile }),
+    },
+  });
+  if (quotaLimits === undefined) return setup.provider;
+  return {
+    complete: async (req) => {
+      assertWithinQuota(ledger, quotaLimits, setup.quotaDomain);
+      return setup.provider.complete(req);
+    },
   };
 }
 
@@ -231,6 +294,8 @@ function providerChain(
   pluginFactories: Map<string, PluginProviderFactory>,
   audit: Auditor,
   run: string,
+  ledger: Ledger,
+  quotaLimits: Record<string, QuotaLimit> | undefined,
   profile?: string,
 ): Provider {
   const primaryConfig = config.providers[model.provider];
@@ -239,14 +304,16 @@ function providerChain(
       {
         name: model.provider,
         priority: primaryConfig?.priority ?? DEFAULT_PRIORITY,
-        create: memoizedCreate(() => createProvider(config, model, env, pluginFactories).provider),
+        create: memoizedCreate(() => createGuardedProvider(
+          config, model, env, pluginFactories, audit, run, ledger, quotaLimits, profile,
+        )),
       },
       ...(primaryConfig?.fallback ?? []).map((name) => ({
         name,
         priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
-        create: memoizedCreate(
-          () => createProvider(config, { ...model, provider: name }, env, pluginFactories).provider,
-        ),
+        create: memoizedCreate(() => createGuardedProvider(
+          config, { ...model, provider: name }, env, pluginFactories, audit, run, ledger, quotaLimits, profile,
+        )),
       })),
     ],
     maxRetries: primaryConfig?.maxRetries,
@@ -305,21 +372,29 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     run,
     agent: AGENT_NAME,
     tipo: "run.started",
-    payload: { taskHash: shortTaskHash(opts.task), model: config.agent.model },
+    payload: {
+      taskHash: shortTaskHash(opts.task),
+      model: config.agent.model,
+      ...(config.agent.profile === undefined ? {} : { profile: config.agent.profile }),
+    },
   });
 
   const registry = new Registry(config);
   const model = registry.require(config.agent.model);
-  const { credentialRef, quotaDomain } = providerIdentity(config, model);
+  const { credentialRef, quotaDomain } = providerIdentity(config, model.provider);
   assertProviderKind(config, model, loaded.providerFactories);
+  const resolveIdentity = identityResolver(config, registry);
+  const quotaLimits = config.quota;
 
   // Fallback entre providers (C6, D-14) + roteamento por profile (F-31).
   // F-31c: providers preguiçosos; sem profile, o caminho é o anterior (C6 só
   // com fallback de provider declarado).
   const baseConfig = config.providers[model.provider];
   let effectiveProvider = (baseConfig?.fallback ?? []).length > 0
-    ? providerChain(config, model, env, loaded.providerFactories, audit, run)
-    : lazyProvider(() => createProvider(config, model, env, loaded.providerFactories).provider);
+    ? providerChain(config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits)
+    : lazyProvider(() => createGuardedProvider(
+      config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits,
+    ));
 
   const pool = config.modelPool ?? {};
   if (Object.keys(pool).length > 0) {
@@ -332,7 +407,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         provider: profileModel.provider,
         fallback: profile.fallback ?? [],
         create: () => (chain ??= providerChain(
-          config, profileModel, env, loaded.providerFactories, audit, run, name,
+          config, profileModel, env, loaded.providerFactories, audit, run, ledger, quotaLimits, name,
         )),
       };
     });
@@ -364,12 +439,6 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       },
     });
   }
-  audit.append({
-    run,
-    agent: AGENT_NAME,
-    tipo: "credential.acquired",
-    payload: { provider: model.provider, credentialRef, quotaDomain },
-  });
 
   // O shell não deve ver chaves de nenhum provider configurado, mesmo inativo
   const secretEnvNames: string[] = [];
@@ -416,7 +485,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         baseSystemPrompt: config.agent.systemPrompt,
         entryAgent,
         ...(tracer === undefined ? {} : { tracer }),
-        ...(config.quota === undefined ? {} : { quotaLimits: config.quota }),
+        resolveIdentity,
         ...(config.team === undefined
           ? {}
           : {
@@ -455,7 +524,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
             ? {}
             : { systemPrompt: config.agent.systemPrompt }),
           ...(tracer === undefined ? {} : { tracer }),
-          ...(config.quota === undefined ? {} : { quotaLimits: config.quota }),
+          resolveIdentity,
           ...(config.team === undefined
             ? {}
             : {

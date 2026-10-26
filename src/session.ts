@@ -6,7 +6,8 @@ import { ackHandoff, scanHandoffs, readSourceRefs, type HandoffStatus } from "./
 import { verifyHandoffIdentity } from "./handoff/verifier";
 import { compactDraft, digestArtifacts } from "./handoff/compact";
 import { DEFAULT_ACK_TIMEOUT_MS } from "./config";
-import type { ChatMessage, Provider } from "./provider/types";
+import type { PriceConfig } from "./config";
+import type { ChatMessage, CompletionResponse, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
 import type { AgentEntry } from "./registry";
@@ -14,6 +15,18 @@ import { redactSecrets } from "./sanitize-external";
 import type { SpanHandle, TracerLike } from "./tracing";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
+
+/** Identidade efetiva de quem atendeu o completion (F-31d). */
+export interface EffectiveIdentity {
+  provider: string;
+  model: string;
+  credentialRef: string;
+  quotaDomain: string;
+  price?: PriceConfig;
+}
+
+/** Resolve a identidade efetiva a partir do provider/model que responderam. */
+export type IdentityResolver = (provider: string, model: string) => EffectiveIdentity | undefined;
 
 export interface SessionOptions {
   run: string;
@@ -45,6 +58,8 @@ export interface SessionOptions {
   secretEnvNames?: readonly string[];
   agentProfile?: string;
   knownAgents?: readonly string[];
+  /** Resolve a identidade efetiva quando o fallback troca provider/model (F-31d). */
+  resolveIdentity?: IdentityResolver;
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -56,6 +71,31 @@ export class MaxStepsError extends Error {
     super(message ?? `sessão excedeu o limite de ${maxSteps} passos sem resposta final`);
     this.name = "MaxStepsError";
   }
+}
+
+/**
+ * Identidade de quem atendeu (F-31d): o resolver do app mapeia provider/model
+ * para credencial, domínio de quota e preço; sem resolver, mantém a identidade
+ * base (compatibilidade dos testes e chamadas diretas de sessão).
+ */
+function effectiveIdentityFor(
+  resolve: IdentityResolver | undefined,
+  response: CompletionResponse,
+  fallbackModel: ModelEntry,
+  credentialRef: string,
+  quotaDomain: string,
+): EffectiveIdentity {
+  const provider = response.provider ?? fallbackModel.provider;
+  const model = response.model ?? fallbackModel.id;
+  const resolved = resolve?.(provider, model);
+  if (resolved !== undefined) return resolved;
+  return {
+    provider,
+    model,
+    credentialRef,
+    quotaDomain,
+    ...(fallbackModel.price === undefined ? {} : { price: fallbackModel.price }),
+  };
 }
 
 /** Resultado de handoff detectado em tool result. */
@@ -176,20 +216,26 @@ export async function runSession(
         "tokens.out": response.usage.outputTokens,
       });
 
+      const identity = effectiveIdentityFor(
+        opts.resolveIdentity, response, opts.model, opts.credentialRef, opts.quotaDomain,
+      );
       opts.ledger.record(
         {
           run: opts.run,
           agent: opts.agent,
-          provider: response.provider ?? opts.model.provider, // C6: provider real, não o wrapper
-          model: opts.model.id,
-          credentialRef: opts.credentialRef,
-          quotaDomain: opts.quotaDomain,
+          provider: identity.provider, // C6/F-31d: provider efetivo, não o wrapper
+          model: identity.model,
+          credentialRef: identity.credentialRef,
+          quotaDomain: identity.quotaDomain,
           ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
+          ...(response.fallbacks === undefined || response.fallbacks.length === 0
+            ? {}
+            : { fallbacks: response.fallbacks }),
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
           callHashes: hashToolCalls(response.toolCalls),
         },
-        opts.model.price,
+        identity.price,
       );
 
       if (response.toolCalls.length === 0) {
@@ -315,6 +361,8 @@ export interface MultiAgentSessionOptions {
   ackTimeoutMs?: number;
   /** Ack do receptor (F-24); default lê o artefato do ledger e grava received. */
   ackHandoff?: (artifact: HandoffArtifactV1, receiverAgent: string) => unknown;
+  /** Resolve a identidade efetiva quando o fallback troca provider/model (F-31d). */
+  resolveIdentity?: IdentityResolver;
 }
 
 /**
@@ -446,20 +494,26 @@ export async function runMultiAgentSession(
         "tokens.out": response.usage.outputTokens,
       });
 
+      const identity = effectiveIdentityFor(
+        opts.resolveIdentity, response, currentModel, opts.credentialRef, opts.quotaDomain,
+      );
       opts.ledger.record(
         {
           run: opts.run,
           agent: currentAgentName,
-          provider: response.provider ?? currentModel.provider, // C6: provider real, não o wrapper
-          model: currentModel.id,
-          credentialRef: opts.credentialRef,
-          quotaDomain: opts.quotaDomain,
+          provider: identity.provider, // C6/F-31d: provider efetivo, não o wrapper
+          model: identity.model,
+          credentialRef: identity.credentialRef,
+          quotaDomain: identity.quotaDomain,
           ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
+          ...(response.fallbacks === undefined || response.fallbacks.length === 0
+            ? {}
+            : { fallbacks: response.fallbacks }),
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
           callHashes: hashToolCalls(response.toolCalls),
         },
-        currentModel.price,
+        identity.price,
       );
 
       if (response.toolCalls.length === 0) {
