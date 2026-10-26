@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
@@ -69,6 +69,11 @@ test("installer recusa origem que sobrepõe o destino e não apaga a skill", asy
   const wrapper = mkdtempSync(join(tmpdir(), "astro-skov2-")); // origem contém o destino
   writeFileSync(join(wrapper, "SKILL.md"), SKILL);
   await expect(installSkill({ source: wrapper, root: wrapper, sourceKind: "project" })).rejects.toThrow(/sobrepõem/);
+
+  // mesma origem com grafia de caixa diferente (win32 é case-insensitive) também sobrepõe
+  const disguised = process.platform === "win32" ? dir.replace(/^([A-Za-z]):/, (drive) => drive.toLowerCase()) : dir;
+  await expect(installSkill({ source: disguised, root, sourceKind: "project", force: true })).rejects.toThrow(/sobrepõem/);
+  expect(existsSync(join(root, "commit", "SKILL.md"))).toBe(true);
 });
 
 test("skills list/show/validate respeitam namespace, ambiguidade e uso", async () => {

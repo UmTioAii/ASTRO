@@ -1,12 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Auditor } from "../audit";
 import { parseSkill } from "./loader";
 import { SKILL_NAME_RE, SkillError, type Skill, type SkillSource } from "./types";
 
 /** Teto do conteúdo baixado/instalado (sugestão 3 da revisão da C1a). */
 const MAX_SKILL_BYTES = 1_000_000;
+
+/** Caminho físico: realpath do ancestral existente mais fundo; normaliza caixa (win32) e junction. */
+function physicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? resolve(path) : join(physicalPath(parent), basename(path));
+  }
+}
 
 export interface InstallSkillOptions {
   /** URL http(s) ou caminho local de um SKILL.md ou diretório de skill. */
@@ -69,14 +79,12 @@ export async function installSkill(opts: InstallSkillOptions): Promise<Skill> {
 
   const targetDir = join(root, name);
   if (directory !== undefined) {
-    const sourceDir = resolve(directory);
-    // Origem não pode ser o destino, estar dentro dele, nem contê-lo (cpSync recursivo).
-    if (
-      sourceDir === targetDir ||
-      sourceDir.startsWith(`${targetDir}${sep}`) ||
-      targetDir.startsWith(`${sourceDir}${sep}`)
-    ) {
-      throw new SkillError(`skill "${name}": origem e destino se sobrepõem (${sourceDir} x ${targetDir})`);
+    // Sobreposição é física (realpath) e, no win32, case-insensitive como o SO.
+    const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+    const sourcePhys = norm(physicalPath(directory));
+    const destPhys = norm(physicalPath(targetDir));
+    if (sourcePhys === destPhys || sourcePhys.startsWith(`${destPhys}${sep}`) || destPhys.startsWith(`${sourcePhys}${sep}`)) {
+      throw new SkillError(`skill "${name}": origem e destino se sobrepõem (${directory} x ${targetDir})`);
     }
   }
   if (existsSync(targetDir)) {
