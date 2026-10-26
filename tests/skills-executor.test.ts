@@ -37,12 +37,19 @@ test("resolveSkillCommand substitui $ARGUMENTS, anexa scripts e falha fechado", 
   expect(invocation.prompt).toContain("revisar o diff");
   expect(invocation.prompt).toContain("- check: git status --short");
 
+  // chave completa desambigua (a mensagem de ambiguidade manda usar exatamente isto)
+  const namespaced = resolveSkillCommand("/project/commit revisar o diff", { registry, allow })!;
+  expect(namespaced.skill.manifest.source).toBe("project");
+  expect(namespaced.prompt).toContain("revisar o diff");
+
   expect(() => resolveSkillCommand("/ausente", { registry, allow })).toThrow(/não encontrada/);
   expect(() => resolveSkillCommand("tarefa normal", { registry, allow })).not.toThrow();
 
   skillDir(userRoot, "commit", SKILL.replace("Cria um commit", "Commit do usuário"));
   const ambiguous = buildSkillRegistry({ projectRoot, userRoot, warn: () => {} });
   expect(() => resolveSkillCommand("/commit", { registry: ambiguous, allow })).toThrow(/ambíguo/);
+  const viaUser = resolveSkillCommand("/user/commit", { registry: ambiguous, allow })!;
+  expect(viaUser.skill.manifest.source).toBe("user");
 
   skillDir(projectRoot, "deploy", SKILL.replace("name: commit", "name: deploy"));
   const strict = buildSkillRegistry({ projectRoot, userRoot, warn: () => {} });

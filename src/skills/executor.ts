@@ -5,8 +5,8 @@ import { loadSkillsFromRoot } from "./loader";
 import { SkillRegistry } from "./registry";
 import { SkillError, type Skill, type SkillSource } from "./types";
 
-/** Comando de skill: task começando com `/nome` (nome igual ao do manifesto). */
-const SLASH_COMMAND = /^\/([a-z0-9][a-z0-9_-]*)(?:\s+([\s\S]*))?$/;
+/** Comando de skill: `/<nome>` ou `/<fonte>/<nome>` (desambiguação da chave completa). */
+const SLASH_COMMAND = /^\/((?:project|user)\/[a-z0-9][a-z0-9_-]*|[a-z0-9][a-z0-9_-]*)(?:\s+([\s\S]*))?$/;
 
 export function isSkillCommand(task: string): boolean {
   return SLASH_COMMAND.test(task);
