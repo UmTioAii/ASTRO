@@ -21,6 +21,16 @@ function newRoots() {
   const userRoot = mkdtempSync(join(tmpdir(), "astro-skexec-u-"));
   return { projectRoot, userRoot };
 }
+function writeRunConfig(dir: string, port: number, tools: string[]): string {
+  const cfgPath = join(dir, "astro.config.json");
+  writeFileSync(cfgPath, JSON.stringify({
+    providers: { a: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${port}/v1`, credentialRef: "KEY_A" } },
+    models: [{ provider: "a", id: "m1", tags: ["writing-code"], context: 4096 }],
+    agent: { model: "a/m1", maxSteps: 3, tools },
+    paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+  }));
+  return cfgPath;
+}
 
 test("resolveSkillCommand substitui $ARGUMENTS, anexa scripts e falha fechado", () => {
   const { projectRoot, userRoot } = newRoots();
@@ -80,14 +90,21 @@ test("resolveTaskSkill audita skill.loaded e devolve a task normal quando não �
   expect(prompt).toContain("ajuste fino");
   expect(prompt).toContain("git status --short");
   const loaded = audit.readAll().find((event) => event.tipo === "skill.loaded");
-  expect(loaded).toMatchObject({
-    run: "r1",
-    tipo: "skill.loaded",
-    payload: { name: "commit", version: "1.0.0", source: "project" },
-  });
+  expect(loaded).toMatchObject({ run: "r1", tipo: "skill.loaded", payload: { name: "commit", version: "1.0.0", source: "project" } });
   expect((loaded!.payload as { sha256?: string }).sha256).toMatch(/^[0-9a-f]{64}$/);
 
   expect(resolveTaskSkill("tarefa comum", opts)).toBe("tarefa comum");
+});
+
+test("loadSkillsFromRoot recusa SKILL.md acima do teto de 1MB", () => {
+  const root = mkdtempSync(join(tmpdir(), "astro-skbig-"));
+  const big = SKILL_SCRIPTS.replace("Revise o diff e crie o commit.", `Revise o diff e crie o commit. ${"x".repeat(1_100_000)}`);
+  skillDir(root, "giant", big);
+  const warnings: string[] = [];
+  const skills = loadSkillsFromRoot(root, "project", (message) => warnings.push(message));
+
+  expect(skills).toEqual([]);
+  expect(warnings.join("\n")).toMatch(/giant.*maior que/);
 });
 
 test("run via /commit injeta o prompt da skill, audita skill.loaded e não persiste conteúdo", async () => {
@@ -102,13 +119,7 @@ test("run via /commit injeta o prompt da skill, audita skill.loaded e não persi
   try {
     const dir = mkdtempSync(join(tmpdir(), "astro-skexec-run-"));
     skillDir(join(dir, ".astro", "skills"), "commit", SKILL_SCRIPTS);
-    const cfgPath = join(dir, "astro.config.json");
-    writeFileSync(cfgPath, JSON.stringify({
-      providers: { a: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${up.port}/v1`, credentialRef: "KEY_A" } },
-      models: [{ provider: "a", id: "m1", tags: ["writing-code"], context: 4096 }],
-      agent: { model: "a/m1", maxSteps: 2, tools: ["read_file", "run_command"] },
-      paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
-    }));
+    const cfgPath = writeRunConfig(dir, up.port!, ["read_file", "run_command"]);
     const report = await runTask({
       configPath: cfgPath, task: "/commit revisar o diff", cwd: dir,
       env: { KEY_A: "dummy" }, skillsUserRoot: join(dir, "sem-skills"),
@@ -129,16 +140,51 @@ test("run via /commit injeta o prompt da skill, audita skill.loaded e não persi
   }
 });
 
+test("run dirigido por skill executa read_file e run_command no loop de tools", async () => {
+  const seen: { messages: { role: string }[] }[] = [];
+  let requests = 0;
+  const up = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      const body = (await req.json()) as { messages: { role: string }[] };
+      seen.push(body);
+      requests += 1;
+      if (requests === 1) {
+        return Response.json({ choices: [{ message: { content: null, tool_calls: [
+          { id: "c1", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "notes.txt" }) } },
+          { id: "c2", type: "function", function: { name: "run_command", arguments: JSON.stringify({ command: "bun --version" }) } },
+        ] } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+      }
+      return Response.json({ choices: [{ message: { content: "pronto" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    },
+  });
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "astro-sktool-"));
+    skillDir(join(dir, ".astro", "skills"), "commit", SKILL_SCRIPTS);
+    writeFileSync(join(dir, "notes.txt"), "nota do diff");
+    const cfgPath = writeRunConfig(dir, up.port!, ["read_file", "run_command"]);
+    const report = await runTask({
+      configPath: cfgPath, task: "/commit revisar o diff", cwd: dir,
+      env: { KEY_A: "dummy" }, skillsUserRoot: join(dir, "sem-skills"),
+    });
+
+    expect(report.final).toBe("pronto");
+    expect(requests).toBe(2);
+    expect(seen[1]!.messages.map((message) => message.role)).toContain("tool");
+    const audit = readFileSync(join(dir, ".astro", "audit.jsonl"), "utf8");
+    expect(audit).toContain("skill.loaded");
+    expect(audit).toContain("\"name\":\"read_file\"");
+    expect(audit).toContain("\"name\":\"run_command\"");
+    expect(audit).not.toContain("\"isError\":true");
+  } finally {
+    up.stop(true);
+  }
+});
+
 test("run com skill pedindo tool fora da allowlist falha fechado", async () => {
   const dir = mkdtempSync(join(tmpdir(), "astro-skexec-deny-"));
   skillDir(join(dir, ".astro", "skills"), "deploy", SKILL.replace("name: commit", "name: deploy").replace("tools: [read_file, run_command]", "tools: [write_file]"));
-  const cfgPath = join(dir, "astro.config.json");
-  writeFileSync(cfgPath, JSON.stringify({
-    providers: { a: { kind: "openai-compat", baseUrl: "http://127.0.0.1:1/v1", credentialRef: "KEY_A" } },
-    models: [{ provider: "a", id: "m1", tags: ["writing-code"], context: 4096 }],
-    agent: { model: "a/m1", maxSteps: 2, tools: ["read_file"] },
-    paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
-  }));
+  const cfgPath = writeRunConfig(dir, 1, ["read_file"]);
   await expect(runTask({
     configPath: cfgPath, task: "/deploy agora", cwd: dir,
     env: { KEY_A: "dummy" }, skillsUserRoot: join(dir, "sem-skills"),

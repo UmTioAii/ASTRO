@@ -22,17 +22,9 @@ export interface BuildRegistryOptions {
 export function buildSkillRegistry(opts: BuildRegistryOptions): SkillRegistry {
   const registry = new SkillRegistry();
   const warn = opts.warn ?? ((message: string) => console.warn(`skills: ${message}`));
-  const roots: [string, SkillSource][] = [
-    [opts.projectRoot, "project"],
-    [opts.userRoot, "user"],
-  ];
-  for (const [root, source] of roots) {
+  for (const [root, source] of [[opts.projectRoot, "project"], [opts.userRoot, "user"]] as [string, SkillSource][]) {
     for (const skill of loadSkillsFromRoot(root, source, warn)) {
-      try {
-        registry.register(skill);
-      } catch (error) {
-        warn(error instanceof Error ? error.message : String(error));
-      }
+      try { registry.register(skill); } catch (error) { warn(error instanceof Error ? error.message : String(error)); }
     }
   }
   return registry;
@@ -50,10 +42,7 @@ export interface SkillInvocation {
   prompt: string;
 }
 
-/**
- * Resolve `/nome args`: skills pedindo tool fora da allowlist do agent falham
- * fechado (I-01). Task sem comando de skill devolve undefined.
- */
+/** Resolve `/nome args`: tools fora da allowlist falham fechado (I-01); sem barra, undefined. */
 export function resolveSkillCommand(task: string, opts: ResolveSkillOptions): SkillInvocation | undefined {
   const match = SLASH_COMMAND.exec(task);
   if (match === null) return undefined;
@@ -82,11 +71,7 @@ export interface SkillTaskOptions {
   agent: string;
 }
 
-/**
- * Task de entrada vista pelo modelo: comandos `/nome` viram o prompt da skill
- * (com `$ARGUMENTS` e scripts), `skill.loaded` {name, version, sha256, source}
- * é auditado e o conteúdo da task/prompt nunca é persistido (I-04).
- */
+/** Task vista pelo modelo: `/nome` vira o prompt da skill; audit `skill.loaded`; nada persistido (I-04). */
 export function resolveTaskSkill(task: string, opts: SkillTaskOptions): string {
   if (!isSkillCommand(task)) return task;
   const registry = buildSkillRegistry({

@@ -4,62 +4,34 @@ Skills reutilizáveis no formato `SKILL.md` (C1, #55): carregamento, instalaçã
 |---|---|
 | SKILL.md, skills CLI, `/nome`, permissões, sha256 | Parser YAML em si (`src/skills/loader.ts`), registro (`registry.ts`) |
 
-## Raízes e fontes
+## Raízes, manifesto e runtime
 
-| Fonte | Raiz | Como entra |
-|---|---|---|
-| `project` | `<cwd>/.astro/skills/` | Junto ao código, versionada no repo do usuário |
-| `user` | `~/.astro/skills/` | Pessoal, vale para todos os projetos |
-
-Cada skill vive em `<raiz>/<nome>/SKILL.md`; a chave é `fonte/nome` (`project/commit`). O nome puro só resolve quando é único; com ambas as fontes definidas, use a chave completa. Links (symlink/junction) de diretório ou de `SKILL.md` não são seguidos — skill fora da raiz não entra no contexto (I-03).
-
-## Manifesto (frontmatter YAML)
+- Raízes: `project` = `<cwd>/.astro/skills/`, `user` = `~/.astro/skills/`. Cada skill é `<raiz>/<nome>/SKILL.md`, com chave `fonte/nome` (`project/commit`); nome puro só resolve quando único. Links (symlink/junction) de diretório ou de `SKILL.md` não são seguidos (I-03).
+- Frontmatter: `name` (`^[a-z0-9][a-z0-9_-]*$`), `description`, `version` e o prompt (após `---`) obrigatórios; `permissions` com defaults deny (`tools: []`, `network: false`, `filesystem: none`); `scripts` opcional. Teto de 1MB por SKILL.md na leitura e na instalação.
+- Parser: mapas, listas em bloco (ambos estilos), escalares e arrays inline, sem dependência. Limitações: sem block scalar/escapes; chave duplicada usa a última; primeira chave de item com valor em bloco é rejeitada; sequência de sequências vira escalar; chave over-indentada em mapa pode sobrescrever campo (#112); nomes reservados do Windows (`con`, `nul`) passam no regex; fonte-arquivo dentro do destino não toca a guarda de sobreposição.
 
 ```
 ---
-name: commit            # ^[a-z0-9][a-z0-9_-]*$
+name: commit
 description: Cria um commit
 version: 1.0.0
 permissions:
-  tools: [read_file, run_command]   # precisa ser subconjunto da allowlist do agent (I-01)
+  tools: [read_file, run_command]   # ⊆ allowlist do agent (I-01)
   network: false
   filesystem: write                  # none | read | write
-scripts:                             # opcional; rodam via run_command
-  - name: check
-    command: git status --short
+scripts:
+  - name: status
+    command: git status --short      # executável via run_command (sandbox/timeout, F4-6)
 ---
 Prompt da skill. Argumentos: $ARGUMENTS
 ```
 
-- `name`, `description`, `version` e o prompt são obrigatórios; `permissions` tem defaults deny (`tools: []`, `network: false`, `filesystem: none`).
-- O parser cobre mapas, listas em bloco (nos dois estilos de indentação), escalares e arrays inline — sem dependência de runtime. Limitações conhecidas: sem block scalar (`>`/`|`), chave duplicada usa a última, sem escapes de aspas, primeira chave de item com valor em bloco é rejeitada, sequência de sequências vira escalar, chave over-indentada em mapa pode sobrescrever campo (issue #112).
+## CLI e runtime
 
-## CLI
+- CLI (`bun src/cli.ts skills <subcomando> [--user] [--force]`): `list`, `show <nome>`, `validate <nome>`, `install <url|caminho>`, `remove <nome>`, `verify <nome>`. Install grava `<nome>/.sha256` (hash do texto sem BOM, recalculado igual no `verify`); existente exige `--force`; sobreposição origem×destino é rejeitada por identidade física (imune a caixa, 8.3, `\\?\`, subst, junction). Skill manual (sem sidecar) falha o `verify`.
+- Runtime: task `/<nome> args` (ou `/project/<nome>`) resolve na skill — o modelo recebe o prompt com `$ARGUMENTS` substituído e os scripts declarados anexados. Tools da skill fora da allowlist do agent falham o run antes de qualquer chamada (I-01); skill inexistente/ambígua idem. Audit: `skill.loaded` {name, version, sha256, source} na invocação, `skill.installed` no install; task/prompt nunca são persistidos (I-04).
 
-```
-bun src/cli.ts skills list                       # lista project/* e user/*
-bun src/cli.ts skills show project/commit        # manifesto + prompt
-bun src/cli.ts skills validate project/commit
-bun src/cli.ts skills install <url|caminho>      # project por padrão; --user, --force
-bun src/cli.ts skills remove <nome>              # --user para a raiz do usuário
-bun src/cli.ts skills verify <nome>              # recalcula o sha256 do sidecar
-```
+## Exemplo e referências
 
-`install` grava `<nome>/.sha256` (hash do texto sem BOM, o mesmo do `parseSkill`); `verify` recalcula pelo mesmo caminho. Instalação existente exige `--force`; origem que sobrepõe o destino é rejeitada por identidade física (`dev`/`ino`), imune a caixa, 8.3, `\\?\`, subst e junction. Skill escrita à mão (sem sidecar) falha o `verify`.
-
-## Runtime
-
-- Task começando com `/<nome>` (ex.: `/commit revisar o diff`) resolve na skill: o modelo recebe o prompt com `$ARGUMENTS` substituído e os scripts declarados anexados (executáveis via `run_command`, sujeitos a sandbox e timeout — F4-6). O conteúdo da task/prompt nunca é persistido; o audit grava só `taskHash` (I-04).
-- Audit: `skill.loaded` {name, version, sha256, source} na invocação; `skill.installed` no install.
-- Skill pedindo tool fora da allowlist do agent falha fechado antes de qualquer chamada (I-01). Nome inexistente ou ambíguo também falha o run com erro explícito.
-- Teto de 1MB por SKILL.md lido/instalado.
-
-## Exemplo
-
-`examples/skills/commit/SKILL.md` — copie para `<projeto>/.astro/skills/commit/` e invoque com `/commit`.
-
-## Referências
-
-- #55 (C1), PR #111 (C1a), PR #113 (C1b); issue #112 (leniências do parser).
-- I-01, I-03, I-04, I-11, I-14 em `docs/invariants.md`.
-- Código: `src/skills/{types,loader,registry,installer,cli,executor}.ts`.
+- `examples/skills/commit/SKILL.md` — copie para `<projeto>/.astro/skills/commit/` e invoque `/commit`.
+- #55 (C1), PR #111 (C1a), PR #113 (C1b), issue #112; I-01/I-03/I-04/I-11/I-14 em `docs/invariants.md`; código em `src/skills/`.
