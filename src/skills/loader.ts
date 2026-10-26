@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { SKILL_NAME_RE, SkillError, type Skill, type SkillFilesystem, type SkillScript, type SkillSource } from "./types";
+import { SKILL_MAX_BYTES, SKILL_NAME_RE, SkillError, type Skill, type SkillFilesystem, type SkillScript, type SkillSource } from "./types";
 
 type YamlMap = Record<string, unknown>;
 
@@ -175,7 +175,9 @@ export function parseSkill(content: string, source: SkillSource, path: string): 
 export function loadSkillFile(path: string, source: SkillSource): Skill {
   const absolute = resolve(path);
   if (!existsSync(absolute)) throw new SkillError(`skill "${absolute}": arquivo não encontrado`);
-  return parseSkill(readFileSync(absolute, "utf8"), source, absolute);
+  const content = readFileSync(absolute, "utf8");
+  if (Buffer.byteLength(content) > SKILL_MAX_BYTES) throw new SkillError(`skill "${absolute}": maior que ${SKILL_MAX_BYTES} bytes`);
+  return parseSkill(content, source, absolute);
 }
 
 /**
@@ -192,11 +194,21 @@ export function loadSkillsFromRoot(
 
   const skills: Skill[] = [];
   const entries = readdirSync(absolute, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).sort((a, b) => a.name.localeCompare(b.name));
+    .filter((entry) => !entry.name.startsWith(".")).sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {
+    // Links (symlink/junction) não são seguidos: skill fora da raiz não entra no contexto (I-03).
+    if (entry.isSymbolicLink()) {
+      warn(`skill "${entry.name}" ignorada: link não seguido`);
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
     const file = join(absolute, entry.name, "SKILL.md");
     if (!existsSync(file)) continue;
+    if (lstatSync(file).isSymbolicLink()) {
+      warn(`skill "${entry.name}" ignorada: SKILL.md é link`);
+      continue;
+    }
     try {
       skills.push(loadSkillFile(file, source));
     } catch (error) {

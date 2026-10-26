@@ -3,9 +3,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFil
 import { basename, dirname, join, resolve } from "node:path";
 import type { Auditor } from "../audit";
 import { parseSkill } from "./loader";
-import { SKILL_NAME_RE, SkillError, type Skill, type SkillSource } from "./types";
-
-const MAX_SKILL_BYTES = 1_000_000; // teto do conteúdo baixado/instalado
+import { SKILL_MAX_BYTES, SKILL_NAME_RE, SkillError, type Skill, type SkillSource } from "./types";
 
 /** Identidade física (dev+ino) do caminho se existir; imune a grafia (caixa, 8.3, `\\?\`, subst, junction). */
 function fileId(path: string): [number, number] | null {
@@ -57,7 +55,7 @@ async function readSource(
     }
     if (!response.ok) throw new SkillError(`falha ao baixar skill "${source}": HTTP ${response.status}`);
     const content = await response.text();
-    if (Buffer.byteLength(content) > MAX_SKILL_BYTES) throw new SkillError(`skill "${source}": maior que ${MAX_SKILL_BYTES} bytes`);
+    if (Buffer.byteLength(content) > SKILL_MAX_BYTES) throw new SkillError(`skill "${source}": maior que ${SKILL_MAX_BYTES} bytes`);
     return { content };
   }
 
@@ -67,7 +65,7 @@ async function readSource(
   const file = directory === undefined ? absolute : join(directory, "SKILL.md");
   if (!existsSync(file)) throw new SkillError(`skill "${source}": SKILL.md não encontrado`);
   const content = readFileSync(file, "utf8");
-  if (Buffer.byteLength(content) > MAX_SKILL_BYTES) throw new SkillError(`skill "${file}": maior que ${MAX_SKILL_BYTES} bytes`);
+  if (Buffer.byteLength(content) > SKILL_MAX_BYTES) throw new SkillError(`skill "${file}": maior que ${SKILL_MAX_BYTES} bytes`);
   return { content, ...(directory === undefined ? {} : { directory }) };
 }
 

@@ -17,6 +17,7 @@ import { Metrics, MetricsCollector } from "./metrics";
 import { CompletionCache, cachedProvider } from "./cache";
 import { loadPlugins, type PluginProviderFactory } from "./plugins";
 import { sendAuditWebhook } from "./team";
+import { resolveTaskSkill } from "./skills/executor";
 import type { AuditEvent } from "./audit";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
@@ -41,6 +42,8 @@ export interface RunOptions {
   env?: Record<string, string | undefined>;
   /** Registro de métricas Prometheus (F6-1); quando presente, alimentado pelo run. */
   metrics?: Metrics;
+  /** Raiz de skills do usuário (C1c); default `~/.astro/skills`. Injetável para teste. */
+  skillsUserRoot?: string;
 }
 
 export interface RunReport {
@@ -467,6 +470,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   let result: { final: string; steps: number; agentsUsed?: string[] };
   try {
+    // Skills (C1c): /<nome> vira o prompt da skill; tools da skill ⊆ allowlist (I-01); falha fecha o run
+    const task = resolveTaskSkill(opts.task, { cwd, allow: config.agent.tools, audit, run, agent: AGENT_NAME,
+      ...(opts.skillsUserRoot === undefined ? {} : { userRoot: opts.skillsUserRoot }) });
     // Se há agents configurados, usa multi-agent session
     if (config.agents && Object.keys(config.agents).length > 0) {
       const entryAgent = config.agent.entryAgent ?? "planner";
@@ -504,7 +510,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         // Handoff (F-24): timeout do ack; default 30000ms (D-15)
         ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
       };
-      result = await runMultiAgentSession(multiOpts, opts.task);
+      result = await runMultiAgentSession(multiOpts, task);
     } else {
       result = await runSession(
         {
@@ -541,7 +547,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           protectedPaths: [ledgerPath, auditPath],
           secretEnvNames,
         },
-        opts.task,
+        task,
       );
     }
   } catch (error) {
