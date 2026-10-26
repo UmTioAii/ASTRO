@@ -58,7 +58,7 @@ export class ProfileFallbackProvider implements Provider {
       }
       try {
         const response = await provider.complete({ ...req, model: entry.model });
-        return { ...response, provider: response.provider ?? entry.provider, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
+        return { ...response, provider: response.provider ?? entry.provider, model: entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
         lastError = error;
         const errorClass: ErrorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
