@@ -12,6 +12,7 @@ import { Metrics, startMetricsServer } from "./metrics";
 import { replayRun } from "./replay";
 import { runHealthCheck, runPoolHealthCheck, formatProvidersList, testProvider } from "./health";
 import { GitHubConfigRegistry } from "./config-share";
+import { runSkillsCommand } from "./skills/cli";
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -28,6 +29,7 @@ const USAGE = `Uso:
   bun src/cli.ts pool <list|health> [--config <path>]
   bun src/cli.ts agents list [--config <path>]
   bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
+  bun src/cli.ts skills <list|show|validate|install|remove|verify> [--user] [--force]
   bun src/cli.ts --help
 
 Opções:
@@ -136,7 +138,8 @@ type ParsedCommand =
   | { kind: "agents"; options: AgentsCommand }
   | { kind: "handoff"; options: HandoffShowCommand }
   | { kind: "cost"; options: CostCommand }
-  | { kind: "config"; options: ConfigShareCommand };
+  | { kind: "config"; options: ConfigShareCommand }
+  | { kind: "skills"; args: string[] };
 
 function parseArgs(argv: string[]): ParsedCommand {
   if (argv.length === 0) {
@@ -147,7 +150,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health", "providers", "handoff", "cost", "pool", "agents", "config"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
   }
@@ -360,6 +363,11 @@ function parseArgs(argv: string[]): ParsedCommand {
       throw new UsageError("use: agents list [--config <path>]");
     }
     return { kind: "agents", options: { action: "list", configPath } };
+  }
+
+  // Skills (C1b): subcomandos e flags são validados em src/skills/cli.ts.
+  if (command === "skills") {
+    return { kind: "skills", args: rest };
   }
 
   if (command === "replay") {
@@ -726,6 +734,10 @@ async function main(argv: string[]): Promise<number> {
       console.error(`erro: ${message}`);
       return 1;
     }
+  }
+
+  if (parsed.kind === "skills") {
+    return await runSkillsCommand(parsed.args);
   }
 
   if (parsed.kind === "agents") {
