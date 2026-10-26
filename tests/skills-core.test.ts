@@ -84,3 +84,8 @@ test("loader rejeita chave __proto__ no frontmatter", () => {
   const polluted = SKILL.replace("name: commit\n", "__proto__:\n  name: evil\n");
   expect(() => parseSkill(polluted, "project", "/p/SKILL.md")).toThrow(/__proto__/);
 });
+
+test("parser não engole item irmão depois de lista aninhada no item", () => {
+  const nested = SKILL.replace("  - name: check\n    command: git status --short", "  - name: a\n    command: x\n    args:\n      - one\n  - name: b\n    command: y");
+  expect(parseSkill(nested, "project", "/p/SKILL.md").manifest.scripts).toEqual([{ name: "a", command: "x" }, { name: "b", command: "y" }]);
+});

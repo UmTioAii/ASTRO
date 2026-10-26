@@ -65,9 +65,10 @@ function parseYaml(text: string): YamlMap {
     if (trimmed === "" || trimmed.startsWith("#")) continue;
     const indent = raw.length - raw.trimStart().length;
 
-    // Item de lista no mesmo nível da chave (`chave:\n- item`) não desempilha o array.
+    // Item pertence ao array cujos itens têm o mesmo indent; frames de lista guardam o indent dos itens.
     const item = trimmed.startsWith("- ");
-    while (stack.length > 1 && indent <= stack.at(-1)!.indent && !(item && Array.isArray(stack.at(-1)!.value))) stack.pop();
+    const sibling = (frame: YamlFrame) => item && Array.isArray(frame.value) && indent === frame.indent;
+    while (stack.length > 1 && indent <= stack.at(-1)!.indent && !sibling(stack.at(-1)!)) stack.pop();
     const frame = stack.at(-1)!;
 
     if (item) {
@@ -96,10 +97,10 @@ function parseYaml(text: string): YamlMap {
     if (rawValue !== "") { frame.value[key] = parseScalar(rawValue); continue; }
 
     const next = nextContentLine(lines, index + 1);
-    const child: YamlMap | unknown[] =
-      next !== undefined && next.indent >= indent && next.trimmed.startsWith("- ") ? [] : {};
+    const list = next !== undefined && next.indent >= indent && next.trimmed.startsWith("- ");
+    const child: YamlMap | unknown[] = list ? [] : {};
     frame.value[key] = child;
-    stack.push({ indent, value: child });
+    stack.push({ indent: list ? next!.indent : indent, value: child });
   }
 
   return root;
