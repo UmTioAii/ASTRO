@@ -8,6 +8,7 @@ import { Ledger } from "./ledger";
 import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
 import { FallbackProvider, DEFAULT_PRIORITY } from "./provider/fallback-provider";
+import { ProfileFallbackProvider, type ProfileChainEntry } from "./provider/profile-fallback-provider";
 import type { Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
 import { sendTelemetry } from "./telemetry";
@@ -94,6 +95,27 @@ function providerConfigFor(config: AstroConfig, model: ModelEntry): ProviderConf
   return providerConfig;
 }
 
+/**
+ * Identidade do provider (F-31c) sem resolver credencial: permite montar a
+ * cadeia de fallback antes de instanciar o primário.
+ */
+function providerIdentity(
+  config: AstroConfig,
+  model: ModelEntry,
+): { credentialRef: string; quotaDomain: string } {
+  const providerConfig = providerConfigFor(config, model);
+  const quotaDomain = providerConfig.quotaDomain ?? "default";
+  if (isOpenAICompat(providerConfig)) return { credentialRef: providerConfig.credentialRef, quotaDomain };
+  if (isCodexOAuth(providerConfig)) {
+    return { credentialRef: expandHome(providerConfig.credentialsPath), quotaDomain };
+  }
+  const rawCredentialRef = (providerConfig as Record<string, unknown>).credentialRef;
+  return {
+    credentialRef: typeof rawCredentialRef === "string" ? rawCredentialRef : providerConfig.kind,
+    quotaDomain,
+  };
+}
+
 // Predicates de narrowing: PluginProviderConfig tem kind: string, que
 // sobrepõe os literais dos built-ins e desativa a discriminação automática.
 function isOpenAICompat(p: ProviderConfig): p is OpenAICompatProviderConfig {
@@ -117,10 +139,9 @@ export function createProvider(
   pluginFactories: Map<string, PluginProviderFactory> = new Map(),
 ): ProviderSetup {
   const providerConfig = providerConfigFor(config, model);
-  const quotaDomain = providerConfig.quotaDomain ?? "default";
+  const { credentialRef, quotaDomain } = providerIdentity(config, model);
 
   if (isOpenAICompat(providerConfig)) {
-    const credentialRef = providerConfig.credentialRef;
     const apiKey = env[credentialRef];
     if (apiKey === undefined || apiKey.length === 0) {
       throw new Error(`defina ${credentialRef} no ambiente`);
@@ -138,14 +159,13 @@ export function createProvider(
   }
 
   if (isCodexOAuth(providerConfig)) {
-    const credentialsPath = expandHome(providerConfig.credentialsPath);
     return {
       provider: new CodexOAuthProvider({
-        credentialsPath,
+        credentialsPath: credentialRef,
         ...(providerConfig.baseUrl === undefined ? {} : { baseUrl: providerConfig.baseUrl }),
         ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
       }),
-      credentialRef: credentialsPath,
+      credentialRef,
       quotaDomain,
     };
   }
@@ -158,12 +178,71 @@ export function createProvider(
         `registre um plugin que exporte esse kind`,
     );
   }
-  const rawCredentialRef = (providerConfig as Record<string, unknown>).credentialRef;
   return {
     provider: factory.create(providerConfig as Record<string, unknown>, env),
-    credentialRef: typeof rawCredentialRef === "string" ? rawCredentialRef : providerConfig.kind,
+    credentialRef,
     quotaDomain,
   };
+}
+
+/** Provider criado na primeira chamada (F-31c): credencial só resolve quando o provider entra em uso. */
+function lazyProvider(create: () => Provider): Provider {
+  let provider: Provider | undefined;
+  return { complete: (req) => (provider ??= create()).complete(req) };
+}
+
+/**
+ * Confere o kind do provider base sem instanciar (F-31c): factory de plugin
+ * ausente deve falhar no startup, como antes da criação preguiçosa.
+ */
+function assertProviderKind(
+  config: AstroConfig,
+  model: ModelEntry,
+  pluginFactories: Map<string, PluginProviderFactory>,
+): void {
+  const providerConfig = providerConfigFor(config, model);
+  if (isOpenAICompat(providerConfig) || isCodexOAuth(providerConfig)) return;
+  if (pluginFactories.has(providerConfig.kind)) return;
+  throw new ConfigError(
+    `provider "${model.provider}" usa kind "${providerConfig.kind}" sem factory; ` +
+      `registre um plugin que exporte esse kind`,
+  );
+}
+
+/**
+ * Cadeia C6 de um modelo (F-31c), com providers criados sob demanda. Com
+ * `profile`, a cadeia é sempre montada (mesmo sem fallback de provider) para
+ * aplicar o retry da F-01 e atribuir `provider.*` ao profile.
+ */
+function providerChain(
+  config: AstroConfig,
+  model: ModelEntry,
+  env: Record<string, string | undefined>,
+  pluginFactories: Map<string, PluginProviderFactory>,
+  audit: Auditor,
+  run: string,
+  profile?: string,
+): Provider {
+  const primaryConfig = config.providers[model.provider];
+  return new FallbackProvider({
+    providers: [
+      {
+        name: model.provider,
+        priority: primaryConfig?.priority ?? DEFAULT_PRIORITY,
+        create: () => createProvider(config, model, env, pluginFactories).provider,
+      },
+      ...(primaryConfig?.fallback ?? []).map((name) => ({
+        name,
+        priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
+        create: () => createProvider(config, { ...model, provider: name }, env, pluginFactories).provider,
+      })),
+    ],
+    maxRetries: primaryConfig?.maxRetries,
+    retryBackoffMs: primaryConfig?.retryBackoffMs,
+    audit,
+    run,
+    ...(profile === undefined ? {} : { profile }),
+  });
 }
 /** Valida as tools pedidas pelo agente e devolve as instâncias correspondentes. */
 function resolveTools(config: AstroConfig, toolsByName: Map<string, Tool>): Tool[] {
@@ -219,25 +298,37 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   const registry = new Registry(config);
   const model = registry.require(config.agent.model);
+  const { credentialRef, quotaDomain } = providerIdentity(config, model);
+  assertProviderKind(config, model, loaded.providerFactories);
 
-  const { provider, credentialRef, quotaDomain } = createProvider(config, model, env, loaded.providerFactories);
+  // Fallback entre providers (C6, D-14) + roteamento por profile (F-31).
+  // F-31c: providers preguiçosos; sem profile, o caminho é o anterior (C6 só
+  // com fallback de provider declarado).
+  const baseConfig = config.providers[model.provider];
+  let effectiveProvider = (baseConfig?.fallback ?? []).length > 0
+    ? providerChain(config, model, env, loaded.providerFactories, audit, run)
+    : lazyProvider(() => createProvider(config, model, env, loaded.providerFactories).provider);
 
-  // Fallback entre providers (C6, D-14): cadeia por prioridade; `fallback: []` desliga
-  const primaryConfig = config.providers[model.provider];
-  const fallbackNames = primaryConfig?.fallback ?? [];
-  let effectiveProvider = provider;
-  if (fallbackNames.length > 0) {
-    effectiveProvider = new FallbackProvider({
-      providers: [
-        { name: model.provider, priority: primaryConfig?.priority ?? DEFAULT_PRIORITY, create: () => provider },
-        ...fallbackNames.map((name) => ({
-          name,
-          priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
-          create: () => createProvider(config, { ...model, provider: name }, env, loaded.providerFactories).provider,
-        })),
-      ],
-      maxRetries: primaryConfig?.maxRetries,
-      retryBackoffMs: primaryConfig?.retryBackoffMs,
+  const pool = config.modelPool ?? {};
+  if (Object.keys(pool).length > 0) {
+    const profiles: ProfileChainEntry[] = Object.entries(pool).map(([name, profile]) => {
+      const profileModel = registry.resolveProfile(name);
+      let chain: Provider | undefined;
+      return {
+        name,
+        model: profileModel.id,
+        provider: profileModel.provider,
+        fallback: profile.fallback ?? [],
+        create: () => (chain ??= providerChain(
+          config, profileModel, env, loaded.providerFactories, audit, run, name,
+        )),
+      };
+    });
+    // Sem defaultProfile: só `req.profile` roteia; agent nomeado sem profile
+    // mantém o model dele (F-31c).
+    effectiveProvider = new ProfileFallbackProvider({
+      base: effectiveProvider,
+      profiles,
       audit,
       run,
     });

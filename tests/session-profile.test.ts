@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs"; import { tmpdir } from "node:os"; import 
 import { Auditor } from "../src/audit"; import { Ledger } from "../src/ledger";
 import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
 import type { AgentEntry, ModelEntry } from "../src/registry";
-import { runMultiAgentSession, type MultiAgentSessionOptions } from "../src/session";
+import { runSession, runMultiAgentSession, type MultiAgentSessionOptions } from "../src/session";
 import { ToolExecutor } from "../src/tools/executor"; import { handoffTool } from "../src/tools/handoff";
 import type { HandoffDraft } from "../src/handoff/types";
 
@@ -85,5 +85,24 @@ describe("runtime resolve profile por agente (F-29)", () => {
     expect(result.final).toBe("done");
     expect(requests.map((r) => r.model)).toEqual(["gpt-4o-mini", "gpt-4o-mini"]); // fallback compatível
     for (const entry of o.ledger.readAll()) expect("profile" in entry && entry.profile !== undefined).toBe(false); // sem profile no ledger
+  });
+});
+
+describe("sessão single (F-31)", () => {
+  test("envia o profile do agent ao provider", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-f31c-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const requests: CompletionRequest[] = [];
+    const provider: Provider = {
+      complete: async (req) => { requests.push(req); return resp({ content: "ok" }); },
+    };
+    const result = await runSession({
+      run: "r1", agent: "a", credentialRef: "K", quotaDomain: "d", cwd, provider,
+      model: models["openai/gpt-4o-mini"]!,
+      executor: new ToolExecutor({ tools: [], allow: [], audit }),
+      ledger: new Ledger(join(cwd, "ledger.jsonl")), audit, maxSteps: 2, agentProfile: "cheap",
+    }, "x");
+    expect(result.final).toBe("ok");
+    expect(requests[0]!.profile).toBe("cheap");
   });
 });
