@@ -28,6 +28,8 @@ export interface FallbackProviderOptions {
   retryBackoffMs?: number;
   audit?: Auditor;
   run?: string;
+  /** Profile dono da cadeia (F-31): atribui os eventos ao profile afetado. */
+  profile?: string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,6 +40,7 @@ export class FallbackProvider implements Provider {
   readonly #retryBackoffMs: number;
   readonly #audit?: Auditor;
   readonly #run?: string;
+  readonly #profile?: string;
 
   constructor(opts: FallbackProviderOptions) {
     this.#chain = [...opts.providers].sort((a, b) => a.priority - b.priority);
@@ -45,6 +48,7 @@ export class FallbackProvider implements Provider {
     this.#retryBackoffMs = opts.retryBackoffMs ?? 1_000;
     this.#audit = opts.audit;
     this.#run = opts.run;
+    this.#profile = opts.profile;
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResponse> {
@@ -80,6 +84,10 @@ export class FallbackProvider implements Provider {
 
   #log(tipo: "provider.success" | "provider.failure", payload: Record<string, unknown>): void {
     if (this.#audit === undefined || this.#run === undefined) return;
-    this.#audit.append({ run: this.#run, tipo, payload });
+    this.#audit.append({
+      run: this.#run,
+      tipo,
+      payload: this.#profile === undefined ? payload : { ...payload, profile: this.#profile },
+    });
   }
 }
