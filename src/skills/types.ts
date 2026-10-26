@@ -38,6 +38,9 @@ export interface Skill {
 /** Nome seguro para diretório e namespace (`project/commit`). */
 export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
+/** Teto de bytes por SKILL.md na leitura e na instalação (C1c). */
+export const SKILL_MAX_BYTES = 1_000_000;
+
 export class SkillError extends Error {
   constructor(message: string) {
     super(message);

@@ -68,7 +68,7 @@ Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenci
 
 | ID | Título | Status | Issue | Depende de | Bloqueia |
 |---|---|---|---|---|---|
-| C1 | Skills com manifesto e permissões (I-14) | planejado | #55 | F-02, F-10 | — |
+| C1 | Skills com manifesto e permissões (I-14) | concluído | #55 | F-02, F-10 | — |
 | C2 | Cliente MCP com namespace e saída não confiável (I-15) | planejado | #56 | F-00, F-03, F-09, F-10 | — |
 | C3 | `web_search` e `web_fetch` com bloqueio de destinos internos | planejado | #57 | F-00, F-09, F-11 | — |
 | C4 | Perfis de agente, subagentes com escopo menor (I-02) e blackboard pelo orquestrador (I-18) | planejado | #58 | F-02, F-05, F-07, F-17, F-23, F-24, F-25, F-26 | P-02 |
