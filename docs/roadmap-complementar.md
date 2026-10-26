@@ -51,7 +51,7 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-28 | AgentManager: ciclo de vida de agentes com profile e `astro agents list` | concluído | #83 | F-27 | F-29 |
 | F-29 | Runtime com pool: profile no startup e no handoff; `profile` no ledger; from/to_profile no artefato | concluído | #84 | F-27, F-28, F-23, F-24, F-25, F-26 | F-30, C4 |
 | F-30 | Custo atribuído por agente com granularidade de profile e `astro cost --by-agent` | concluído | #85 | F-29 | F-31 |
-| F-31 | Health e fallback por profile estendendo C6 (ADR-0007) | bloqueado | #86 | F-30, C6 | — |
+| F-31 | Health e fallback por profile estendendo C6 (ADR-0007) | em andamento | #86 | F-30, C6 | — |
 
 Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenciais (multi-agente, multi-provider, comunicação). Pode voltar como issue própria.
 

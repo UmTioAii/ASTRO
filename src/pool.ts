@@ -12,7 +12,7 @@ export function formatPoolList(config: AstroConfig): string {
     const model = registry.resolveProfile(name);
     const parts = [`${name} · ${model.provider}/${model.id}`, `tags ${model.tags.join(", ") || "-"}`,
       ...(profile.capabilities === undefined ? [] : [`exige ${profile.capabilities.join(", ")}`]),
-      ...(profile.fallback === undefined ? [] : [`fallback ${profile.fallback.join(", ")}`])];
+      ...(profile.fallback === undefined || profile.fallback.length === 0 ? [] : [`fallback ${profile.fallback.join(", ")}`])];
     lines.push(parts.join(" · "));
   }
   return lines.join("\n");

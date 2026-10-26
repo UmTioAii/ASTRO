@@ -69,7 +69,7 @@ export interface ProfileConfig {
   model: string;
   /** Capabilities exigidas do modelo (F-07); validadas no startup. */
   capabilities?: Capability[];
-  /** Profiles alternativos; reservado à F-31 (validação de ciclos lá). */
+  /** Profiles alternativos (F-31); `[]` desabilita, igual a ausente. */
   fallback?: string[];
 }
 
@@ -415,7 +415,6 @@ function validateModelPool(value: unknown, models: ModelConfig[]): Record<string
     let fallback: string[] | undefined;
     if (p.fallback !== undefined) {
       fallback = expectStringArray(p.fallback, `${field}.fallback`);
-      if (fallback.length === 0) fail(`config inválida: "${field}.fallback" não pode ser uma lista vazia`);
     }
 
     result[name] = { model, ...(capabilities === undefined ? {} : { capabilities }), ...(fallback === undefined ? {} : { fallback }) };
@@ -426,8 +425,30 @@ function validateModelPool(value: unknown, models: ModelConfig[]): Record<string
       if (!Object.hasOwn(result, target)) {
         fail(`config inválida: "modelPool.${name}.fallback" aponta para o profile "${target}", que não está declarado em "modelPool"`);
       }
+      if (target === name) {
+        fail(`config inválida: "modelPool.${name}.fallback" não pode referenciar o próprio profile (autorreferência)`);
+      }
     }
   }
+
+  // F-31: a cadeia de profiles precisa ser acíclica (determinismo, I-06).
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const stack: string[] = [];
+  const visit = (name: string): void => {
+    if (visited.has(name)) return;
+    if (visiting.has(name)) {
+      const cycle = [...stack.slice(stack.indexOf(name)), name].join(" -> ");
+      fail(`config inválida: ciclo em "modelPool.*.fallback": ${cycle}`);
+    }
+    visiting.add(name);
+    stack.push(name);
+    for (const target of result[name]?.fallback ?? []) visit(target);
+    stack.pop();
+    visiting.delete(name);
+    visited.add(name);
+  };
+  for (const name of Object.keys(result)) visit(name);
 
   return result;
 }
