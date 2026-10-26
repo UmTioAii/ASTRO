@@ -42,6 +42,8 @@ export interface CompletionResponse {
   usage: { inputTokens: number; outputTokens: number };
   /** Nome do provider que atendeu (C6); fallback registra o real, não o wrapper. */
   provider?: string;
+  /** Model id efetivo que atendeu (F-31): profile de fallback pode trocar o modelo. */
+  model?: string;
   /** Trocas de profile até o atendimento (F-31); ausente quando o primário atendeu. */
   fallbacks?: FallbackRecord[];
 }

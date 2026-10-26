@@ -69,7 +69,7 @@ export class FallbackProvider implements Provider {
         try {
           const response = await provider.complete(req);
           this.#log("provider.success", { provider: entry.name, latencyMs: Date.now() - startedAt, attempt });
-          return { ...response, provider: entry.name };
+          return { ...response, provider: entry.name, model: response.model ?? req.model };
         } catch (error) {
           lastError = error;
           const errorClass = error instanceof ProviderError ? error.errClass : "invalid_request";

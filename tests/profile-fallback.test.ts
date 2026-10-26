@@ -75,6 +75,14 @@ describe("ProfileFallbackProvider (F-31)", () => {
     });
   });
 
+  test("preserva o model efetivo devolvido pelo provider", async () => {
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [entry("p1", "a", "m1", [], async () => ({ ...resp("ok"), model: "real-x" }))],
+    });
+    expect((await fb.complete(req("p1"))).model).toBe("real-x");
+  });
+
   test("hard_quota pula o profile; auth e invalid_request abortam sem tentar fallback", async () => {
     const quotaCalls: string[] = [];
     const quota = new ProfileFallbackProvider({
