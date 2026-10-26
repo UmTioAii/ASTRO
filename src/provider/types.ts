@@ -24,6 +24,16 @@ export interface CompletionRequest {
   model: string;
   messages: ChatMessage[];
   tools?: ToolDef[];
+  /** Profile da model pool que originou a chamada (F-31); roteia o fallback de profile. */
+  profile?: string;
+}
+
+/** Uma troca de profile durante um completion (F-31); `reason` é a classe do erro. */
+export interface FallbackRecord {
+  profile: string;
+  from_provider: string;
+  to_provider: string;
+  reason: ErrorClass;
 }
 
 export interface CompletionResponse {
@@ -32,6 +42,8 @@ export interface CompletionResponse {
   usage: { inputTokens: number; outputTokens: number };
   /** Nome do provider que atendeu (C6); fallback registra o real, não o wrapper. */
   provider?: string;
+  /** Trocas de profile até o atendimento (F-31); ausente quando o primário atendeu. */
+  fallbacks?: FallbackRecord[];
 }
 
 /** Contrato de um provider de chat completion. */

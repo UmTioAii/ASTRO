@@ -198,4 +198,25 @@ describe("FallbackProvider (C6)", () => {
       down.stop(true);
     }
   });
+
+  test("profile no FallbackProvider atribui os eventos ao profile (F-31)", async () => {
+    const a: Provider = { complete: async () => { throw new ProviderError("outage", "a fora"); } };
+    const b: Provider = { complete: async () => resp() };
+    const audit = auditOf();
+    const fb = new FallbackProvider({
+      providers: [
+        { name: "a", priority: 1, create: () => a },
+        { name: "b", priority: 2, create: () => b },
+      ],
+      maxRetries: 1,
+      retryBackoffMs: 1,
+      audit,
+      run: "r1",
+      profile: "premium",
+    });
+    await fb.complete(req);
+    for (const tipo of ["provider.failure", "provider.success"] as const) {
+      expect(audit.readAll().find((e) => e.tipo === tipo)!.payload).toMatchObject({ profile: "premium" });
+    }
+  });
 });
