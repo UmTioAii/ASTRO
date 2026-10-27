@@ -61,20 +61,23 @@ export class HttpTransport {
   /** Lê eventos `data:` do stream até a resposta com o id da requisição; evento não-JSON é ignorado. */
   async #readEventStream(response: Response, id: number, method: string): Promise<unknown> {
     let buffer = "";
+    const decoder = new TextDecoder(); // um por stream: preserva UTF-8 partido entre chunks
     for await (const chunk of response.body!) {
-      buffer += new TextDecoder().decode(chunk as Uint8Array, { stream: true });
+      buffer += decoder.decode(chunk as Uint8Array, { stream: true });
       let index;
       while ((index = buffer.indexOf("\n\n")) >= 0) {
         const block = buffer.slice(0, index);
         buffer = buffer.slice(index + 2);
         const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("");
         if (data.length === 0) continue;
-        let message: { id?: number; result?: unknown; error?: { message?: string } };
+        let parsed: unknown;
         try {
-          message = JSON.parse(data) as typeof message;
+          parsed = JSON.parse(data);
         } catch {
           continue; // keep-alive textual ou lixo entre eventos não derruba a requisição
         }
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue; // null/array/número: ignora
+        const message = parsed as { id?: number; result?: unknown; error?: { message?: string } };
         if (message.id !== id) continue;
         if (message.error !== undefined) throw new MCPError(message.error.message || "erro do servidor MCP");
         return message.result;

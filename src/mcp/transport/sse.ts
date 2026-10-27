@@ -63,9 +63,10 @@ export class SseTransport {
 
   async #pump(response: Response): Promise<void> {
     let buffer = "";
+    const decoder = new TextDecoder(); // um por stream: preserva UTF-8 partido entre chunks
     try {
       for await (const chunk of response.body!) {
-        buffer += new TextDecoder().decode(chunk as Uint8Array, { stream: true });
+        buffer += decoder.decode(chunk as Uint8Array, { stream: true });
         let index;
         while ((index = buffer.indexOf("\n\n")) >= 0) {
           const block = buffer.slice(0, index);
@@ -89,12 +90,14 @@ export class SseTransport {
       return;
     }
     if (data.length === 0) return;
-    let message: { id?: number; result?: unknown; error?: { message?: string } };
+    let parsed: unknown;
     try {
-      message = JSON.parse(data) as typeof message;
+      parsed = JSON.parse(data);
     } catch {
       return;
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return; // null/array/número: ignora
+    const message = parsed as { id?: number; result?: unknown; error?: { message?: string } };
     if (typeof message.id !== "number") return;
     const pending = this.#pending.get(message.id);
     if (pending === undefined) return;
@@ -124,6 +127,11 @@ export class SseTransport {
         headers: { "content-type": "application/json", ...this.#headers },
         body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
         signal: this.#abort.signal,
+      }).then((response) => {
+        if (response.ok) return; // resposta chega pelo stream; aqui só se valida o aceite do POST
+        this.#pending.delete(id);
+        clearTimeout(timer);
+        reject(new MCPError(`HTTP ${response.status} no MCP ${method}`));
       }).catch((error: unknown) => {
         this.#pending.delete(id);
         clearTimeout(timer);
