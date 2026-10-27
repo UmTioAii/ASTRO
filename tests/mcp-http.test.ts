@@ -19,7 +19,11 @@ function httpServer(opts: { delayMs?: number; stream?: boolean; non2xx?: boolean
         return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "echo", description: "Eco HTTP" }] } });
       }
       if (opts.errorNull === true) {
-        return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: `http:${body.id}` }] }, error: null });
+        const result = { content: [{ type: "text", text: `http:${body.id}` }] };
+        if (opts.stream === true) {
+          return new Response(`data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result, error: null })}\n\n`, { headers: { "content-type": "text/event-stream" } });
+        }
+        return Response.json({ jsonrpc: "2.0", id: body.id, result, error: null });
       }
       if (opts.utf8Stream === true) {
         const frame = `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "café-日本" }] } })}\n\n`;
@@ -221,6 +225,16 @@ test("transport http preserva UTF-8 dividido entre chunks", async () => {
 
 test("transport http trata error null como sucesso", async () => {
   const { server } = httpServer({ errorNull: true });
+  try {
+    const client = await http(server, 2000);
+    try {
+      expect((await client.callTool("echo", {})).content[0]!.text).toBe("http:2");
+    } finally { client.close(); }
+  } finally { server.stop(true); }
+});
+
+test("transport http trata error null no stream como sucesso", async () => {
+  const { server } = httpServer({ errorNull: true, stream: true });
   try {
     const client = await http(server, 2000);
     try {
