@@ -5,9 +5,11 @@ import { ToolError, type Tool, type ToolResult } from "./types";
 
 /**
  * Tool `lsp` — análise de código TypeScript (definition, references, hover) via
- * API nativa do TypeScript 7 (`typescript/unstable/sync`), que conversa com o
- * compilador tsgo. O servidor é cacheado por diretório de trabalho e recriado
- * quando os arquivos mudam (assinatura de path+mtime).
+ * API do TypeScript 7 (`typescript/unstable/async`), que conversa com o
+ * compilador tsgo. A API async usa streams (compatível com Bun no Linux; a sync
+ * dependia de `stdout._handle.fd`, que o Bun não expõe em POSIX). O servidor é
+ * cacheado por diretório de trabalho e recriado quando os arquivos mudam
+ * (assinatura de path+mtime).
  */
 
 const SKIP_DIRS = new Set(["node_modules", ".git", ".astro", "dist", "coverage", ".worktrees"]);
@@ -48,7 +50,7 @@ function parseInput(input: unknown): LspInput {
   return { command, file: raw.file, line: raw.line, column: raw.column };
 }
 
-// --- Tipos estruturais mínimos da API do tsgo (typescript/unstable/sync) ---
+// --- Tipos estruturais mínimos da API do tsgo (typescript/unstable/async) ---
 
 interface AstNode {
   kind: number;
@@ -63,27 +65,27 @@ interface AstSourceFile extends AstNode {
 
 interface NodeHandle {
   readonly path: string;
-  resolve(project: unknown): AstNode | undefined;
+  resolve(project: unknown): Promise<AstNode | undefined>;
 }
 
 interface TsgoSymbol {
   readonly name: string;
-  getDocumentationComment(checker: unknown): string;
+  getDocumentationComment(checker: unknown): Promise<string>;
 }
 
 interface TsgoChecker {
-  getSymbolAtPosition(file: string, position: number): TsgoSymbol | undefined;
-  getReferencedSymbolsForNode(node: AstNode, position: number): {
+  getSymbolAtPosition(file: string, position: number): Promise<TsgoSymbol | undefined>;
+  getReferencedSymbolsForNode(node: AstNode, position: number): Promise<{
     definition: NodeHandle;
     references: readonly NodeHandle[];
-  }[];
-  getTypeOfSymbol(symbol: TsgoSymbol): unknown;
-  getSignaturesOfType(type: unknown, kind: number): readonly unknown[];
-  typeToString(type: unknown): string;
+  }[]>;
+  getTypeOfSymbol(symbol: TsgoSymbol): Promise<unknown>;
+  getSignaturesOfType(type: unknown, kind: number): Promise<readonly unknown[]>;
+  typeToString(type: unknown): Promise<string>;
 }
 
 interface TsgoProgram {
-  getSourceFile(file: string): AstSourceFile | undefined;
+  getSourceFile(file: string): Promise<AstSourceFile | undefined>;
 }
 
 interface TsgoProject {
@@ -92,15 +94,15 @@ interface TsgoProject {
 }
 
 interface TsgoSnapshot {
-  getDefaultProjectForFile(file: string): TsgoProject | undefined;
+  getDefaultProjectForFile(file: string): Promise<TsgoProject | undefined>;
 }
 
 interface TsgoApi {
-  updateSnapshot(params?: { openFiles?: string[] }): TsgoSnapshot;
-  close(): void;
+  updateSnapshot(params?: { openFiles?: string[] }): Promise<TsgoSnapshot>;
+  close(): Promise<void>;
 }
 
-interface SyncModule {
+interface AsyncModule {
   API: new (options: { cwd: string }) => TsgoApi;
   SignatureKind: { Call: number };
 }
@@ -120,19 +122,19 @@ interface LspSession {
 }
 
 const sessions = new Map<string, LspSession>();
-let syncMod: SyncModule | null = null;
+let asyncMod: AsyncModule | null = null;
 let astMod: AstModule | null = null;
 
-async function loadModules(): Promise<{ sync: SyncModule; ast: AstModule }> {
-  if (syncMod === null || astMod === null) {
-    const [sync, ast] = await Promise.all([
-      import("typescript/unstable/sync") as Promise<unknown>,
+async function loadModules(): Promise<{ api: AsyncModule; ast: AstModule }> {
+  if (asyncMod === null || astMod === null) {
+    const [api, ast] = await Promise.all([
+      import("typescript/unstable/async") as Promise<unknown>,
       import("typescript/unstable/ast") as Promise<unknown>,
     ]);
-    syncMod = sync as SyncModule;
+    asyncMod = api as AsyncModule;
     astMod = ast as AstModule;
   }
-  return { sync: syncMod, ast: astMod };
+  return { api: asyncMod, ast: astMod };
 }
 
 /** Lista todos os arquivos .ts/.tsx sob `root` (sem seguir symlinks). */
@@ -181,13 +183,13 @@ async function getSession(cwd: string): Promise<LspSession> {
     return cached;
   }
   if (cached !== undefined) {
-    cached.api.close();
+    await cached.api.close().catch(() => {});
     sessions.delete(cwd);
   }
 
-  const { sync } = await loadModules();
-  const api = new sync.API({ cwd });
-  const snapshot = api.updateSnapshot({ openFiles: files });
+  const { api: apiModule } = await loadModules();
+  const api = new apiModule.API({ cwd });
+  const snapshot = await api.updateSnapshot({ openFiles: files });
   const fileByLower = new Map<string, string>(files.map((f) => [f.toLowerCase(), f]));
   const session: LspSession = { api, snapshot, signature, fileByLower };
   sessions.set(cwd, session);
@@ -195,15 +197,13 @@ async function getSession(cwd: string): Promise<LspSession> {
 }
 
 /** Fecha todos os servidores tsgo abertos (limpeza explícita em testes). */
-export function closeLspSessions(): void {
+export async function closeLspSessions(): Promise<void> {
+  const closing: Promise<void>[] = [];
   for (const session of sessions.values()) {
-    try {
-      session.api.close();
-    } catch {
-      // sessão já morta: ignora
-    }
+    closing.push(session.api.close().catch(() => {})); // sessão já morta: ignora
   }
   sessions.clear();
+  await Promise.allSettled(closing);
 }
 
 // --- Conversão de posições ---
@@ -216,12 +216,16 @@ interface Location {
   endColumn: number;
 }
 
-function handleToLocation(session: LspSession, project: TsgoProject, handle: NodeHandle): Location | null {
+async function handleToLocation(
+  session: LspSession,
+  project: TsgoProject,
+  handle: NodeHandle,
+): Promise<Location | null> {
   const rawPath = resolve(handle.path);
   const absPath = session.fileByLower.get(rawPath.toLowerCase()) ?? rawPath;
-  const node = handle.resolve(project);
+  const node = await handle.resolve(project);
   if (node === undefined) return null;
-  const sourceFile = project.program.getSourceFile(absPath);
+  const sourceFile = await project.program.getSourceFile(absPath);
   if (sourceFile === undefined) return null;
   const start = sourceFile.getLineAndCharacterOfPosition(node.pos);
   const end = sourceFile.getLineAndCharacterOfPosition(node.end);
@@ -302,11 +306,11 @@ export const lspTool: Tool = {
       }
 
       const session = await getSession(ctx.cwd);
-      const project = session.snapshot.getDefaultProjectForFile(absPath);
+      const project = await session.snapshot.getDefaultProjectForFile(absPath);
       if (project === undefined) {
         return failure(`arquivo fora do programa TypeScript: ${parsed.file}`);
       }
-      const sourceFile = project.program.getSourceFile(absPath);
+      const sourceFile = await project.program.getSourceFile(absPath);
       if (sourceFile === undefined) {
         return failure(`arquivo fora do programa TypeScript: ${parsed.file}`);
       }
@@ -319,17 +323,17 @@ export const lspTool: Tool = {
       const position = lineStarts[lineIndex]! + (parsed.column - 1);
 
       if (parsed.command === "hover") {
-        const symbol = project.checker.getSymbolAtPosition(absPath, position);
+        const symbol = await project.checker.getSymbolAtPosition(absPath, position);
         if (symbol === undefined) {
           return { output: "" };
         }
-        const type = project.checker.getTypeOfSymbol(symbol);
-        const typeText = type === undefined ? "" : project.checker.typeToString(type);
-        const { sync } = await loadModules();
+        const type = await project.checker.getTypeOfSymbol(symbol);
+        const typeText = type === undefined ? "" : await project.checker.typeToString(type);
+        const { api } = await loadModules();
         const isCallable =
-          type !== undefined && project.checker.getSignaturesOfType(type, sync.SignatureKind.Call).length > 0;
+          type !== undefined && (await project.checker.getSignaturesOfType(type, api.SignatureKind.Call)).length > 0;
         const prefix = isCallable ? "function " : "";
-        const docs = symbol.getDocumentationComment(project.checker);
+        const docs = await symbol.getDocumentationComment(project.checker);
         const hover = docs.length > 0 ? `${prefix}${symbol.name}: ${typeText}\n\n${docs}` : `${prefix}${symbol.name}: ${typeText}`;
         return { output: hover };
       }
@@ -337,25 +341,24 @@ export const lspTool: Tool = {
       // definition e references usam o token na posição + busca de símbolos
       const { ast } = await loadModules();
       const token = ast.getTokenAtPosition(sourceFile, position);
-      const entries = project.checker.getReferencedSymbolsForNode(token, position);
+      const entries = await project.checker.getReferencedSymbolsForNode(token, position);
 
       if (parsed.command === "definition") {
-        const locations = entries
-          .map((entry) => handleToLocation(session, project, entry.definition))
-          .filter((loc): loc is Location => loc !== null);
+        const resolved = await Promise.all(
+          entries.map((entry) => handleToLocation(session, project, entry.definition)),
+        );
+        const locations = resolved.filter((loc): loc is Location => loc !== null);
         return { output: JSON.stringify(dedupeLocations(locations)) };
       }
 
       // references: definições + todas as referências, deduplicadas
-      const locations: Location[] = [];
+      const pending: Promise<Location | null>[] = [];
       for (const entry of entries) {
-        const def = handleToLocation(session, project, entry.definition);
-        if (def !== null) locations.push(def);
-        for (const ref of entry.references) {
-          const loc = handleToLocation(session, project, ref);
-          if (loc !== null) locations.push(loc);
-        }
+        pending.push(handleToLocation(session, project, entry.definition));
+        for (const ref of entry.references) pending.push(handleToLocation(session, project, ref));
       }
+      const resolved = await Promise.all(pending);
+      const locations = resolved.filter((loc): loc is Location => loc !== null);
       return { output: JSON.stringify(dedupeLocations(locations)) };
     } catch (error) {
       if (error instanceof ToolError) return failure(error.message);

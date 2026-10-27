@@ -62,15 +62,24 @@ let sandboxEnabled = false;
 let dockerProbe: Promise<boolean> | undefined;
 
 /**
- * Verifica se o binário `docker` existe e o daemon responde (`docker info`).
- * Resultado cacheado por processo.
+ * Só aceita engine Linux: no Windows o Docker Desktop pode estar em modo
+ * Windows containers, que não roda `alpine` nem suporta `--read-only`.
+ */
+export function dockerInfoSupportsLinuxContainers(output: string): boolean {
+  const [version, osType] = output.trim().split("|");
+  return (version?.trim().length ?? 0) > 0 && osType?.trim().toLowerCase() === "linux";
+}
+
+/**
+ * Verifica se o binário `docker` existe, o daemon responde (`docker info`) e o
+ * engine roda containers Linux. Resultado cacheado por processo.
  */
 export function detectDockerAvailable(): Promise<boolean> {
   if (dockerProbe === undefined) {
     dockerProbe = (async () => {
       try {
         const proc = Bun.spawn({
-          cmd: ["docker", "info", "--format", "{{.ServerVersion}}"],
+          cmd: ["docker", "info", "--format", "{{.ServerVersion}}|{{.OSType}}"],
           stdout: "pipe",
           stderr: "pipe",
           env: minimalHostEnv(),
@@ -78,7 +87,8 @@ export function detectDockerAvailable(): Promise<boolean> {
         const timer = setTimeout(() => proc.kill(), 5_000);
         try {
           const code = await proc.exited;
-          return code === 0;
+          if (code !== 0) return false;
+          return dockerInfoSupportsLinuxContainers(await new Response(proc.stdout).text());
         } finally {
           clearTimeout(timer);
         }

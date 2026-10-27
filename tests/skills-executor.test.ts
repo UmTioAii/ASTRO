@@ -152,7 +152,7 @@ test("run dirigido por skill executa read_file e run_command no loop de tools", 
       if (requests === 1) {
         return Response.json({ choices: [{ message: { content: null, tool_calls: [
           { id: "c1", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "notes.txt" }) } },
-          { id: "c2", type: "function", function: { name: "run_command", arguments: JSON.stringify({ command: "bun --version" }) } },
+          { id: "c2", type: "function", function: { name: "run_command", arguments: JSON.stringify({ command: "echo run-ok" }) } },
         ] } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
       }
       return Response.json({ choices: [{ message: { content: "pronto" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
