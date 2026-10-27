@@ -159,8 +159,12 @@ test("ledger ilegível falha antes de spawnar servidor MCP", async () => {
 test("env do servidor MCP não chega ao run_command e o PATH sobrevive", async () => {
   const dir = mkdtempSync(join(tmpdir(), "astro-mcp-env-"));
   const probe = join(dir, "probe.js");
-  writeFileSync(probe, "console.log(process.env.MCP_LEAK ?? 'VAZIO');\nconsole.log(process.env.PATH ? 'PATH-OK' : 'SEM-PATH');");
-  const { server, bodies } = mockProvider("run_command", { command: `bun ${probe}` });
+  // Sentinela no PATH: se PATH virar "segredo", o filho perde o sentinela nos dois SOs.
+  // (No Windows o Bun reinjeta o PATH do host, então "PATH existe" não prova nada.)
+  writeFileSync(probe, "console.log(process.env.MCP_LEAK ?? 'VAZIO');\nconsole.log((process.env.PATH ?? '').includes('astro-mcp-path-sentinel') ? 'PATH-SENTINEL-OK' : 'SEM-SENTINEL');");
+  const sentinelPath = `${join(dir, "astro-mcp-path-sentinel")}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
+  // execPath absoluto: o probe roda mesmo se o filho ficar sem PATH.
+  const { server, bodies } = mockProvider("run_command", { command: `${process.execPath} ${probe}` });
   try {
     const script = join(dir, "mock-server.js");
     writeFileSync(script, MOCK_SRC.trim());
@@ -168,19 +172,19 @@ test("env do servidor MCP não chega ao run_command e o PATH sobrevive", async (
     const configPath = writeConfig(dir, {
       port: server.port,
       tools: ["run_command"],
-      mcpServers: { mock: { transport: "stdio", command: "bun", args: [script], env: { PID_FILE: pidFile, MCP_LEAK: "mcp-env-SENTINEL", PATH: process.env.PATH ?? "" }, timeoutMs: 3000 } },
+      mcpServers: { mock: { transport: "stdio", command: "bun", args: [script], env: { PID_FILE: pidFile, MCP_LEAK: "mcp-env-SENTINEL", PATH: sentinelPath }, timeoutMs: 3000 } },
     });
 
     const report = await runTask({
       configPath, task: "env", cwd: dir,
-      env: { ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }), TEST_KEY: "test-key", MCP_LEAK: "mcp-env-SENTINEL" },
+      env: { PATH: sentinelPath, TEST_KEY: "test-key", MCP_LEAK: "mcp-env-SENTINEL" },
     });
 
     expect(report.final).toBe("pronto");
     const last = (bodies.at(-1) as { messages: { role: string; content: string }[] }).messages.at(-1);
     expect(last?.role).toBe("tool");
     expect(last?.content).toContain("VAZIO"); // MCP_LEAK removido do shell
-    expect(last?.content).toContain("PATH-OK"); // PATH do MCP não vira "segredo"
+    expect(last?.content).toContain("PATH-SENTINEL-OK"); // PATH do MCP não vira "segredo"
     expect(last?.content).not.toContain("mcp-env-SENTINEL");
     expect(await waitUntilDead(Number(readFileSync(pidFile, "utf8")))).toBe(true);
   } finally {
