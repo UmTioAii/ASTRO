@@ -51,9 +51,15 @@ Timeout por requisição nos três: aborta só a própria pendência; o transpor
 
 Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. `headers` pode carregar credencial literal — violação em aberto na issue #139 (interpolação de env pendente).
 
+## CLI (`astro mcp list|test`)
+
+- `astro mcp list`: conecta os habilitados e lista as tools descobertas; servidor caído vira `indisponível` e não derruba o comando.
+- `astro mcp test <server> <tool> [--args '<json>']`: executa a tool via adaptador (audit `mcp.call` sem argumentos/resposta, I-03); `isError` sai com código 1.
+- `--config <path>`: config alternativa (default: `astro.config.json`).
+
 ## Limitações e pendências
 
-Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF no sse (#116, micro-PR pendente); backoff configurável na reconexão (pendente); CLI `mcp list/test` (próxima fatia).
+Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF no sse (#116, micro-PR pendente); backoff configurável na reconexão (pendente).
 
 ## Referências
 

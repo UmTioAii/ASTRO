@@ -13,6 +13,7 @@ import { replayRun } from "./replay";
 import { runHealthCheck, runPoolHealthCheck, formatProvidersList, testProvider } from "./health";
 import { GitHubConfigRegistry } from "./config-share";
 import { runSkillsCommand } from "./skills/cli";
+import { runMcpCommand } from "./mcp/cli";
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -30,6 +31,7 @@ const USAGE = `Uso:
   bun src/cli.ts agents list [--config <path>]
   bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
   bun src/cli.ts skills <list|show|validate|install|remove|verify> [--user] [--force]
+  bun src/cli.ts mcp <list|test <server> <tool>> [--args <json>] [--config <path>]
   bun src/cli.ts --help
 
 Opções:
@@ -139,7 +141,8 @@ type ParsedCommand =
   | { kind: "handoff"; options: HandoffShowCommand }
   | { kind: "cost"; options: CostCommand }
   | { kind: "config"; options: ConfigShareCommand }
-  | { kind: "skills"; args: string[] };
+  | { kind: "skills"; args: string[] }
+  | { kind: "mcp"; args: string[] };
 
 function parseArgs(argv: string[]): ParsedCommand {
   if (argv.length === 0) {
@@ -150,7 +153,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills", "mcp"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
   }
@@ -363,6 +366,10 @@ function parseArgs(argv: string[]): ParsedCommand {
       throw new UsageError("use: agents list [--config <path>]");
     }
     return { kind: "agents", options: { action: "list", configPath } };
+  }
+
+  if (command === "mcp") {
+    return { kind: "mcp", args: rest };
   }
 
   // Skills (C1b): subcomandos e flags são validados em src/skills/cli.ts.
@@ -738,6 +745,11 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "skills") {
     return await runSkillsCommand(parsed.args);
+  }
+
+  // MCP (C2f): subcomandos e flags são validados em src/mcp/cli.ts.
+  if (parsed.kind === "mcp") {
+    return await runMcpCommand(parsed.args);
   }
 
   if (parsed.kind === "agents") {
