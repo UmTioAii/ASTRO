@@ -14,13 +14,27 @@ export interface McpToolsOptions {
   servers: Record<string, MCPServerConfig>;
   audit: AuditLike;
   /** Nomes já ocupados (builtin/plugin): tool MCP em colisão é ignorada, nunca sobrescreve. */
-  reserved?: Iterable<string>;
+  reserved: Iterable<string>;
   warn?: (message: string) => void;
 }
 
 function render(result: MCPToolResult): string {
-  const text = result.content.filter((part) => typeof part.text === "string").map((part) => part.text!);
-  return text.length > 0 ? text.join("\n") : JSON.stringify(result.content);
+  // `content` vem de servidor não confiável: parts nulas/não-objeto não podem derrubar a chamada.
+  const parts = Array.isArray(result.content)
+    ? result.content.filter((part) => typeof part === "object" && part !== null)
+    : [];
+  const text = parts.filter((part) => typeof part.text === "string").map((part) => part.text!);
+  return text.length > 0 ? text.join("\n") : JSON.stringify(parts);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function schemaObject(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : { type: "object", properties: {} };
 }
 
 function auditCall(
@@ -47,7 +61,7 @@ function auditCall(
  */
 export function mcpTools(opts: McpToolsOptions): Tool[] {
   const warn = opts.warn ?? ((message: string) => console.warn(`mcp: ${message}`));
-  const taken = new Set(opts.reserved ?? []);
+  const taken = new Set(opts.reserved);
   const tools: Tool[] = [];
 
   for (const { server, tool } of opts.registry.listTools()) {
@@ -62,13 +76,14 @@ export function mcpTools(opts: McpToolsOptions): Tool[] {
     tools.push({
       manifest: {
         name,
-        description: tool.description ?? `tool MCP ${server}/${tool.name}`,
-        parameters: tool.inputSchema ?? { type: "object", properties: {} },
+        description: nonEmptyString(tool.description) ?? `tool MCP ${server}/${tool.name}`,
+        parameters: schemaObject(tool.inputSchema),
         risk: "high", // servidor MCP é código arbitrário (modelo de confiança)
         permission: `mcp:${server}`,
-        // O transporte já aplica o timeout da config; o executor só não pode preemptá-lo.
-        timeoutMs: (config?.timeoutMs ?? 30_000) + 1_000,
-        retryable: true, // o registry reenvia uma vez após morte de transporte (at-least-once)
+        // Pior caso do registry após morte de transporte: call + initialize + tools/list + retry call.
+        timeoutMs: (config?.timeoutMs ?? 30_000) * 4 + 1_000,
+        // Tool opaca pode ter efeito colateral: não é seguro reenviar por conta própria.
+        retryable: false,
         idempotent: false,
         sideEffects: config?.transport === "stdio" ? "process" : "network",
       },
@@ -79,8 +94,10 @@ export function mcpTools(opts: McpToolsOptions): Tool[] {
         }
         try {
           const result = await opts.registry.call(server, tool.name, input as Record<string, unknown>);
-          auditCall(opts.audit, ctx, server, tool.name, started, "ok");
-          return { output: render(result), ...(result.isError === true ? { isError: true } : {}) };
+          const failed = result.isError === true;
+          const output = render(result); // antes do audit: falha de render vira um único status error
+          auditCall(opts.audit, ctx, server, tool.name, started, failed ? "error" : "ok");
+          return { output, ...(failed ? { isError: true } : {}) };
         } catch (error) {
           auditCall(opts.audit, ctx, server, tool.name, started, "error");
           throw error;
