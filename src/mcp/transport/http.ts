@@ -11,6 +11,7 @@ export class HttpTransport {
   readonly #timeoutMs: number;
   readonly #closeController = new AbortController();
   #session: string | undefined;
+  #dead = false; // sessão expirada (404 com sessão enviada): o registry reconecta com nova sessão
   #nextId = 1;
   #closed = false;
 
@@ -37,7 +38,10 @@ export class HttpTransport {
       });
       const session = response.headers.get("mcp-session-id");
       if (session !== null) this.#session = session;
-      if (!response.ok) throw new MCPError(`HTTP ${response.status} no MCP ${method}`);
+      if (!response.ok) {
+        if (response.status === 404 && this.#session !== undefined) this.#dead = true; // sessão expirada (spec streamable HTTP)
+        throw new MCPError(`HTTP ${response.status} no MCP ${method}`);
+      }
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("text/event-stream")) return await this.#readEventStream(response, id, method);
       const message = (await response.json()) as { result?: unknown; error?: { message?: string } };
@@ -89,9 +93,9 @@ export class HttpTransport {
     void fetch(this.#url, { method: "POST", headers: this.#protocolHeaders(), body: JSON.stringify({ jsonrpc: "2.0", method, params }), signal: this.#closeController.signal }).catch(() => {});
   }
 
-  /** True depois de close(); requisições pós-timeout seguem usáveis (controller por requisição). */
+  /** True depois de close() ou de sessão expirada; timeout de requisição não mata (controller por requisição). */
   get closed(): boolean {
-    return this.#closed;
+    return this.#closed || this.#dead;
   }
 
   close(): void {
