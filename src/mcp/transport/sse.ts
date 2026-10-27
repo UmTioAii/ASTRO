@@ -63,9 +63,10 @@ export class SseTransport {
 
   async #pump(response: Response): Promise<void> {
     let buffer = "";
+    const decoder = new TextDecoder(); // um por stream: recompõe UTF-8 partido entre chunks
     try {
       for await (const chunk of response.body!) {
-        buffer += new TextDecoder().decode(chunk as Uint8Array, { stream: true });
+        buffer += decoder.decode(chunk as Uint8Array, { stream: true });
         let index;
         while ((index = buffer.indexOf("\n\n")) >= 0) {
           const block = buffer.slice(0, index);
@@ -95,6 +96,7 @@ export class SseTransport {
     } catch {
       return;
     }
+    if (message === null || typeof message !== "object") return;
     if (typeof message.id !== "number") return;
     const pending = this.#pending.get(message.id);
     if (pending === undefined) return;
@@ -124,11 +126,20 @@ export class SseTransport {
         headers: { "content-type": "application/json", ...this.#headers },
         body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
         signal: this.#abort.signal,
-      }).catch((error: unknown) => {
-        this.#pending.delete(id);
-        clearTimeout(timer);
-        reject(new MCPError(`falha ao enviar no MCP: ${error instanceof Error ? error.message : String(error)}`));
-      });
+      }).then(
+        (response) => {
+          if (!response.ok) { // erro no POST falha a requisição na hora, não no timeout
+            this.#pending.delete(id);
+            clearTimeout(timer);
+            reject(new MCPError(`HTTP ${response.status} no MCP ${method}`));
+          }
+        },
+        (error: unknown) => {
+          this.#pending.delete(id);
+          clearTimeout(timer);
+          reject(new MCPError(`falha ao enviar no MCP: ${error instanceof Error ? error.message : String(error)}`));
+        },
+      );
     });
   }
 

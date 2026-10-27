@@ -40,7 +40,8 @@ export class HttpTransport {
       if (!response.ok) throw new MCPError(`HTTP ${response.status} no MCP ${method}`);
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("text/event-stream")) return await this.#readEventStream(response, id, method);
-      const message = (await response.json()) as { result?: unknown; error?: { message?: string } };
+      const message = (await response.json()) as { result?: unknown; error?: { message?: string } } | null;
+      if (message === null || typeof message !== "object") throw new MCPError("resposta do MCP não é um objeto");
       if (message.error !== undefined) throw new MCPError(message.error.message || "erro do servidor MCP");
       return message.result;
     } catch (error) {
@@ -54,11 +55,12 @@ export class HttpTransport {
     }
   }
 
-  /** Lê eventos `data:` do stream até a resposta com o id da requisição; evento não-JSON é ignorado. */
+  /** Lê eventos `data:` do stream até a resposta com o id; não-objeto e lixo entre eventos são ignorados. */
   async #readEventStream(response: Response, id: number, method: string): Promise<unknown> {
     let buffer = "";
+    const decoder = new TextDecoder(); // um por stream: recompõe UTF-8 partido entre chunks
     for await (const chunk of response.body!) {
-      buffer += new TextDecoder().decode(chunk as Uint8Array, { stream: true });
+      buffer += decoder.decode(chunk as Uint8Array, { stream: true });
       let index;
       while ((index = buffer.indexOf("\n\n")) >= 0) {
         const block = buffer.slice(0, index);
@@ -71,6 +73,7 @@ export class HttpTransport {
         } catch {
           continue; // keep-alive textual ou lixo entre eventos não derruba a requisição
         }
+        if (message === null || typeof message !== "object") continue;
         if (message.id !== id) continue;
         if (message.error !== undefined) throw new MCPError(message.error.message || "erro do servidor MCP");
         return message.result;
