@@ -44,7 +44,7 @@ Timeout por requisição nos três: aborta só a própria pendência; o transpor
 
 - `connectAll` no início do run; servidor que falhou fica indisponível e o run segue.
 - Tool `mcp__*` na allowlist que não foi descoberta é pulada com warn; não derruba a config (só tool desconhecida sem prefixo continua erro).
-- `env` explícito dos servidores MCP entra em `secretEnvNames`: o `run_command` não vê esses valores (I-03).
+- `env` explícito dos servidores MCP entra em `secretEnvNames`, exceto nomes de sistema (PATH/HOME/TEMP etc.): o `run_command` não vê os demais valores (I-03).
 - `close()` no `finally` do run, inclusive quando a sessão falha — sem processo órfão.
 
 ## Modelo de confiança
