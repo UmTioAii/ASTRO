@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lspTool, closeLspSessions } from "../src/tools/lsp";
 
-afterEach(() => {
-  closeLspSessions();
+afterEach(async () => {
+  await closeLspSessions();
 });
 
 const UTILS = `export function add(a: number, b: number): number {
