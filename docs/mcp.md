@@ -20,7 +20,7 @@ Cliente MCP (Model Context Protocol) no ASTRO (C2, #56): config `mcpServers`, tr
 |---|---|
 | `stdio` | spawn do processo; JSON-RPC por newline. **Env sanitizado** (reuso do `sanitizedEnv`): herda do host só o que não parece segredo (PATH/HOME etc.); chaves, tokens e senhas são removidos (I-03). O `env` explícito da config é adicional |
 | `http` | streamable HTTP: um POST por requisição com `mcp-session-id` mantido; resposta JSON ou evento `data:` de stream. **404 com sessão enviada = sessão expirada** → transporte morto → o registry reconecta com sessão nova. Erro de rede/5xx não mata: cada requisição é um fetch novo e se autocura |
-| `sse` | legacy: GET abre o stream e recebe o `endpoint`; POSTs fire-and-forget; respostas pelo stream, correlacionadas por id |
+| `sse` | legacy: GET abre o stream e recebe o `endpoint`; POST 2xx é fire-and-forget (respostas pelo stream, correlacionadas por id); POST não-2xx rejeita a pendência com `HTTP <status>` |
 
 Timeout por requisição nos três: aborta só a própria pendência; o transporte segue usável.
 
@@ -38,7 +38,7 @@ Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `comm
 
 ## Limitações e pendências
 
-Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF e POST com status de erro no sse (#116, migram para micro-PR próprio); backoff configurável na reconexão (política do wiring).
+Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF no sse (#116, micro-PR pendente); backoff configurável na reconexão (política do wiring).
 
 ## Referências
 
