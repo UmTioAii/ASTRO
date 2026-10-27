@@ -19,6 +19,7 @@ Objetivo: apontar o documento certo para cada tarefa.
 | `docs/roadmap-complementar.md` | Itens planejados das camadas 0–3 (F-xx, T, C, P) | ~120 |
 | `docs/providers.md` | Ao construir provider, validar credencial ou usar os SDKs | ~90 |
 | `docs/skills.md` | Ao criar, instalar, revisar ou invocar uma skill (`/<nome>`) | ~100 |
+| `docs/ci.md` | Ao mexer em workflow, investigar falha de CI ou decidir merge | ~35 |
 
 Referências usadas nos documentos:
 
