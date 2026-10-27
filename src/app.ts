@@ -22,6 +22,8 @@ import type { AuditEvent } from "./audit";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
+import { MCPRegistry } from "./mcp/registry";
+import { mcpTools } from "./mcp/tool";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
 import { runCommandTool } from "./tools/run-command";
@@ -327,16 +329,23 @@ function providerChain(
   });
 }
 /** Valida as tools pedidas pelo agente e devolve as instâncias correspondentes. */
-function resolveTools(config: AstroConfig, toolsByName: Map<string, Tool>): Tool[] {
-  return config.agent.tools.map((name) => {
+function resolveTools(
+  config: AstroConfig,
+  toolsByName: Map<string, Tool>,
+  warn?: (message: string) => void,
+): Tool[] {
+  return config.agent.tools.flatMap((name) => {
     const tool = toolsByName.get(name);
-    if (tool === undefined) {
-      throw new ConfigError(
-        `config inválida: tool "${name}" desconhecida em "agent.tools" ` +
-          `(disponíveis: ${[...toolsByName.keys()].join(", ")})`,
-      );
+    if (tool !== undefined) return [tool];
+    // Tool MCP que não conectou fica indisponível, sem derrubar a sessão (C2, #56).
+    if (name.startsWith("mcp__") && warn !== undefined) {
+      warn(`tool MCP "${name}" indisponível; seguindo sem ela`);
+      return [];
     }
-    return tool;
+    throw new ConfigError(
+      `config inválida: tool "${name}" desconhecida em "agent.tools" ` +
+        `(disponíveis: ${[...toolsByName.keys()].join(", ")})`,
+    );
   });
 }
 
@@ -451,12 +460,33 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     }
   }
 
+  // MCP (C2, #56): descoberta no início; falha individual não derruba a sessão.
+  const mcpServers = config.mcpServers ?? {};
+  for (const server of Object.values(mcpServers)) {
+    for (const name of Object.keys(server.env ?? {})) secretEnvNames.push(name);
+  }
+
   // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
   const toolsByName = new Map(TOOLS_BY_NAME);
   for (const tool of loaded.tools) {
     if (!toolsByName.has(tool.manifest.name)) toolsByName.set(tool.manifest.name, tool);
   }
-  const baseTools = resolveTools(config, toolsByName);
+  let mcpRegistry: MCPRegistry | undefined;
+  if (Object.keys(mcpServers).length > 0) {
+    mcpRegistry = new MCPRegistry({ servers: mcpServers });
+    await mcpRegistry.connectAll();
+    const warn = (message: string) => console.warn(`mcp: ${message}`);
+    for (const tool of mcpTools({ registry: mcpRegistry, servers: mcpServers, audit, reserved: toolsByName.keys(), warn })) {
+      toolsByName.set(tool.manifest.name, tool);
+    }
+  }
+  let baseTools: Tool[];
+  try {
+    baseTools = resolveTools(config, toolsByName, (message) => console.warn(`mcp: ${message}`));
+  } catch (error) {
+    mcpRegistry?.close();
+    throw error;
+  }
   const baseExecutor = new ToolExecutor({
     tools: baseTools,
     allow: config.agent.tools,
@@ -577,6 +607,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       },
     });
     throw error;
+  } finally {
+    mcpRegistry?.close(); // sem processo/cliente órfão ao fim do run
   }
 
   const total = ledger.total();

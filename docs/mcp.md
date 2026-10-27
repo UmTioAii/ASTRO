@@ -2,7 +2,7 @@ Cliente MCP (Model Context Protocol) no ASTRO (C2, #56): config `mcpServers`, tr
 
 | Cobre | Não cobre |
 |---|---|
-| Config, transports, ciclo de vida, reconexão, modelo de confiança, adaptador de tools | Detalhes do protocolo JSON-RPC (`src/mcp/`); fiação no `runTask` e CLI (próximas fatias) |
+| Config, transports, ciclo de vida, reconexão, modelo de confiança, adaptador de tools e fiação no `runTask` | Detalhes do protocolo JSON-RPC (`src/mcp/`); CLI `mcp list/test` (próxima fatia) |
 
 ## Config (`mcpServers`)
 
@@ -39,13 +39,20 @@ Timeout por requisição nos três: aborta só a própria pendência; o transpor
 - Falha da tool vira `ToolResult` de erro; o timeout do executor cobre o pior caso do retry do registry.
 - Manifesto: `risk: high`, `idempotent: false`, `retryable: false` (tool opaca) e `sideEffects` por transporte.
 
+## Fiação (`src/app.ts`)
+
+- `connectAll` no início do run; servidor que falhou fica indisponível e o run segue.
+- Tool `mcp__*` na allowlist que não foi descoberta é pulada com warn; não derruba a config (só tool desconhecida sem prefixo continua erro).
+- `env` explícito dos servidores MCP entra em `secretEnvNames`: o `run_command` não vê esses valores (I-03).
+- `close()` no `finally` do run, inclusive quando a sessão falha — sem processo órfão.
+
 ## Modelo de confiança
 
 Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. `headers` pode carregar credencial literal — violação em aberto na issue #139 (interpolação de env pendente).
 
 ## Limitações e pendências
 
-Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF no sse (#116, micro-PR pendente); backoff configurável na reconexão (política do wiring).
+Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF no sse (#116, micro-PR pendente); backoff configurável na reconexão (pendente); CLI `mcp list/test` (próxima fatia).
 
 ## Referências
 

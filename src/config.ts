@@ -671,6 +671,9 @@ function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
   const result: Record<string, MCPServerConfig> = Object.create(null);
   for (const [name, serverRaw] of Object.entries(raw)) {
     const field = `mcpServers.${name}`;
+    if (name.includes("__") || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) {
+      fail(`config inválida: "mcpServers.${name}" deve ser um nome com letras, números, "_" ou "-" (sem "__" nem "/")`);
+    }
     const raw2 = expectObject(serverRaw, field);
     const transport = raw2.transport;
     if (typeof transport !== "string" || !MCP_TRANSPORTS.includes(transport as MCPServerConfig["transport"])) {
