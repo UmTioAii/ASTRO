@@ -68,6 +68,9 @@ const TASK_HASH_LENGTH = 16;
 const TOOLS: readonly Tool[] = [readFileTool, writeFileTool, runCommandTool, handoffTool, grepTool, listDirTool, editTool, lspTool, pipelineTool];
 const TOOLS_BY_NAME = new Map(TOOLS.map((tool) => [tool.manifest.name, tool]));
 
+/** Env de sistema que o shell precisa; não são segredos, mesmo se o servidor MCP os declarar. */
+const SYSTEM_ENV = /^(PATH|PATHEXT|HOME|USERPROFILE|SYSTEMROOT|WINDIR|TEMP|TMP|TMPDIR|SHELL|COMSPEC|LANG|LC_ALL|TERM)$/i;
+
 /** Hash curto da tarefa: permite correlacionar execuções sem persistir o prompt. */
 function shortTaskHash(task: string): string {
   return createHash("sha256").update(task).digest("hex").slice(0, TASK_HASH_LENGTH);
@@ -466,7 +469,10 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   // MCP (C2, #56): descoberta no início; falha individual não derruba a sessão.
   const mcpServers = config.mcpServers ?? {};
   for (const server of Object.values(mcpServers)) {
-    for (const name of Object.keys(server.env ?? {})) secretEnvNames.push(name);
+    for (const name of Object.keys(server.env ?? {})) {
+      // PATH/HOME/etc. do MCP não são segredo e o shell precisa deles (run_command).
+      if (!SYSTEM_ENV.test(name)) secretEnvNames.push(name);
+    }
   }
 
   // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
