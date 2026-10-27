@@ -97,13 +97,13 @@ export class SseTransport {
       return;
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return; // null/array/número: ignora
-    const message = parsed as { id?: number; result?: unknown; error?: { message?: string } };
+    const message = parsed as { id?: number; result?: unknown; error?: { message?: string } | null };
     if (typeof message.id !== "number") return;
     const pending = this.#pending.get(message.id);
     if (pending === undefined) return;
     this.#pending.delete(message.id);
     clearTimeout(pending.timer);
-    if (message.error !== undefined) pending.reject(new MCPError(message.error.message || "erro do servidor MCP"));
+    if (message.error != null) pending.reject(new MCPError(message.error.message || "erro do servidor MCP")); // `error: null` = sucesso
     else pending.resolve(message.result);
   }
 

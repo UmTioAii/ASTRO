@@ -44,8 +44,8 @@ export class HttpTransport {
       }
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("text/event-stream")) return await this.#readEventStream(response, id, method);
-      const message = (await response.json()) as { result?: unknown; error?: { message?: string } };
-      if (message.error !== undefined) throw new MCPError(message.error.message || "erro do servidor MCP");
+      const message = (await response.json()) as { result?: unknown; error?: { message?: string } | null };
+      if (message.error != null) throw new MCPError(message.error.message || "erro do servidor MCP"); // `error: null` = sucesso
       return message.result;
     } catch (error) {
       if (error instanceof MCPError) throw error;
@@ -77,9 +77,9 @@ export class HttpTransport {
           continue; // keep-alive textual ou lixo entre eventos não derruba a requisição
         }
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue; // null/array/número: ignora
-        const message = parsed as { id?: number; result?: unknown; error?: { message?: string } };
+        const message = parsed as { id?: number; result?: unknown; error?: { message?: string } | null };
         if (message.id !== id) continue;
-        if (message.error !== undefined) throw new MCPError(message.error.message || "erro do servidor MCP");
+        if (message.error != null) throw new MCPError(message.error.message || "erro do servidor MCP"); // `error: null` = sucesso
         return message.result;
       }
     }
