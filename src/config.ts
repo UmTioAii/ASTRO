@@ -141,6 +141,19 @@ export interface HandoffConfig {
 /** Default do timeout de ack (F-24, D-15). */
 export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
 
+/** Servidor MCP (C2, #56): o `command` do stdio é código arbitrário — modelo de confiança na doc. */
+export interface MCPServerConfig {
+  transport: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  /** Variáveis explícitas para o servidor; o resto do env é sanitizado (I-03). */
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  timeoutMs: number;
+  enabled: boolean;
+}
+
 export interface PathsConfig {
   ledger: string;
   audit: string;
@@ -168,6 +181,8 @@ export interface AstroConfig {
   handoff?: HandoffConfig;
   /** Tabela de preços global (C6): key `provider/model-id` sobrescreve `model.price` para custo. */
   pricing?: Record<string, PriceConfig>;
+  /** Servidores MCP (C2, #56): key é o nome usado no namespace mcp__<server>__<tool>. */
+  mcpServers?: Record<string, MCPServerConfig>;
   paths: PathsConfig;
 }
 
@@ -638,6 +653,64 @@ function validateHandoff(value: unknown): HandoffConfig {
   };
 }
 
+const MCP_TRANSPORTS: readonly MCPServerConfig["transport"][] = ["stdio", "sse", "http"];
+
+/** Valida um registro de strings (env/headers de mcpServers). */
+function stringRecord(raw: Record<string, unknown>, field: string): Record<string, string> {
+  const out = Object.create(null) as Record<string, string>;
+  for (const [key, val] of Object.entries(raw)) {
+    if (typeof val !== "string") fail(`config inválida: "${field}.${key}" deve ser string`);
+    out[key] = val;
+  }
+  return out;
+}
+
+/** Valida a seção `mcpServers` (C2, #56); defaults timeoutMs 30000 e enabled true. */
+function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
+  const raw = expectObject(value, "mcpServers");
+  const result: Record<string, MCPServerConfig> = Object.create(null);
+  for (const [name, serverRaw] of Object.entries(raw)) {
+    const field = `mcpServers.${name}`;
+    const raw2 = expectObject(serverRaw, field);
+    const transport = raw2.transport;
+    if (typeof transport !== "string" || !MCP_TRANSPORTS.includes(transport as MCPServerConfig["transport"])) {
+      fail(`config inválida: "${field}.transport" deve ser stdio, sse ou http`);
+    }
+    const trans = transport as MCPServerConfig["transport"];
+    if (raw2.command !== undefined && typeof raw2.command !== "string") {
+      fail(`config inválida: "${field}.command" deve ser string`);
+    }
+    if (trans === "stdio" && (raw2.command === undefined || (raw2.command as string).trim() === "")) {
+      fail(`config inválida: "${field}.command" obrigatório para transport stdio`);
+    }
+    if (trans !== "stdio" && (raw2.url === undefined || typeof raw2.url !== "string")) {
+      fail(`config inválida: "${field}.url" obrigatório para transport ${trans}`);
+    }
+    let args: string[] = [];
+    if (raw2.args !== undefined) {
+      if (!Array.isArray(raw2.args) || raw2.args.some((arg) => typeof arg !== "string")) {
+        fail(`config inválida: "${field}.args" deve ser uma lista de strings`);
+      }
+      args = raw2.args as string[];
+    }
+    const env = raw2.env === undefined ? undefined : stringRecord(expectObject(raw2.env, `${field}.env`), `${field}.env`);
+    const headers = raw2.headers === undefined ? undefined : stringRecord(expectObject(raw2.headers, `${field}.headers`), `${field}.headers`);
+    const timeoutMs = raw2.timeoutMs === undefined ? 30_000 : expectPositiveInteger(raw2.timeoutMs, `${field}.timeoutMs`);
+    const enabled = raw2.enabled === undefined ? true : expectBoolean(raw2.enabled, `${field}.enabled`);
+    result[name] = {
+      transport: trans,
+      ...(raw2.command === undefined ? {} : { command: raw2.command as string }),
+      args,
+      ...(env === undefined ? {} : { env }),
+      ...(raw2.url === undefined ? {} : { url: raw2.url as string }),
+      ...(headers === undefined ? {} : { headers }),
+      timeoutMs,
+      enabled,
+    };
+  }
+  return result;
+}
+
 /** Valida a seção opcional `telemetry` (F5-5): off por default, sem PII. */
 function validateTelemetry(value: unknown): TelemetryConfig {
   const raw = expectObject(value, "telemetry");
@@ -776,9 +849,12 @@ export function validateConfig(raw: unknown): AstroConfig {
   // Handoff (F-24): timeout do ack com default seguro (D-15)
   const handoff = validateHandoff(root.handoff);
 
+  // Servidores MCP (C2, #56): ausente = nenhum servidor
+  const mcpServers = root.mcpServers === undefined ? undefined : validateMcpServers(root.mcpServers);
+
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, ...(pricing === undefined ? {} : { pricing }), paths };
+  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */

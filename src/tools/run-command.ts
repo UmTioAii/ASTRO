@@ -16,7 +16,7 @@ function secretKey(name: string): string {
   return process.platform === "win32" ? name.toLowerCase() : name;
 }
 
-function sanitizedEnv(
+export function sanitizedEnv(
   source: NodeJS.ProcessEnv,
   secretEnvNames: readonly string[] = [],
 ): Record<string, string> {
