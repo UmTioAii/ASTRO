@@ -1,31 +1,54 @@
 import type { MCPServerConfig } from "../config";
 import { MCPError, type MCPServerInfo, type MCPToolDescriptor, type MCPToolResult } from "./types";
 import { StdioTransport } from "./transport/stdio";
+import { HttpTransport } from "./transport/http";
+import { SseTransport } from "./transport/sse";
+
+/** Contrato comum dos transports (C2b): request/notify/close. */
+export interface MCPTransport {
+  request(method: string, params: Record<string, unknown>): Promise<unknown>;
+  notify(method: string, params: Record<string, unknown>): void;
+  close(): void;
+}
 
 /**
- * Cliente MCP (C2a, #56): ciclo de vida connect/disconnect por servidor,
+ * Cliente MCP (C2, #56): ciclo de vida connect/disconnect por servidor,
  * handshake `initialize`, descoberta `tools/list` e chamada `tools/call`
- * com o timeout da config. Transport stdio; http/sse entram na C2b.
+ * com o timeout da config. Transports: stdio, http (streamable) e sse (legacy).
  */
 export class MCPClient {
   readonly serverInfo: MCPServerInfo;
-  readonly #transport: { request: StdioTransport["request"]; close: () => void };
+  readonly #transport: MCPTransport;
 
-  private constructor(serverInfo: MCPServerInfo, transport: { request: StdioTransport["request"]; close: () => void }) {
+  private constructor(serverInfo: MCPServerInfo, transport: MCPTransport) {
     this.serverInfo = serverInfo;
     this.#transport = transport;
   }
 
   static async connect(server: MCPServerConfig): Promise<MCPClient> {
-    if (server.transport !== "stdio") {
-      throw new MCPError(`transport "${server.transport}" ainda não suportado (C2b)`);
+    let transport: MCPTransport;
+    if (server.transport === "stdio") {
+      transport = StdioTransport.connect({
+        command: server.command!,
+        args: server.args ?? [],
+        ...(server.env === undefined ? {} : { env: server.env }),
+        timeoutMs: server.timeoutMs,
+      });
+    } else if (server.transport === "http") {
+      transport = new HttpTransport({
+        url: server.url!,
+        ...(server.headers === undefined ? {} : { headers: server.headers }),
+        timeoutMs: server.timeoutMs,
+      });
+    } else if (server.transport === "sse") {
+      transport = await SseTransport.connect({
+        url: server.url!,
+        ...(server.headers === undefined ? {} : { headers: server.headers }),
+        timeoutMs: server.timeoutMs,
+      });
+    } else {
+      throw new MCPError(`transport "${server.transport}" não suportado`);
     }
-    const transport = StdioTransport.connect({
-      command: server.command!,
-      args: server.args ?? [],
-      ...(server.env === undefined ? {} : { env: server.env }),
-      timeoutMs: server.timeoutMs,
-    });
     let result: { serverInfo?: MCPServerInfo };
     try {
       result = (await transport.request("initialize", {
