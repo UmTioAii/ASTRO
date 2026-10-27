@@ -92,6 +92,11 @@ export class HttpTransport {
     void fetch(this.#url, { method: "POST", headers: this.#protocolHeaders(), body: JSON.stringify({ jsonrpc: "2.0", method, params }), signal: this.#closeController.signal }).catch(() => {});
   }
 
+  /** True depois de close(); requisições pós-timeout seguem usáveis (controller por requisição). */
+  get closed(): boolean {
+    return this.#closed;
+  }
+
   close(): void {
     this.#closed = true;
     this.#closeController.abort();

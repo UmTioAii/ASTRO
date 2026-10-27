@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MCPClient } from "../src/mcp/client";
 import { MCPRegistry, mcpToolName } from "../src/mcp/registry";
 
 const STUB = `
+import { appendFileSync } from "node:fs";
 process.stdin.setEncoding("utf8");
 let buffer = "";
 process.stdin.on("data", (chunk) => {
@@ -16,9 +17,14 @@ process.stdin.on("data", (chunk) => {
     buffer = buffer.slice(index + 1);
     if (line.trim().length === 0) continue;
     const msg = JSON.parse(line);
-    if (msg.method === "initialize") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "stdio-registry", version: "1" } } }) + "\\n");
-    else if (msg.method === "tools/list") process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "echo" }] } }) + "\\n");
-    else process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "stdio-ok" }] } }) + "\\n");
+    const reply = (payload) => process.stdout.write(JSON.stringify(payload) + "\\n");
+    if (msg.method === "initialize") {
+      if (process.env.STARTUP_FILE !== undefined) appendFileSync(process.env.STARTUP_FILE, "x");
+      reply({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "stdio-registry", version: "1" } } });
+    } else if (msg.method === "tools/list") reply({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "echo" }, { name: "boom" }, { name: "suicide" }] } });
+    else if (msg.params?.name === "boom") reply({ jsonrpc: "2.0", id: msg.id, error: { message: "boom ferramenta" } });
+    else if (msg.params?.name === "suicide") process.exit(1);
+    else reply({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "stdio-ok" }] } });
   }
 });
 `;
@@ -47,7 +53,9 @@ test("registry conecta com isolamento, namespace e cache invalidável", async ()
   expect(report.failed.map((info) => info.server)).toEqual(["morto"]);
   expect(warnings.join("\n")).toMatch(/morto/);
 
-  expect(registry.listTools()).toEqual([{ server: "fs", tool: { name: "echo" } }]);
+  expect(registry.listTools()).toEqual([
+    { server: "fs", tool: { name: "echo" } }, { server: "fs", tool: { name: "boom" } }, { server: "fs", tool: { name: "suicide" } },
+  ]);
   expect(mcpToolName("fs", "echo")).toBe("mcp__fs__echo");
 
   expect((await registry.call("fs", "echo", {})).content[0]!.text).toBe("stdio-ok");
@@ -58,6 +66,36 @@ test("registry conecta com isolamento, namespace e cache invalidável", async ()
   registry.invalidate("fs");
   expect(registry.listTools()).toEqual([]);
   registry.close();
+});
+
+test("erro de tool não reconecta nem reexecuta; morte do servidor reconecta uma vez", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-mcpreg2-"));
+  const startupFile = join(dir, "startups");
+  const script = join(dir, "server.js");
+  writeFileSync(script, STUB.trim());
+  const registry = new MCPRegistry({
+    servers: { fs: { transport: "stdio", command: "bun", args: [script], timeoutMs: 3000, enabled: true, env: { STARTUP_FILE: startupFile } } },
+    warn: () => {},
+  });
+  const startups = () => (existsSync(startupFile) ? readFileSync(startupFile, "utf8").length : 0);
+
+  await registry.connectAll();
+  expect(startups()).toBe(1);
+
+  // erro de tool (JSON-RPC error): propaga sem reconexão; assert via .then (expect.rejects afoga stdout no bun/win)
+  const caught = await registry.call("fs", "boom", {}).then(() => "resolvido", (error: Error) => error.message);
+  expect(caught).toMatch(/boom ferramenta/);
+  expect(startups()).toBe(1);
+  expect((await registry.call("fs", "echo", {})).content[0]!.text).toBe("stdio-ok");
+
+  // morte do processo na chamada: reconecta uma vez e segue
+  await expect(registry.call("fs", "suicide", {})).rejects.toThrow(/encerrou|indisponível/);
+  expect(startups()).toBe(2);
+  expect((await registry.call("fs", "echo", {})).content[0]!.text).toBe("stdio-ok");
+
+  // registro fechado não ressuscita servidor
+  registry.close();
+  await expect(registry.call("fs", "echo", {})).rejects.toThrow(/fechado/);
 });
 
 /** Mock de servidor streamable HTTP com modos de defeito e controle de chunking. */
@@ -111,17 +149,13 @@ test("transport http: POST não-2xx, corpo null e evento null não derrubam a re
   const nullBody = httpMock({ nullBody: true });
   try {
     const client = await http(nullBody.server, 2000);
-    try {
-      await expect(client.listTools()).rejects.toThrow(/resposta do MCP/);
-    } finally { client.close(); }
+    try { await expect(client.listTools()).rejects.toThrow(/resposta do MCP/); } finally { client.close(); }
   } finally { nullBody.server.stop(true); }
 
   const nullEvent = httpMock({ nullEvent: true });
   try {
     const client = await http(nullEvent.server, 2000);
-    try {
-      expect((await client.callTool("echo", {})).content[0]!.text).toBe("ação:2"); // evento null é ignorado
-    } finally { client.close(); }
+    try { expect((await client.callTool("echo", {})).content[0]!.text).toBe("ação:2"); } finally { client.close(); }
   } finally { nullEvent.server.stop(true); }
 });
 
