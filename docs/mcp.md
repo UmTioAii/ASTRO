@@ -18,7 +18,7 @@ Cliente MCP (Model Context Protocol) no ASTRO (C2, #56): config `mcpServers`, tr
 
 | Transport | Semântica |
 |---|---|
-| `stdio` | spawn do processo; JSON-RPC por newline. **Env sanitizado** (reuso do `sanitizedEnv`: o servidor não vê chaves do host — I-03); só o `env` explícito da config chega |
+| `stdio` | spawn do processo; JSON-RPC por newline. **Env sanitizado** (reuso do `sanitizedEnv`): herda do host só o que não parece segredo (PATH/HOME etc.); chaves, tokens e senhas são removidos (I-03). O `env` explícito da config é adicional |
 | `http` | streamable HTTP: um POST por requisição com `mcp-session-id` mantido; resposta JSON ou evento `data:` de stream. **404 com sessão enviada = sessão expirada** → transporte morto → o registry reconecta com sessão nova. Erro de rede/5xx não mata: cada requisição é um fetch novo e se autocura |
 | `sse` | legacy: GET abre o stream e recebe o `endpoint`; POSTs fire-and-forget; respostas pelo stream, correlacionadas por id |
 
@@ -28,7 +28,7 @@ Timeout por requisição nos três: aborta só a própria pendência; o transpor
 
 - Namespace da tool vista pelo modelo: `mcp__<server>__<tool>` (validação de colisão entra no wiring).
 - `connectAll` com isolamento: falha individual vira warn + `failed`, não derruba os demais.
-- `call`: erro de tool (protocolo, transporte vivo) propaga cru, **sem reexecução**; morte de transporte reconecta **uma vez** (dedup por servidor; concorrentes compartilham a tentativa).
+- `call`: erro de tool (protocolo, transporte vivo) propaga cru, **sem reexecução**; morte de transporte reconecta **uma vez** (dedup por servidor; concorrentes compartilham a tentativa) e reenvia o `tools/call` — a tool pode executar duas vezes (at-least-once).
 - `close` é terminal: `call`/`connectAll` pós-`close` rejeitam "registro MCP fechado" e nada spawna depois.
 - Ciclo de vida sem órfãos: todo cliente descartado é fechado antes; reconexão em voo respeta `close()`.
 
@@ -42,4 +42,4 @@ Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF e P
 
 ## Referências
 
-#56, PRs #115/#116/#117, issues #112 e #139; I-01/I-03/I-04 em `docs/invariants.md`; D-02 (zero deps), D-09 (auditoria na fatia final).
+#56, PRs #115/#116/#117 e issue #139; I-01/I-03/I-04 em `docs/invariants.md`; D-02 (zero deps), D-09 (auditoria na fatia final).
