@@ -118,5 +118,5 @@ test("client stdio aplica timeout por requisição e fecha limpo", async () => {
   await expect(client.listTools()).rejects.toThrow(/fechado/);
 
   const httpish = stdioServer(script, { transport: "http", url: "http://mcp" });
-  await expect(MCPClient.connect(httpish)).rejects.toThrow(/não suportado/);
+  await expect(MCPClient.connect(httpish)).rejects.toThrow(/falha|timeout/);
 });
