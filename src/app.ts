@@ -460,6 +460,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     }
   }
 
+  // Baseline antes de qualquer conexão MCP: ledger ilegível não pode deixar filho vivo.
+  const baseline = ledger.total();
+
   // MCP (C2, #56): descoberta no início; falha individual não derruba a sessão.
   const mcpServers = config.mcpServers ?? {};
   for (const server of Object.values(mcpServers)) {
@@ -493,7 +496,6 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     audit,
   });
 
-  const baseline = ledger.total();
   const startedAt = Date.now();
   // Tracing OTLP (F6-2): habilitado por OTEL_EXPORTER_OTLP_ENDPOINT
   const tracer = tracerFromEnv(env);
