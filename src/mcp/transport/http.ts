@@ -9,9 +9,10 @@ export class HttpTransport {
   readonly #url: string;
   readonly #headers: Record<string, string>;
   readonly #timeoutMs: number;
-  readonly #abort = new AbortController();
+  readonly #closeController = new AbortController();
   #session: string | undefined;
   #nextId = 1;
+  #closed = false;
 
   constructor(opts: { url: string; headers?: Record<string, string>; timeoutMs: number }) {
     this.#url = opts.url;
@@ -20,19 +21,19 @@ export class HttpTransport {
   }
 
   async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (this.#closed) throw new MCPError("transport MCP fechado");
     const id = this.#nextId++;
-    const timer = setTimeout(() => this.#abort.abort(), this.#timeoutMs);
+    // Um controller por requisição: timeout só aborta a própria; close aborta todas.
+    const requestAbort = new AbortController();
+    const onClose = () => requestAbort.abort();
+    this.#closeController.signal.addEventListener("abort", onClose);
+    const timer = setTimeout(() => requestAbort.abort(), this.#timeoutMs);
     try {
       const response = await fetch(this.#url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          ...this.#headers,
-          ...(this.#session === undefined ? {} : { "mcp-session-id": this.#session }),
-        },
+        headers: this.#protocolHeaders(),
         body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-        signal: this.#abort.signal,
+        signal: requestAbort.signal,
       });
       const session = response.headers.get("mcp-session-id");
       if (session !== null) this.#session = session;
@@ -40,18 +41,20 @@ export class HttpTransport {
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("text/event-stream")) return await this.#readEventStream(response, id, method);
       const message = (await response.json()) as { result?: unknown; error?: { message?: string } };
-      if (message.error !== undefined) throw new MCPError(message.error.message ?? "erro do servidor MCP");
+      if (message.error !== undefined) throw new MCPError(message.error.message || "erro do servidor MCP");
       return message.result;
     } catch (error) {
       if (error instanceof MCPError) throw error;
-      if (this.#abort.signal.aborted) throw new MCPError(`timeout de ${this.#timeoutMs}ms no MCP ${method}`);
+      if (this.#closed) throw new MCPError("transport MCP fechado");
+      if (requestAbort.signal.aborted) throw new MCPError(`timeout de ${this.#timeoutMs}ms no MCP ${method}`);
       throw new MCPError(`falha ao conectar no MCP: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       clearTimeout(timer);
+      this.#closeController.signal.removeEventListener("abort", onClose);
     }
   }
 
-  /** Lê eventos `data:` do stream até a resposta com o id da requisição. */
+  /** Lê eventos `data:` do stream até a resposta com o id da requisição; evento não-JSON é ignorado. */
   async #readEventStream(response: Response, id: number, method: string): Promise<unknown> {
     let buffer = "";
     for await (const chunk of response.body!) {
@@ -62,30 +65,32 @@ export class HttpTransport {
         buffer = buffer.slice(index + 2);
         const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("");
         if (data.length === 0) continue;
-        const message = JSON.parse(data) as { id?: number; result?: unknown; error?: { message?: string } };
+        let message: { id?: number; result?: unknown; error?: { message?: string } };
+        try {
+          message = JSON.parse(data) as typeof message;
+        } catch {
+          continue; // keep-alive textual ou lixo entre eventos não derruba a requisição
+        }
         if (message.id !== id) continue;
-        if (message.error !== undefined) throw new MCPError(message.error.message ?? "erro do servidor MCP");
+        if (message.error !== undefined) throw new MCPError(message.error.message || "erro do servidor MCP");
         return message.result;
       }
     }
     throw new MCPError(`stream do MCP ${method} encerrou sem resposta`);
   }
 
+  #protocolHeaders(): Record<string, string> {
+    return { "content-type": "application/json", accept: "application/json, text/event-stream", ...this.#headers, ...(this.#session === undefined ? {} : { "mcp-session-id": this.#session }) };
+  }
+
   notify(method: string, params: Record<string, unknown>): void {
+    if (this.#closed) return;
     // Notificação JSON-RPC não tem id e não aguarda resposta (melhor-esforço).
-    void fetch(this.#url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...this.#headers,
-        ...(this.#session === undefined ? {} : { "mcp-session-id": this.#session }),
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", method, params }),
-      signal: this.#abort.signal,
-    }).catch(() => {});
+    void fetch(this.#url, { method: "POST", headers: this.#protocolHeaders(), body: JSON.stringify({ jsonrpc: "2.0", method, params }), signal: this.#closeController.signal }).catch(() => {});
   }
 
   close(): void {
-    this.#abort.abort();
+    this.#closed = true;
+    this.#closeController.abort();
   }
 }

@@ -28,24 +28,11 @@ export class MCPClient {
   static async connect(server: MCPServerConfig): Promise<MCPClient> {
     let transport: MCPTransport;
     if (server.transport === "stdio") {
-      transport = StdioTransport.connect({
-        command: server.command!,
-        args: server.args ?? [],
-        ...(server.env === undefined ? {} : { env: server.env }),
-        timeoutMs: server.timeoutMs,
-      });
+      transport = StdioTransport.connect({ command: server.command!, args: server.args ?? [], ...(server.env === undefined ? {} : { env: server.env }), timeoutMs: server.timeoutMs });
     } else if (server.transport === "http") {
-      transport = new HttpTransport({
-        url: server.url!,
-        ...(server.headers === undefined ? {} : { headers: server.headers }),
-        timeoutMs: server.timeoutMs,
-      });
+      transport = new HttpTransport({ url: server.url!, ...(server.headers === undefined ? {} : { headers: server.headers }), timeoutMs: server.timeoutMs });
     } else if (server.transport === "sse") {
-      transport = await SseTransport.connect({
-        url: server.url!,
-        ...(server.headers === undefined ? {} : { headers: server.headers }),
-        timeoutMs: server.timeoutMs,
-      });
+      transport = await SseTransport.connect({ url: server.url!, ...(server.headers === undefined ? {} : { headers: server.headers }), timeoutMs: server.timeoutMs });
     } else {
       throw new MCPError(`transport "${server.transport}" não suportado`);
     }

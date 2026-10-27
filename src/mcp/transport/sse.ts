@@ -8,8 +8,7 @@ interface Pending {
 
 /**
  * Transport SSE legacy do MCP (#56): GET abre o stream e recebe o evento
- * `endpoint` com a URL de POST; requisições são POSTs fire-and-forget e as
- * respostas chegam pelo stream, correlacionadas por id.
+ * `endpoint`; respostas chegam pelo stream, correlacionadas por id.
  */
 export class SseTransport {
   readonly #baseUrl: string;
@@ -32,8 +31,9 @@ export class SseTransport {
     const endpointReady = new Promise<void>((resolve, reject) => {
       transport.#endpointTimer = setTimeout(() => {
         transport.#endpointTimer = undefined;
+        transport.#endpointTimeoutError = new MCPError(`timeout de ${opts.timeoutMs}ms aguardando endpoint SSE`);
         transport.#abort.abort(); // encerra o fetch/stream pendente junto
-        reject(new MCPError(`timeout de ${opts.timeoutMs}ms aguardando endpoint SSE`));
+        reject(transport.#endpointTimeoutError);
       }, opts.timeoutMs);
       transport.#onEndpoint = () => {
         if (transport.#endpointTimer !== undefined) clearTimeout(transport.#endpointTimer);
@@ -49,6 +49,7 @@ export class SseTransport {
     } catch (error) {
       if (transport.#endpointTimer !== undefined) clearTimeout(transport.#endpointTimer);
       transport.close();
+      if (transport.#endpointTimeoutError !== undefined) throw transport.#endpointTimeoutError;
       if (error instanceof MCPError) throw error;
       throw new MCPError(`falha ao conectar no MCP SSE: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -58,6 +59,7 @@ export class SseTransport {
 
   #onEndpoint: () => void = () => {};
   #endpointTimer: ReturnType<typeof setTimeout> | undefined;
+  #endpointTimeoutError: MCPError | undefined;
 
   async #pump(response: Response): Promise<void> {
     let buffer = "";
@@ -98,16 +100,13 @@ export class SseTransport {
     if (pending === undefined) return;
     this.#pending.delete(message.id);
     clearTimeout(pending.timer);
-    if (message.error !== undefined) pending.reject(new MCPError(message.error.message ?? "erro do servidor MCP"));
+    if (message.error !== undefined) pending.reject(new MCPError(message.error.message || "erro do servidor MCP"));
     else pending.resolve(message.result);
   }
 
   #failAll(error: MCPError): void {
     this.#closed = true;
-    for (const pending of this.#pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
+    for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
     this.#pending.clear();
   }
 
@@ -135,16 +134,8 @@ export class SseTransport {
 
   notify(method: string, params: Record<string, unknown>): void {
     if (this.#closed || this.#endpoint === undefined) return;
-    void fetch(this.#endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...this.#headers },
-      body: JSON.stringify({ jsonrpc: "2.0", method, params }),
-      signal: this.#abort.signal,
-    }).catch(() => {});
+    void fetch(this.#endpoint, { method: "POST", headers: { "content-type": "application/json", ...this.#headers }, body: JSON.stringify({ jsonrpc: "2.0", method, params }), signal: this.#abort.signal }).catch(() => {});
   }
 
-  close(): void {
-    this.#abort.abort();
-    this.#failAll(new MCPError("transport MCP fechado"));
-  }
+  close(): void { this.#abort.abort(); this.#failAll(new MCPError("transport MCP fechado")); }
 }
