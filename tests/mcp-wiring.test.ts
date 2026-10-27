@@ -51,23 +51,25 @@ async function waitUntilDead(pid: number): Promise<boolean> {
   return false;
 }
 
-/** Provider OpenAI-compat falso: grava as tools recebidas e responde um tool_call. */
-function mockProvider() {
+/** Provider OpenAI-compat falso: grava as tools e os bodies recebidos e responde um tool_call. */
+function mockProvider(toolName = "mcp__mock__echo", args: Record<string, unknown> = { text: "ARG-SENTINEL-7731" }) {
   let calls = 0;
   const toolsSeen: string[][] = [];
+  const bodies: unknown[] = [];
   const server = Bun.serve({
     port: 0,
     fetch: async (req) => {
       if (req.headers.get("authorization") !== "Bearer test-key") return new Response("no auth", { status: 401 });
       const body = (await req.json()) as { tools?: { function: { name: string } }[] };
       toolsSeen.push((body.tools ?? []).map((tool) => tool.function.name));
+      bodies.push(body);
       calls++;
       return Response.json(calls === 1
-        ? { choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "mcp__mock__echo", arguments: JSON.stringify({ text: "ARG-SENTINEL-7731" }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2 } }
+        ? { choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: toolName, arguments: JSON.stringify(args) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2 } }
         : { choices: [{ message: { content: "pronto" } }], usage: { prompt_tokens: 6, completion_tokens: 1 } });
     },
   });
-  return { server, toolsSeen };
+  return { server, toolsSeen, bodies };
 }
 
 function writeConfig(dir: string, extra: Record<string, unknown>): string {
@@ -152,4 +154,58 @@ test("ledger ilegível falha antes de spawnar servidor MCP", async () => {
   const error = (await runTask({ configPath, task: "x", cwd: dir, env: { TEST_KEY: "test-key" } }).catch((e) => e)) as Error;
   expect(error).toBeInstanceOf(Error);
   expect(existsSync(pidFile)).toBe(false); // baseline antes do connect: nada spawnou
+});
+
+test("env do servidor MCP não chega ao run_command e o PATH sobrevive", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-mcp-env-"));
+  const probe = join(dir, "probe.js");
+  writeFileSync(probe, "console.log(process.env.MCP_LEAK ?? 'VAZIO');\nconsole.log(process.env.PATH ? 'PATH-OK' : 'SEM-PATH');");
+  const { server, bodies } = mockProvider("run_command", { command: `bun ${probe}` });
+  try {
+    const script = join(dir, "mock-server.js");
+    writeFileSync(script, MOCK_SRC.trim());
+    const pidFile = join(dir, "pid");
+    const configPath = writeConfig(dir, {
+      port: server.port,
+      tools: ["run_command"],
+      mcpServers: { mock: { transport: "stdio", command: "bun", args: [script], env: { PID_FILE: pidFile, MCP_LEAK: "mcp-env-SENTINEL", PATH: process.env.PATH ?? "" }, timeoutMs: 3000 } },
+    });
+
+    const report = await runTask({
+      configPath, task: "env", cwd: dir,
+      env: { ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }), TEST_KEY: "test-key", MCP_LEAK: "mcp-env-SENTINEL" },
+    });
+
+    expect(report.final).toBe("pronto");
+    const last = (bodies.at(-1) as { messages: { role: string; content: string }[] }).messages.at(-1);
+    expect(last?.role).toBe("tool");
+    expect(last?.content).toContain("VAZIO"); // MCP_LEAK removido do shell
+    expect(last?.content).toContain("PATH-OK"); // PATH do MCP não vira "segredo"
+    expect(last?.content).not.toContain("mcp-env-SENTINEL");
+    expect(await waitUntilDead(Number(readFileSync(pidFile, "utf8")))).toBe(true);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("resolveTools falhando ainda fecha o servidor MCP", async () => {
+  const { server } = mockProvider();
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "astro-mcp-close-"));
+    const script = join(dir, "mock-server.js");
+    writeFileSync(script, MOCK_SRC.trim());
+    const pidFile = join(dir, "pid");
+    const configPath = writeConfig(dir, {
+      port: server.port,
+      tools: ["mcp__mock__echo", "ghost"],
+      mcpServers: { mock: { transport: "stdio", command: "bun", args: [script], env: { PID_FILE: pidFile }, timeoutMs: 3000 } },
+    });
+
+    const error = (await runTask({ configPath, task: "x", cwd: dir, env: { TEST_KEY: "test-key" } }).catch((e) => e)) as Error;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("ghost");
+    expect(await waitUntilDead(Number(readFileSync(pidFile, "utf8")))).toBe(true); // catch fecha
+  } finally {
+    server.stop(true);
+  }
 });
