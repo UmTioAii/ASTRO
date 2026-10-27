@@ -13,6 +13,7 @@ Cliente MCP (Model Context Protocol) no ASTRO (C2, #56): config `mcpServers`, tr
 | `url` + `headers` | `url` obrigatória em sse/http | — |
 | `timeoutMs` | inteiro positivo, por requisição | `30000` |
 | `enabled` | booleano; `false` fica fora do registry | `true` |
+| nome (`mcpServers.<nome>`) | `[A-Za-z0-9][A-Za-z0-9_-]*`, sem `__` (separador do namespace) nem `/` | — |
 
 ## Transports (`src/mcp/transport/`)
 
