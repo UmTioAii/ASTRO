@@ -137,5 +137,10 @@ export class SseTransport {
     void fetch(this.#endpoint, { method: "POST", headers: { "content-type": "application/json", ...this.#headers }, body: JSON.stringify({ jsonrpc: "2.0", method, params }), signal: this.#abort.signal }).catch(() => {});
   }
 
+  /** True quando o stream acabou, o endpoint abortou ou o transport foi fechado. */
+  get closed(): boolean {
+    return this.#closed;
+  }
+
   close(): void { this.#abort.abort(); this.#failAll(new MCPError("transport MCP fechado")); }
 }

@@ -4,11 +4,12 @@ import { StdioTransport } from "./transport/stdio";
 import { HttpTransport } from "./transport/http";
 import { SseTransport } from "./transport/sse";
 
-/** Contrato comum dos transports (C2b): request/notify/close. */
+/** Contrato comum dos transports (C2b): request/notify/close; `closed` diz se o transporte morreu. */
 export interface MCPTransport {
   request(method: string, params: Record<string, unknown>): Promise<unknown>;
   notify(method: string, params: Record<string, unknown>): void;
   close(): void;
+  readonly closed: boolean;
 }
 
 /**
@@ -25,6 +26,10 @@ export class MCPClient {
     this.#transport = transport;
   }
 
+  /** True quando o transporte morreu (processo encerrou, stream acabou, close). */
+  get closed(): boolean {
+    return this.#transport.closed;
+  }
   static async connect(server: MCPServerConfig): Promise<MCPClient> {
     let transport: MCPTransport;
     if (server.transport === "stdio") {
