@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateConfig, ConfigError } from "../src/config";
-import { runCommandTool, configureRunCommand, detectDockerAvailable } from "../src/tools/run-command";
+import { runCommandTool, configureRunCommand, detectDockerAvailable, dockerInfoSupportsLinuxContainers } from "../src/tools/run-command";
 
 const ctx = (cwd: string) => ({ cwd, run: "r1", agent: "coder" });
 
@@ -39,6 +39,14 @@ describe("run_command sandbox (F4-6)", () => {
     configureRunCommand({ sandbox: false });
   });
 
+  test("detecção só aceita engine Linux (Windows containers não rodam alpine/--read-only)", () => {
+    expect(dockerInfoSupportsLinuxContainers("24.0.7|linux\n")).toBe(true);
+    expect(dockerInfoSupportsLinuxContainers("24.0.7|windows\n")).toBe(false);
+    expect(dockerInfoSupportsLinuxContainers("|linux")).toBe(false);
+    expect(dockerInfoSupportsLinuxContainers("24.0.7")).toBe(false);
+    expect(dockerInfoSupportsLinuxContainers("")).toBe(false);
+  });
+
   test("sandbox=false: executa normalmente (comportamento atual)", async () => {
     configureRunCommand({ sandbox: false });
     const cwd = mkdtempSync(join(tmpdir(), "astro-sb-"));
@@ -61,7 +69,7 @@ describe("run_command sandbox (F4-6)", () => {
       expect(result.isError).toBeFalsy();
       expect(result.output).toContain("ok");
     }
-  });
+  }, 60_000);
 
   test("sandbox=true: detecção de Docker é cacheada", async () => {
     const first = await detectDockerAvailable();
@@ -107,5 +115,5 @@ describe("run_command sandbox (F4-6)", () => {
       ctx(cwd),
     );
     expect(envProbe.output).toContain("vazio");
-  });
+  }, 60_000);
 });
