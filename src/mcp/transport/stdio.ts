@@ -98,5 +98,10 @@ export class StdioTransport {
     if (!this.#closed && this.#proc !== undefined) this.#proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   }
 
+  /** True depois que o processo encerrou ou o transport foi fechado. */
+  get closed(): boolean {
+    return this.#closed;
+  }
+
   close(): void { this.#failAll(new MCPError("transport MCP fechado")); this.#proc?.stdin?.end(); this.#proc?.kill(); }
 }
