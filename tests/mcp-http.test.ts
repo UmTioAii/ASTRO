@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { MCPClient } from "../src/mcp/client";
 
 /** Servidor MCP streamable HTTP de mentira: POST JSON-RPC responde JSON simples. */
-function httpServer(opts: { delayMs?: number; stream?: boolean; non2xx?: boolean; badData?: boolean } = {}) {
+function httpServer(opts: { delayMs?: number; stream?: boolean; non2xx?: boolean; badData?: boolean; utf8Stream?: boolean; errorNull?: boolean } = {}) {
   const posts: { method: string; id: number }[] = [];
   const server = Bun.serve({
     port: 0,
@@ -17,6 +17,24 @@ function httpServer(opts: { delayMs?: number; stream?: boolean; non2xx?: boolean
       if (body.method === "tools/list") {
         if (opts.delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, opts.delayMs));
         return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "echo", description: "Eco HTTP" }] } });
+      }
+      if (opts.errorNull === true) {
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: `http:${body.id}` }] }, error: null });
+      }
+      if (opts.utf8Stream === true) {
+        const frame = `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "café-日本" }] } })}\n\n`;
+        const bytes = new TextEncoder().encode(frame);
+        const at = bytes.findIndex((byte, index) => byte === 0xc3 && bytes[index + 1] === 0xa9);
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(bytes.slice(0, at + 1));
+              // segundo chunk em outro tick: garante que o transporte veja dois chunks (não coalescidos)
+              setTimeout(() => controller.enqueue(bytes.slice(at + 1)), 15);
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
       }
       if (opts.stream === true) {
         const message = JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: `http:${body.id}` }] } });
@@ -188,5 +206,44 @@ test("transport sse rejeita POST não-2xx com o status sem esperar timeout", asy
     );
     for (let attempt = 0; attempt < 20 && posts.length === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 50));
     expect(await outcome).toMatch(/HTTP 500/);
+  } finally { server.stop(true); }
+});
+
+test("transport http preserva UTF-8 dividido entre chunks", async () => {
+  const { server } = httpServer({ utf8Stream: true });
+  try {
+    const client = await http(server, 2000);
+    try {
+      expect((await client.callTool("echo", {})).content[0]!.text).toBe("café-日本");
+    } finally { client.close(); }
+  } finally { server.stop(true); }
+});
+
+test("transport http trata error null como sucesso", async () => {
+  const { server } = httpServer({ errorNull: true });
+  try {
+    const client = await http(server, 2000);
+    try {
+      expect((await client.callTool("echo", {})).content[0]!.text).toBe("http:2");
+    } finally { client.close(); }
+  } finally { server.stop(true); }
+});
+
+test("transport sse trata error null como sucesso", async () => {
+  const { server, posts, respond } = sseServer();
+  try {
+    const connectPromise = sse(server, 2000);
+    for (let attempt = 0; attempt < 20 && posts.length === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 50));
+    respond({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "sse-mock", version: "1" } } });
+    const client = await connectPromise;
+    try {
+      // `error: null` é usado por servidores no sucesso; não pode pendurar a chamada
+      const outcome = client.callTool("echo", {}).then(
+        (result) => result.content[0]!.text,
+        (error: Error) => `erro: ${error.message}`,
+      );
+      respond({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "sse-ok" }] }, error: null });
+      expect(await Promise.race([outcome, new Promise<string>((resolve) => setTimeout(() => resolve("pendurou"), 500))])).toBe("sse-ok");
+    } finally { client.close(); }
   } finally { server.stop(true); }
 });
