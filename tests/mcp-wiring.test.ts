@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runTask } from "../src/app";
@@ -20,6 +20,7 @@ test("config rejeita nome de servidor MCP com separador do namespace", () => {
   expect(() => configWith({ "a__b": { transport: "stdio", command: "x" } })).toThrow(/"mcpServers.a__b"/);
   expect(() => configWith({ "a/b": { transport: "stdio", command: "x" } })).toThrow(/"mcpServers.a\/b"/);
   expect(configWith({ "filesystem-1": { transport: "stdio", command: "x" } }).mcpServers!["filesystem-1"]).toBeDefined();
+  expect(configWith({ a_b: { transport: "stdio", command: "x" } }).mcpServers!.a_b).toBeDefined();
 });
 
 const MOCK_SRC = `
@@ -62,7 +63,7 @@ function mockProvider() {
       toolsSeen.push((body.tools ?? []).map((tool) => tool.function.name));
       calls++;
       return Response.json(calls === 1
-        ? { choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "mcp__mock__echo", arguments: JSON.stringify({ text: "oi" }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2 } }
+        ? { choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "mcp__mock__echo", arguments: JSON.stringify({ text: "ARG-SENTINEL-7731" }) } }] } }], usage: { prompt_tokens: 5, completion_tokens: 2 } }
         : { choices: [{ message: { content: "pronto" } }], usage: { prompt_tokens: 6, completion_tokens: 1 } });
     },
   });
@@ -103,7 +104,7 @@ test("runTask descobre a tool MCP, expõe pela allowlist e fecha o servidor", as
     expect(audit).toContain('"server":"mock"');
     expect(audit).toContain('"status":"ok"');
     expect(audit).not.toContain("test-key"); // I-03: nem a chave do provider nem eco do argumento
-    expect(audit).not.toContain("oi");
+    expect(audit).not.toContain("ARG-SENTINEL-7731");
     expect(await waitUntilDead(Number(readFileSync(pidFile, "utf8")))).toBe(true);
   } finally {
     server.stop(true);
@@ -112,6 +113,7 @@ test("runTask descobre a tool MCP, expõe pela allowlist e fecha o servidor", as
 
 test("servidor MCP indisponível não derruba a sessão; tool sai da allowlist com warn", async () => {
   const { server, toolsSeen } = mockProvider();
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
     const dir = mkdtempSync(join(tmpdir(), "astro-mcp-broken-"));
     const configPath = writeConfig(dir, {
@@ -124,10 +126,30 @@ test("servidor MCP indisponível não derruba a sessão; tool sai da allowlist c
 
     expect(report.final).toBe("pronto"); // falha isolada: o run completa (critério de aceite)
     expect(toolsSeen[0]).not.toContain("mcp__broken__echo");
+    expect(warn.mock.calls.flat().join(" ")).toContain("mcp__broken__echo");
     const audit = readFileSync(join(dir, ".astro", "audit.jsonl"), "utf8");
     expect(audit).not.toContain("mcp.call");
     expect(audit).not.toContain("test-key");
   } finally {
+    warn.mockRestore();
     server.stop(true);
   }
+});
+
+test("ledger ilegível falha antes de spawnar servidor MCP", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-mcp-ledger-"));
+  const script = join(dir, "mock-server.js");
+  writeFileSync(script, MOCK_SRC.trim());
+  const pidFile = join(dir, "pid");
+  mkdirSync(join(dir, ".astro"), { recursive: true });
+  writeFileSync(join(dir, ".astro", "ledger.jsonl"), "{quebrado\n");
+  const configPath = writeConfig(dir, {
+    port: 1,
+    tools: [],
+    mcpServers: { mock: { transport: "stdio", command: "bun", args: [script], env: { PID_FILE: pidFile }, timeoutMs: 3000 } },
+  });
+
+  const error = (await runTask({ configPath, task: "x", cwd: dir, env: { TEST_KEY: "test-key" } }).catch((e) => e)) as Error;
+  expect(error).toBeInstanceOf(Error);
+  expect(existsSync(pidFile)).toBe(false); // baseline antes do connect: nada spawnou
 });
