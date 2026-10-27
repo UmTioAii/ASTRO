@@ -116,12 +116,6 @@ export class MCPRegistry {
     }
   }
 
-  /** Descarta o cache de tools de um servidor (invalidação em reconexão). */
-  invalidate(server: string): void {
-    const state = this.#states.get(server);
-    if (state !== undefined) state.tools = [];
-  }
-
   /** Fecha todos os clientes; o registro não aceita mais chamadas. */
   close(): void {
     this.#closed = true;
