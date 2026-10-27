@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { MCPClient } from "../src/mcp/client";
 
 /** Servidor MCP streamable HTTP de mentira: POST JSON-RPC responde JSON simples. */
-function httpServer(opts: { delayMs?: number; stream?: boolean } = {}) {
+function httpServer(opts: { delayMs?: number; stream?: boolean; non2xx?: boolean } = {}) {
   const posts: { method: string; id: number }[] = [];
   const server = Bun.serve({
     port: 0,
@@ -12,6 +12,7 @@ function httpServer(opts: { delayMs?: number; stream?: boolean } = {}) {
       if (body.method === "initialize") {
         return Response.json({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "http-mock", version: "1" } } }, { headers: { "mcp-session-id": "sess-1" } });
       }
+      if (opts.non2xx === true) return new Response(null, { status: 500 });
       if (req.headers.get("mcp-session-id") !== "sess-1") return Response.json({ jsonrpc: "2.0", id: body.id, error: { message: "sessão inválida" } }, { status: 404 });
       if (body.method === "tools/list") {
         if (opts.delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, opts.delayMs));
@@ -80,8 +81,17 @@ test("transport http sobrevive a timeout de requisição sem matar o transport",
     try {
       await expect(client.listTools()).rejects.toThrow(/timeout/);
       expect((await client.callTool("echo", {})).content[0]!.text).toBe("http:3"); // recupera após o timeout
-      client.close();
-      await expect(client.callTool("echo", {})).rejects.toThrow(/fechado/);
+      client.close(); await expect(client.callTool("echo", {})).rejects.toThrow(/fechado/);
+    } finally { client.close(); }
+  } finally { server.stop(true); }
+});
+
+test("transport http reporta HTTP não-2xx com o status", async () => {
+  const { server } = httpServer({ non2xx: true });
+  try {
+    const client = await http(server, 2000);
+    try {
+      await expect(client.listTools()).rejects.toThrow(/HTTP 500 no MCP tools\/list/);
     } finally { client.close(); }
   } finally { server.stop(true); }
 });
