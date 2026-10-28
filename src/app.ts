@@ -84,7 +84,7 @@ export interface RunReport {
   budget?: BudgetStatus;
   /** Agente de onde o run foi retomado (`resume`); ausente em run novo. */
   resumedFrom?: string;
-  /** Histórico após o turno (T1): inclui tool calls e o assistant final. */
+  /** Histórico após o turno (T1): inclui tool calls, **sem** o assistant final (a sessão anexa). */
   messages?: ChatMessage[];
 }
 
@@ -450,6 +450,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         };
   const audit = new Auditor(auditPath, ...(onEvent === undefined ? [] : [{ onEvent }]));
 
+  if (opts.runId !== undefined && opts.resume !== undefined) {
+    throw new ConfigError("runId e resume são mutuamente exclusivos");
+  }
   const run = opts.runId ?? opts.resume ?? randomUUID();
   /** Gate auditado (F-19): sem approver do caller a decisão é "pending" (não bloqueia TTY). */
   const approveSwap: SwapApprover = async (request) => {
@@ -667,8 +670,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     // Skills (C1c): /<nome> vira o prompt da skill; tools da skill ⊆ allowlist (I-01); falha fecha o run
     const task = resolveTaskSkill(opts.task, { cwd, allow: config.agent.tools, audit, run, agent: AGENT_NAME,
       ...(opts.skillsUserRoot === undefined ? {} : { userRoot: opts.skillsUserRoot }) });
-    // Se há agents configurados, usa multi-agent session (chat é single-agent)
-    if (opts.history === undefined && config.agents && Object.keys(config.agents).length > 0) {
+    // Se há agents configurados, usa multi-agent session (chat/histórico e
+    // override de modelo são single-agent)
+    if (opts.history === undefined && opts.model === undefined && config.agents && Object.keys(config.agents).length > 0) {
       const entryAgent = resumed?.agent.agent_id ?? config.agent.entryAgent ?? "planner";
       const multiOpts: MultiAgentSessionOptions = {
         run,

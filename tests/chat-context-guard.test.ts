@@ -27,8 +27,8 @@ describe("context guard do chat (T1, #62)", () => {
   test("acima de 100% descarta o turno mais antigo inteiro, preservando o system", () => {
     const messages = [sys, ...turn("antigo", "resposta-antiga"), ...turn("atual", "resposta-atual")];
     const trimmed = trimOldestTurn(messages)!;
-    expect(trimmed[0]).toEqual(sys);
-    expect(trimmed.map((m) => m.content)).not.toContain("antigo");
+    expect(trimmed).toEqual([sys, { role: "user", content: "atual" }, { role: "assistant", content: "resposta-atual" }]);
+    expect(trimmed.map((m) => m.content)).not.toContain("resposta-antiga");
     expect(trimmed.map((m) => m.content)).toContain("atual");
 
     const guard = guardContext(messages, 1);
@@ -45,5 +45,26 @@ describe("context guard do chat (T1, #62)", () => {
     const guard = guardContext(messages, 1);
     expect(guard.messages.map((m) => m.content)).toContain("único");
     expect(guard.trimmed).toBe(false);
+  });
+
+  test("funciona sem system no início (descarta o turno mais antigo mesmo assim)", () => {
+    const messages = [...turn("u1", "a1"), ...turn("u2", "a2")];
+    const trimmed = trimOldestTurn(messages)!;
+    expect(trimmed.map((m) => m.content)).toEqual(["u2", "a2"]);
+  });
+
+  test("fronteiras exatas: 80% avisa, 100% não descarta, acima descarta", () => {
+    const at80 = [sys, { role: "user" as const, content: "a".repeat(20) }, { role: "assistant" as const, content: "b".repeat(8) }];
+    expect(guardContext(at80, 10).warning).toBe(true); // 8/10
+    const at100 = [sys, { role: "user" as const, content: "a".repeat(20) }, { role: "assistant" as const, content: "b".repeat(16) }];
+    expect(guardContext(at100, 10).trimmed).toBe(false); // exatamente 10
+    const over = [sys, ...turn("a".repeat(20), "b".repeat(20)), ...turn("atual", "r")];
+    expect(guardContext(over, 10).trimmed).toBe(true);
+  });
+
+  test("context=0 avisa e descarta, sem ratio zerado", () => {
+    const guard = guardContext([sys, ...turn("a".repeat(20), "b".repeat(20))], 0);
+    expect(guard.warning).toBe(true);
+    expect(guard.ratio).toBeGreaterThan(0);
   });
 });

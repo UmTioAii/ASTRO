@@ -28,7 +28,7 @@ export interface GuardedContext {
 
 /** Descarta o turno mais antigo (user..antes do próximo user); null se não há turno inteiro. */
 export function trimOldestTurn(messages: readonly ChatMessage[]): ChatMessage[] | null {
-  const start = messages.findIndex((message, index) => index > 0 && message.role === "user");
+  const start = messages.findIndex((message) => message.role === "user");
   if (start < 0) return null;
   const next = messages.findIndex((message, index) => index > start && message.role === "user");
   if (next < 0) return null;
@@ -47,7 +47,7 @@ export function guardContext(messages: readonly ChatMessage[], contextTokens: nu
     trimmed = true;
   }
   const tokens = estimateMessagesTokens(current);
-  const ratio = contextTokens > 0 ? originalTokens / contextTokens : 0;
+  const ratio = originalTokens / Math.max(1, contextTokens);
   return {
     messages: current,
     tokens,

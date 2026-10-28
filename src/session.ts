@@ -195,12 +195,18 @@ export async function runSession(
     "run",
     { agent: redactSecrets(opts.agent), model: `${opts.model.provider}/${opts.model.id}`, run: redactSecrets(opts.run) },
   );
-  const messages: ChatMessage[] = opts.history === undefined
+  // Histórico de chat sempre começa com system: sem ele, usa o prompt da config
+  const history = opts.history === undefined
+    ? undefined
+    : opts.history[0]?.role === "system"
+      ? opts.history
+      : [{ role: "system" as const, content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT }, ...opts.history];
+  const messages: ChatMessage[] = history === undefined
     ? [
         { role: "system", content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
         { role: "user", content: task },
       ]
-    : [...opts.history, { role: "user", content: task }];
+    : [...history, { role: "user", content: task }];
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step. */
   const journal = new CallJournal();
   const knownAgents = opts.knownAgents ?? [];
