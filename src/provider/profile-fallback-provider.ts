@@ -79,6 +79,8 @@ export class ProfileFallbackProvider implements Provider {
         return { ...response, provider: response.provider ?? entry.provider, model: response.model ?? entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
         if (isAbortError(error, signal)) throw error;
+        // Negação de troca é terminal (I-08): não vira hop para o próximo profile
+        if (error instanceof SwapDeniedError) throw error;
         lastError = error;
         const errorClass: ErrorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
         lastReason = errorClass;

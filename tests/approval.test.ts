@@ -64,6 +64,34 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
     expect(second).toBe(0);
   });
 
+  test("negação vinda do provider interno é terminal (não vira hop)", async () => {
+    const denied = () => new SwapDeniedError(
+      { run: "r1", from: { provider: "a" }, to: { provider: "b" }, reason: "x" }, "denied",
+    );
+    let fallbackCalls = 0;
+    const fallbackProvider = new FallbackProvider({
+      providers: [
+        { name: "a", priority: 1, create: () => ({ complete: async () => { throw denied(); } }) },
+        { name: "b", priority: 2, create: () => ({ complete: async () => { fallbackCalls++; return resp("b"); } }) },
+      ],
+      maxRetries: 0,
+    });
+    await expect(fallbackProvider.complete({ model: "m", messages: [] })).rejects.toBeInstanceOf(SwapDeniedError);
+    expect(fallbackCalls).toBe(0);
+
+    let profileCalls = 0;
+    const profileProvider = new ProfileFallbackProvider({
+      base: { complete: async () => { profileCalls++; return resp("base"); } },
+      profiles: [
+        { name: "p1", model: "m1", provider: "a", fallback: ["p2"], create: () => ({ complete: async () => { throw denied(); } }) },
+        { name: "p2", model: "m2", provider: "b", fallback: [], create: () => ({ complete: async () => { profileCalls++; return resp("p2"); } }) },
+      ],
+      approveSwap: () => true,
+    });
+    await expect(profileProvider.complete({ model: "m1", messages: [], profile: "p1" })).rejects.toBeInstanceOf(SwapDeniedError);
+    expect(profileCalls).toBe(0);
+  });
+
   test("runTask sem TTY: pending, audit e interrupted; fallback não executa", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "astro-approval-"));
     let fallbackCalls = 0;

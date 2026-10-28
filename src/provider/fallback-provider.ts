@@ -92,6 +92,8 @@ export class FallbackProvider implements Provider {
           return { ...response, provider: entry.name, model: response.model ?? req.model };
         } catch (error) {
           if (isAbortError(error, signal)) throw error;
+          // Negação de troca é terminal (I-08): não tenta o próximo provider
+          if (error instanceof SwapDeniedError) throw error;
           lastError = error;
           const errorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
           lastClass = errorClass;
