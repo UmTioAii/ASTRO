@@ -48,6 +48,8 @@ Secrets never live in config files and are never logged: `openai-compat` keys co
 | `pricing` | `Record<"provider/model-id", PriceConfig>` overriding `model.price` | absent | `src/registry.ts` |
 | `quota` | per-domain `{ dailyTokens?, monthlyCostUsd? }` | no enforcement | `src/quota.ts` |
 | `team` | `{ projectBudgetUsd?, agentQuotas?, auditWebhook? }` | — | `src/team.ts` |
+| `budget` | `{ scope: day\|month\|project\|use-as-you-go, limitUsd, warnAt?, onExceed?, hardCeilingUsd? }` | absent (schema only until #132 parts 2–4) | `src/config.ts` |
+| `run` | `{ maxTurns?: positive int \| "unlimited" }` (`unlimited` exige `limitUsd` ou `hardCeilingUsd`; cap nunca eleva `agent.maxSteps`) | `agent.maxSteps` | `src/config.ts` |
 | `tools` | `{ run_command: { sandbox } }` | `sandbox: false` | `src/tools/run-command.ts` |
 | `cache` | `{ enabled, ttlHours, maxEntries }` | off; 24h; 10000 | `src/cache.ts` |
 | `telemetry` | `{ enabled, endpoint, sampleRate }` | off | `src/telemetry.ts` |

@@ -15,7 +15,7 @@ I-17 exige corte físico de custo; quota (`src/quota.ts`, por `quotaDomain`) e o
 
 **Escopos sem segundo contador.** `day`/`month` integram `quota.ts`, `project` integra `team.ts` (`projectBudgetUsd`); o mais restritivo vence. Use-as-you-go (`limitUsd: null`) registra e exibe, nunca bloqueia (B2); preço ausente exibe "n/d", nunca zero (B6); leitura de assinatura vem com health/C6 (B7).
 
-**Aviso e esgotamento (B3, B4).** Aviso em `warnAt` e no esgotamento; o prompt oferece três opções — continuar no mesmo esforço, baixar esforço, parar — e a escolha vira `budget.exceeded_choice`. Sem TTY, `ask` nunca bloqueia: grava checkpoint (L5, ADR-0014), para e registra `budget_exceeded_non_interactive`.
+**Aviso e esgotamento (B3, B4).** Aviso em `warnAt` e no esgotamento; o prompt oferece três opções - continuar no mesmo esforço, baixar esforço, parar - e a escolha vira `budget.exceeded_choice`. `onExceed: "stop"` para sem perguntar. Sem TTY, `ask` nunca bloqueia: grava checkpoint (L5, ADR-0014), para e registra `budget_exceeded_non_interactive`.
 
 **Corte físico (B10, I-17).** `hardCeilingUsd` atingido → para independente de `onExceed` e registra `budget.ceiling_hit`.
 

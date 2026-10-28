@@ -126,6 +126,30 @@ export interface CacheConfig {
   maxEntries: number;
 }
 
+/** Escopo do budget (B1, D-CFG1). */
+export type BudgetScope = "day" | "month" | "project" | "use-as-you-go";
+
+/** Ação no esgotamento (B4): perguntar (com checkpoint sem TTY) ou parar. */
+export type BudgetOnExceed = "ask" | "stop";
+
+/** Budget (B1–B10, I-17): escopo, aviso, decisão e corte físico. */
+export interface BudgetConfig {
+  scope: BudgetScope;
+  /** null = use-as-you-go (B2): registra e exibe, nunca bloqueia. */
+  limitUsd: number | null;
+  /** Fração de aviso (0 < warnAt < 1); default 0.8. */
+  warnAt: number;
+  /** Default "ask". */
+  onExceed: BudgetOnExceed;
+  /** Corte físico (B10, I-17); ausente = sem teto absoluto. */
+  hardCeilingUsd?: number;
+}
+
+/** Seção `run` (Q-01/L2): teto de turnos por execução. */
+export interface RunConfig {
+  maxTurns?: number | "unlimited";
+}
+
 /** Team features (F7-5): budget do projeto, quotas por agent, webhook de auditoria. */
 export interface TeamSectionConfig {
   projectBudgetUsd?: number;
@@ -172,6 +196,10 @@ export interface AstroConfig {
   telemetry?: TelemetryConfig;
   /** Limites por quotaDomain (F6-3). */
   quota?: Record<string, QuotaLimitConfig>;
+  /** Budget (B1–B10, I-17); ausente = sem camada de budget. */
+  budget?: BudgetConfig;
+  /** Seção `run` (Q-01): `maxTurns` numérico ou "unlimited". */
+  run?: RunConfig;
   cache?: CacheConfig;
   /** Caminhos ou pacotes de plugins a carregar (F7-1). */
   plugins?: string[];
@@ -648,6 +676,50 @@ function validateTeam(value: unknown): TeamSectionConfig {
   return result;
 }
 
+const BUDGET_SCOPES: readonly BudgetScope[] = ["day", "month", "project", "use-as-you-go"];
+
+/** Valida a seção opcional `budget` (B1, D-CFG1) — cada campo é non-discard. */
+function validateBudget(value: unknown): BudgetConfig {
+  const raw = expectObject(value, "budget");
+  const scope = raw.scope;
+  if (!BUDGET_SCOPES.includes(scope as BudgetScope)) {
+    fail('config inválida: "budget.scope" deve ser day, month, project ou use-as-you-go');
+  }
+  if (!Object.hasOwn(raw, "limitUsd")) {
+    fail('config inválida: "budget.limitUsd" é obrigatório (use null para use-as-you-go)');
+  }
+  let limitUsd: number | null;
+  if (scope === "use-as-you-go") {
+    if (raw.limitUsd !== null) fail('config inválida: "budget.limitUsd" deve ser null em scope "use-as-you-go"');
+    limitUsd = null;
+  } else {
+    if (raw.limitUsd === null) fail(`config inválida: "budget.limitUsd" não pode ser null em scope "${scope}"`);
+    limitUsd = expectNonNegativeNumber(raw.limitUsd, "budget.limitUsd");
+  }
+  const warnAt = raw.warnAt === undefined ? 0.8 : expectNonNegativeNumber(raw.warnAt, "budget.warnAt");
+  if (warnAt <= 0 || warnAt >= 1) fail('config inválida: "budget.warnAt" deve estar entre 0 e 1 (exclusivo)');
+  const onExceed = raw.onExceed === undefined ? "ask" : raw.onExceed;
+  if (onExceed !== "ask" && onExceed !== "stop") fail('config inválida: "budget.onExceed" deve ser "ask" ou "stop"');
+  const hardCeilingUsd =
+    raw.hardCeilingUsd === undefined
+      ? undefined
+      : expectNonNegativeNumber(raw.hardCeilingUsd, "budget.hardCeilingUsd");
+  return {
+    scope: scope as BudgetScope,
+    limitUsd,
+    warnAt,
+    onExceed,
+    ...(hardCeilingUsd === undefined ? {} : { hardCeilingUsd }),
+  };
+}
+
+/** Valida a seção opcional `run` (Q-01): inteiro positivo ou "unlimited". */
+function validateRun(value: unknown): RunConfig {
+  const raw = expectObject(value, "run");
+  if (raw.maxTurns === undefined) return {};
+  return { maxTurns: raw.maxTurns === "unlimited" ? "unlimited" : expectPositiveInteger(raw.maxTurns, "run.maxTurns") };
+}
+
 /** Valida a seção `handoff` (F-24); ausente aplica o default 30000ms (D-15). */
 function validateHandoff(value: unknown): HandoffConfig {
   const raw = value === undefined ? {} : expectObject(value, "handoff");
@@ -862,12 +934,23 @@ export function validateConfig(raw: unknown): AstroConfig {
   // Handoff (F-24): timeout do ack com default seguro (D-15)
   const handoff = validateHandoff(root.handoff);
 
+  // Budget (B1–B10) e run.maxTurns (Q-01/L2)
+  const budget = root.budget === undefined ? undefined : validateBudget(root.budget);
+  const run = root.run === undefined ? undefined : validateRun(root.run);
+  if (
+    run?.maxTurns === "unlimited" &&
+    budget?.hardCeilingUsd === undefined &&
+    (budget === undefined || budget.limitUsd === null)
+  ) {
+    fail('config inválida: run.maxTurns "unlimited" exige budget.hardCeilingUsd ou budget.limitUsd (unlimited_without_ceiling)');
+  }
+
   // Servidores MCP (C2, #56): ausente = nenhum servidor
   const mcpServers = root.mcpServers === undefined ? undefined : validateMcpServers(root.mcpServers);
 
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
+  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
