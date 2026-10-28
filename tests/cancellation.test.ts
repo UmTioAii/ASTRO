@@ -3,13 +3,15 @@ import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
+import { CompletionCache, cachedProvider } from "../src/cache";
 import { Ledger } from "../src/ledger";
 import { FallbackProvider } from "../src/provider/fallback-provider";
 import { ProfileFallbackProvider } from "../src/provider/profile-fallback-provider";
 import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
-import type { ModelEntry } from "../src/registry";
+import type { AgentEntry, ModelEntry } from "../src/registry";
 import { runTask } from "../src/app";
-import { runSession, type SessionOptions } from "../src/session";
+import { runMultiAgentSession, runSession, type MultiAgentSessionOptions, type SessionOptions } from "../src/session";
+import { handoffTool } from "../src/tools/handoff";
 import { writeFileTool } from "../src/tools/write-file";
 import { ToolExecutor } from "../src/tools/executor";
 
@@ -172,6 +174,38 @@ describe("cancelamento explícito (F-06, #127)", () => {
     expect(secondCalls).toBe(0);
   });
 
+  test("abort não é retry: ProfileFallbackProvider para no profile atual e não aciona o fallback", async () => {
+    const controller = new AbortController();
+    let firstCalls = 0;
+    let secondCalls = 0;
+    const aborting: Provider = {
+      complete: async (_req, signal) => {
+        firstCalls++;
+        controller.abort(new Error("cancelado pelo SDK"));
+        throw signal?.reason ?? new DOMException("Abortado", "AbortError");
+      },
+    };
+    const second: Provider = {
+      complete: async () => {
+        secondCalls++;
+        return resp({ content: "não deveria executar" });
+      },
+    };
+    const provider = new ProfileFallbackProvider({
+      base: second,
+      profiles: [
+        { name: "p1", model: "m1", provider: "a", fallback: ["p2"], create: () => aborting },
+        { name: "p2", model: "m2", provider: "b", fallback: [], create: () => second },
+      ],
+    });
+
+    await expect(
+      provider.complete({ model: "m1", messages: [], profile: "p1" }, controller.signal),
+    ).rejects.toBeDefined();
+    expect(firstCalls).toBe(1);
+    expect(secondCalls).toBe(0);
+  });
+
   test("reason customizada de abort é tratada como cancelamento (cancelled)", async () => {
     const { opts } = setup([
       () => new Promise<never>((_, reject) => {
@@ -214,6 +248,113 @@ describe("cancelamento explícito (F-06, #127)", () => {
 
     await expect(runSession(opts, "escreva")).rejects.toBeDefined();
     expect(existsSync(join(cwd, "nao-deve-existir.txt"))).toBe(false);
+    const interrupted = ledger.readStates().find((s) => s.state === "interrupted");
+    expect(interrupted).toBeDefined();
+    expect(interrupted!.reason).toBe("cancelled");
+  });
+
+  test("cache: signal abortado não serve hit nem grava resposta (F-06)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-cancel-cache-"));
+    const cache = new CompletionCache(join(cwd, "cache.db"));
+    let hits = 0;
+    let calls = 0;
+    const inner: Provider = {
+      complete: async () => {
+        calls++;
+        return resp({ content: "resposta" });
+      },
+    };
+    const wrapped = cachedProvider(inner, {
+      cache, ttlHours: 24, maxEntries: 10, onHit: () => { hits++; },
+    });
+
+    // Popula o cache
+    await wrapped.complete({ model: "m", messages: [{ role: "user", content: "oi" }] });
+    expect(cache.count()).toBe(1);
+
+    // Hit com signal já abortado não é servido
+    const controller = new AbortController();
+    controller.abort(new Error("cancelado"));
+    await expect(
+      wrapped.complete({ model: "m", messages: [{ role: "user", content: "oi" }] }, controller.signal),
+    ).rejects.toBeDefined();
+    expect(hits).toBe(0);
+
+    // Provider que ignora o signal: resposta não é gravada
+    const controller2 = new AbortController();
+    const ignoring: Provider = {
+      complete: async () => {
+        calls++;
+        controller2.abort(new Error("cancelado"));
+        return resp({ content: "não deveria ser cacheada" });
+      },
+    };
+    const wrapped2 = cachedProvider(ignoring, { cache, ttlHours: 24, maxEntries: 10 });
+    await expect(
+      wrapped2.complete({ model: "m", messages: [{ role: "user", content: "outro" }] }, controller2.signal),
+    ).rejects.toBeDefined();
+    expect(cache.count()).toBe(1); // só a entrada original
+  });
+
+  test("multi-agent: abort no subagent não executa tools nem grava handoff.failed", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-cancel-multi-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const controller = new AbortController();
+
+    const agents: Record<string, AgentEntry> = {
+      planner: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff"] },
+      coder: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff", "write_file"] },
+    };
+    const registry = {
+      requireAgent(name: string): AgentEntry {
+        const agent = agents[name];
+        if (agent === undefined) throw new Error(`agent "${name}" não encontrado`);
+        return agent;
+      },
+      getAgent(name: string): AgentEntry | undefined {
+        return agents[name];
+      },
+    };
+    let calls = 0;
+    const provider: Provider = {
+      complete: async () => {
+        calls++;
+        if (calls === 1) {
+          return resp({
+            toolCalls: [{
+              id: "h1",
+              name: "handoff",
+              arguments: JSON.stringify({ to: "coder", task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] }),
+            }],
+          });
+        }
+        // coder: cancela e ainda devolve uma tool; a sessão deve parar antes de executá-la
+        controller.abort(new Error("cancelado no subagent"));
+        return resp({
+          toolCalls: [{ id: "c1", name: "write_file", arguments: JSON.stringify({ path: "multi-nao-deve-existir.txt", content: "x" }) }],
+        });
+      },
+    };
+    const baseExecutor = new ToolExecutor({
+      tools: [handoffTool, writeFileTool],
+      allow: ["handoff", "write_file"],
+      audit,
+    });
+    const opts: MultiAgentSessionOptions = {
+      run: "r1", credentialRef: "K", quotaDomain: "default", cwd,
+      provider, registry, baseModel: model, baseExecutor, ledger, audit,
+      baseMaxSteps: 5, entryAgent: "planner", signal: controller.signal,
+    };
+
+    await expect(runMultiAgentSession(opts, "delegue")).rejects.toBeDefined();
+    expect(existsSync(join(cwd, "multi-nao-deve-existir.txt"))).toBe(false);
+
+    const kinds = ledger.readAllEntries().map((e) => e.kind);
+    expect(kinds).toContain("handoff.created");
+    expect(kinds).toContain("handoff.received");
+    expect(kinds).not.toContain("handoff.failed");
+
     const interrupted = ledger.readStates().find((s) => s.state === "interrupted");
     expect(interrupted).toBeDefined();
     expect(interrupted!.reason).toBe("cancelled");
