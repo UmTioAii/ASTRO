@@ -16,6 +16,11 @@ describe("comandos do chat (T1, #62)", () => {
     expect(parseCommand("/model p/m2")).toEqual({ kind: "model", model: "p/m2" });
     expect(parseCommand("/nope a")).toEqual({ kind: "unknown", raw: "nope" });
   });
+  test("/providers e /provider", () => {
+    expect(parseCommand("/providers")).toEqual({ kind: "providers" });
+    expect(parseCommand("/provider")).toEqual({ kind: "provider" });
+    expect(parseCommand("/provider q")).toEqual({ kind: "provider", provider: "q" });
+  });
   test("ajuda lista os quatro comandos", () => {
     for (const command of ["/help", "/model", "/clear", "/exit"]) expect(HELP_TEXT).toContain(command);
   });

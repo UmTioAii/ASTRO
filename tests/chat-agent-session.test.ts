@@ -20,12 +20,16 @@ function setup(opts: { context?: number; reply?: (call: number) => Response; bud
   } });
   const configPath = join(cwd, "astro.config.json");
   writeFileSync(configPath, JSON.stringify({
-    providers: { p: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" } },
+    providers: {
+      p: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" },
+      q: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY_Q" },
+    },
     models: [
       { provider: "p", id: "m1", tags: ["writing-code"], context: opts.context ?? 8192,
         price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } },
       { provider: "p", id: "m2", tags: ["writing-code"], context: opts.context ?? 8192,
         price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } },
+      { provider: "q", id: "m2", tags: ["writing-code"], context: opts.context ?? 8192 },
     ],
     agent: { model: "p/m1", maxSteps: 3, tools: [] },
     ...(opts.budget === undefined ? {} : { budget: opts.budget }),
@@ -94,12 +98,42 @@ describe("AgentSession (T1, #62)", () => {
     const { bodies, session, stop } = setup();
     const chat = session();
     try {
-      expect(chat.listModels()).toEqual(["p/m1", "p/m2"]);
+      expect(chat.listModels()).toEqual(["p/m1", "p/m2", "q/m2"]);
       chat.setModel("p/m2");
       await chat.send("depois");
       expect(bodies[0]!.model).toBe("m2");
       expect(() => chat.setModel("p/ghost")).toThrow(/modelo/);
       expect(chat.snapshot().model).toBe("p/m2");
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+  test("lista e troca de provider preservando o id quando possível", () => {
+    const { session, stop } = setup();
+    const chat = session();
+    try {
+      expect(chat.listProviders().map((provider) => provider.name)).toEqual(["p", "q"]);
+      expect(chat.listProviders().find((provider) => provider.name === "q")).toMatchObject({
+        kind: "openai-compat", credentialRef: "KEY_Q", models: ["m2"],
+      });
+      chat.setModel("p/m2");
+      expect(chat.setProvider("q")).toBe("q/m2");
+      expect(chat.setProvider("p")).toBe("p/m2");
+      expect(() => chat.setProvider("ghost")).toThrow(/não tem modelo/);
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+  test("onBudgetExceeded é repassado ao runTask", async () => {
+    const { session, stop } = setup({ budget: { scope: "day", limitUsd: 0 } });
+    let asked = 0;
+    const chat = session({ onBudgetExceeded: () => { asked++; return "continue_same"; } });
+    try {
+      const result = await chat.send("x");
+      expect(asked).toBe(1);
+      expect(result.final).toBe("ok");
     } finally {
       chat.close();
       stop();
