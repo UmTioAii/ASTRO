@@ -3,14 +3,13 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { runTask, shortTaskHash, type RunReport } from "../app";
 import { Auditor } from "../audit";
-import { BudgetExceededError } from "../budget";
-import { SwapDeniedError } from "../approval";
 import { loadConfig, type AstroConfig } from "../config";
 import type { ChatMessage } from "../provider/types";
 import { Registry } from "../registry";
 import { Ledger } from "../ledger";
 import { DEFAULT_SYSTEM_PROMPT } from "../session";
 import { guardContext } from "./context-guard";
+import { isFatalSessionError } from "./session-errors";
 
 export interface AgentSessionOptions {
   configPath: string;
@@ -52,16 +51,6 @@ export interface SessionSnapshot {
 
 function resolvePath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path);
-}
-
-/** Budget/swap podem chegar reembrulhados pelo app: olha a cadeia de cause. */
-function isFatalSessionError(error: unknown): boolean {
-  let current: unknown = error;
-  for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
-    if (current instanceof BudgetExceededError || current instanceof SwapDeniedError) return true;
-    current = current.cause;
-  }
-  return false;
 }
 
 export class AgentSession {
