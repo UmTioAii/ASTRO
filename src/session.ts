@@ -71,9 +71,11 @@ const DEFAULT_SYSTEM_PROMPT =
 
 /** Erro lançado quando a sessão esgota `maxSteps` sem uma resposta final. */
 export class MaxStepsError extends Error {
+  readonly maxSteps: number;
   constructor(maxSteps: number, message?: string) {
     super(message ?? `sessão excedeu o limite de ${maxSteps} passos sem resposta final`);
     this.name = "MaxStepsError";
+    this.maxSteps = maxSteps;
   }
 }
 
