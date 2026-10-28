@@ -71,9 +71,11 @@ export interface SessionOptions {
   resolveIdentity?: IdentityResolver;
   /** Sinal de cancelamento para interromper a sessão (F-06). */
   signal?: AbortSignal;
+  /** Histórico de conversa (T1): system + turnos anteriores; o user do turno é `task`. */
+  history?: ChatMessage[];
 }
 
-const DEFAULT_SYSTEM_PROMPT =
+export const DEFAULT_SYSTEM_PROMPT =
   "Você é um agente de código; use as tools para inspecionar e alterar arquivos no diretório de trabalho.";
 
 /** Erro lançado quando a sessão esgota `maxSteps` sem uma resposta final. */
@@ -187,16 +189,24 @@ function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
 export async function runSession(
   opts: SessionOptions,
   task: string,
-): Promise<{ final: string; steps: number }> {
+): Promise<{ final: string; steps: number; messages: ChatMessage[] }> {
   const tracer = opts.tracer;
   const rootSpan = tracer?.start(
     "run",
     { agent: redactSecrets(opts.agent), model: `${opts.model.provider}/${opts.model.id}`, run: redactSecrets(opts.run) },
   );
-  const messages: ChatMessage[] = [
-    { role: "system", content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
-    { role: "user", content: task },
-  ];
+  // Histórico de chat sempre começa com system: sem ele, usa o prompt da config
+  const history = opts.history === undefined
+    ? undefined
+    : opts.history[0]?.role === "system"
+      ? opts.history
+      : [{ role: "system" as const, content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT }, ...opts.history];
+  const messages: ChatMessage[] = history === undefined
+    ? [
+        { role: "system", content: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
+        { role: "user", content: task },
+      ]
+    : [...history, { role: "user", content: task }];
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step. */
   const journal = new CallJournal();
   const knownAgents = opts.knownAgents ?? [];
@@ -312,7 +322,7 @@ export async function runSession(
         ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, opts.agent, "completed");
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
-        return { final: response.content, steps: step };
+        return { final: response.content, steps: step, messages };
       }
 
       messages.push({
