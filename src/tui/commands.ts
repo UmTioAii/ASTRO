@@ -3,6 +3,8 @@ import { HELP_TEXT, type ReplCommand } from "../chat/commands";
 import { providerLine, sessionLines, type ChatSession } from "../chat/repl";
 import { sessionSummaryLine, type SessionStore, type SessionSummary } from "../chat/store";
 import { redactSecrets } from "../sanitize-external";
+import { exportSession } from "../chat/export";
+import { initAgents } from "../chat/init";
 
 export type EntryKind = "user" | "assistant" | "info" | "error";
 
@@ -35,6 +37,7 @@ export function runCommand(
   session: ChatSession,
   state: CommandState,
   store?: SessionStore,
+  cwd = process.cwd(),
 ): CommandOutcome {
   switch (command.kind) {
     case "help":
@@ -108,6 +111,22 @@ export function runCommand(
           entries: [{ kind: "info", text: `sessão retomada: ${loaded.record.id} (${loaded.record.turns} turnos)` }],
           lastFile: loaded.path,
         };
+      } catch (error) {
+        return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
+      }
+    }
+    case "export": {
+      try {
+        const path = exportSession(session.snapshot(), cwd, command.path);
+        return { entries: [{ kind: "info", text: `sessão exportada em ${path}` }] };
+      } catch (error) {
+        return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
+      }
+    }
+    case "init": {
+      try {
+        const path = initAgents(cwd);
+        return { entries: [{ kind: "info", text: `AGENTS.md criado em ${path}` }] };
       } catch (error) {
         return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
       }

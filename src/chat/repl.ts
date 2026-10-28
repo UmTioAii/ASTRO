@@ -3,6 +3,8 @@ import { HELP_TEXT, parseCommand } from "./commands";
 import type { ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
 import type { SessionStore } from "./store";
 import { sessionSummaryLine } from "./store";
+import { exportSession } from "./export";
+import { initAgents } from "./init";
 import { isFatalSessionError } from "./session-errors";
 import { redactSecrets } from "../sanitize-external";
 
@@ -31,6 +33,8 @@ export interface ReplOptions {
   signal?: AbortSignal;
   /** Cores ANSI apenas quando o I/O é um terminal. */
   style?: boolean;
+  /** Diretório para `/export` e `/init` (I-11); default é o processo. */
+  cwd?: string;
 }
 
 function messageOf(error: unknown): string {
@@ -77,6 +81,7 @@ export function statusLine(result: TurnResult): string {
 /** Executa o REPL até `/exit`, EOF ou erro fatal; sempre fecha a sessão. */
 export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOptions = {}): Promise<void> {
   const style = opts.style === true;
+  const cwd = opts.cwd ?? process.cwd();
   let lastFile: string | undefined;
   let lastPersistError: string | undefined;
   let storeList: ReturnType<SessionStore["list"]> = [];
@@ -177,6 +182,23 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
           session.resume(loaded.record);
           lastFile = loaded.path;
           io.write(`sessão retomada: ${loaded.record.id} (${loaded.record.turns} turnos)`);
+        } catch (error) {
+          io.write(`erro: ${messageOf(error)}`);
+        }
+        continue;
+      }
+      if (command.kind === "export") {
+        try {
+          const path = exportSession(session.snapshot(), cwd, command.path);
+          io.write(`sessão exportada em ${path}`);
+        } catch (error) {
+          io.write(`erro: ${messageOf(error)}`);
+        }
+        continue;
+      }
+      if (command.kind === "init") {
+        try {
+          io.write(`AGENTS.md criado em ${initAgents(cwd)}`);
         } catch (error) {
           io.write(`erro: ${messageOf(error)}`);
         }
