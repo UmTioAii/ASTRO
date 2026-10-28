@@ -102,3 +102,58 @@ test("vocabulário de tags é fechado", () => {
   expect(isKnownTag("writing-code")).toBe(true);
   expect(isKnownTag("telepathy")).toBe(false);
 });
+
+describe("cross-provider same-model-id semantics (S-06, #123)", () => {
+  test("mesmo id em providers diferentes é válido e distinto (composite identity provider/id)", () => {
+    const cfg = validateConfig({
+      providers: {
+        nvidia: { kind: "openai-compat", baseUrl: "https://integrate.api.nvidia.com/v1", credentialRef: "NVIDIA_API_KEY" },
+        openrouter: { kind: "openai-compat", baseUrl: "https://openrouter.ai/api/v1", credentialRef: "OPENROUTER_API_KEY" },
+      },
+      models: [
+        { provider: "nvidia", id: "llama-3.3-70b-instruct", tags: ["writing-code"], context: 128000 },
+        { provider: "openrouter", id: "llama-3.3-70b-instruct", tags: ["writing-code"], context: 128000 },
+      ],
+      agent: { model: "nvidia/llama-3.3-70b-instruct", maxSteps: 1, tools: [] },
+      paths: { ledger: "l", audit: "a" },
+    });
+    expect(cfg.models).toHaveLength(2);
+    expect(cfg.models[0].provider).toBe("nvidia");
+    expect(cfg.models[1].provider).toBe("openrouter");
+    // Ambos selecionáveis via composite identity
+    expect(cfg.models.find((m) => m.provider === "nvidia" && m.id === "llama-3.3-70b-instruct")).toBeDefined();
+    expect(cfg.models.find((m) => m.provider === "openrouter" && m.id === "llama-3.3-70b-instruct")).toBeDefined();
+  });
+
+  test("duplicado exato provider/id ainda falha com mensagem existente", () => {
+    const bad = {
+      providers: { openai: { kind: "openai-compat", baseUrl: "https://api.openai.com/v1", credentialRef: "OPENAI_API_KEY" } },
+      models: [
+        { provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000 },
+        { provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000 },
+      ],
+      agent: { model: "openai/gpt-4o-mini", maxSteps: 1, tools: [] },
+      paths: { ledger: "l", audit: "a" },
+    };
+    expect(() => validateConfig(bad)).toThrow(/modelo duplicado/);
+  });
+
+  test("modelo id existente em um provider não é resolvido implicitamente por outro provider", () => {
+    const cfg = validateConfig({
+      providers: {
+        nvidia: { kind: "openai-compat", baseUrl: "https://integrate.api.nvidia.com/v1", credentialRef: "NVIDIA_API_KEY" },
+        openai: { kind: "openai-compat", baseUrl: "https://api.openai.com/v1", credentialRef: "OPENAI_API_KEY" },
+      },
+      models: [
+        { provider: "nvidia", id: "meta/llama-3.3-70b-instruct", tags: ["writing-code"], context: 128000 },
+        { provider: "openai", id: "gpt-4o-mini", tags: ["writing-code", "tools"], context: 128000 },
+      ],
+      agent: { model: "nvidia/meta/llama-3.3-70b-instruct", maxSteps: 1, tools: [] },
+      paths: { ledger: "l", audit: "a" },
+    });
+    // openai/gpt-4o-mini NÃO resolve nvidia/meta/llama-3.3-70b-instruct
+    // O registry lookup requer composite identity provider/id
+    expect(cfg.models.find((m) => m.provider === "openai" && m.id === "meta/llama-3.3-70b-instruct")).toBeUndefined();
+    expect(cfg.models.find((m) => m.provider === "nvidia" && m.id === "meta/llama-3.3-70b-instruct")).toBeDefined();
+  });
+});
