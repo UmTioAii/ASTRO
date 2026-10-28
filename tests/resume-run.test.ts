@@ -63,6 +63,56 @@ describe("execução de resume (F-22, #131)", () => {
       const tree = rebuildAgentTree(ledger, "r1");
       expect(tree.nodes.at(-1)).toMatchObject({ agent_id: "coder", model: "m2", reason: "completed" });
       expect(tree.active).toBeUndefined();
+      expect(ledger.readAll().filter((e) => e.run === "r1")).toHaveLength(1); // uma chamada, sem reexecutar planner
+      expect(ledger.byAgent().coder?.tokensIn).toBe(10);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("single-agent interrompido retoma no 'default' com o modelo gravado", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-resume-single-"));
+    const seen: string[] = [];
+    let call = 0;
+    const server = Bun.serve({ port: 0, async fetch(req) {
+      const body = (await req.json()) as { model?: string };
+      seen.push(body.model ?? "");
+      call++;
+      return call === 1
+        ? new Response("boom", { status: 400 })
+        : Response.json({ choices: [{ message: { content: "continuou" } }], usage: { prompt_tokens: 10, completion_tokens: 5 } });
+    } });
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      writeFileSync(configPath, JSON.stringify({
+        providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "TEST_KEY" } },
+        models: [{ provider: "mock", id: "m1", tags: ["writing-code"], context: 8192 }],
+        agent: { model: "mock/m1", maxSteps: 2, tools: [] },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      }));
+      await expect(runTask({ configPath, task: "x", cwd, env: { TEST_KEY: "x" } })).rejects.toThrow(/provider/);
+
+      const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
+      const runId = ledger.readStates()[0]!.run;
+      const report = await runTask({ configPath, task: "x", cwd, env: { TEST_KEY: "x" }, resume: runId });
+      expect(report.resumedFrom).toBe("default");
+      expect(report.model).toBe("mock/m1");
+      expect(seen).toEqual(["m1", "m1"]);
+      expect(rebuildAgentTree(ledger, runId).nodes[0]!.reason).toBe("completed");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("modelo ausente no evento → replay_incomplete sem chamar provider", async () => {
+    const { cwd, configPath, seen, server } = setup();
+    try {
+      mkdirSync(join(cwd, ".astro"), { recursive: true });
+      const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
+      ledger.recordAgentCreated({ run: "r1", agent_id: "coder", session_id: "r1" }); // sem model
+      ledger.recordState("r1", "interrupted", { agent: "coder", reason: "cancelled" });
+      await expect(runTask({ configPath, task: "x", cwd, env: { TEST_KEY: "x" }, resume: "r1" })).rejects.toThrow(/sem modelo gravado/);
+      expect(seen).toEqual([]);
     } finally {
       server.stop(true);
     }
@@ -105,6 +155,12 @@ describe("execução de resume (F-22, #131)", () => {
       expect(stdout).toContain("retomado coder do run r1");
       expect(stdout).toContain("retomado ok");
       expect(seen).toEqual(["m2"]);
+
+      const dup = Bun.spawn(["bun", "src/cli.ts", "resume", "r1", "--task", "a", "--task", "b", "--config", configPath, "--cwd", cwd], {
+        cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, TEST_KEY: "x" },
+      });
+      expect(await dup.exited).toBe(1);
+      expect(await new Response(dup.stderr).text()).toContain("--task duplicado");
     } finally {
       server.stop(true);
     }

@@ -393,30 +393,47 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const run = opts.resume ?? randomUUID();
   const registry = new Registry(config);
   const model = registry.require(config.agent.model);
+  const hasAgents = config.agents !== undefined && Object.keys(config.agents).length > 0;
   let resumed: ReturnType<typeof planResume> | undefined;
+  let resumedModel: ModelEntry | undefined;
+  let resumedProfile: string | undefined;
   if (opts.resume !== undefined) {
     resumed = planResume(ledger, run);
     const agentId = resumed.agent.agent_id;
-    const agent = config.agents?.[agentId];
-    if (config.agents === undefined && agentId !== AGENT_NAME) {
-      throw new ReplayIncompleteError(`run "${run}" pertence ao agente "${agentId}", mas a config não tem agents; replay incompleto`);
+    if (resumed.agent.model === undefined) {
+      throw new ReplayIncompleteError(`agente "${agentId}" sem modelo gravado; replay incompleto`);
     }
-    if (config.agents !== undefined && agent === undefined) {
-      throw new ReplayIncompleteError(`agente "${agentId}" do run não existe mais na configuração; replay incompleto`);
-    }
-    const resolved = agent === undefined ? model : registry.resolveModel(agent);
-    if (resumed.agent.model !== undefined && resumed.agent.model !== resolved.id) {
-      throw new ReplayIncompleteError(`modelo do agente "${agentId}" mudou (gravado "${resumed.agent.model}", config "${resolved.id}"); replay incompleto`);
+    if (!hasAgents) {
+      if (agentId !== AGENT_NAME) {
+        throw new ReplayIncompleteError(`run "${run}" pertence ao agente "${agentId}", mas a config não tem agents; replay incompleto`);
+      }
+      if (resumed.agent.model !== model.id) {
+        throw new ReplayIncompleteError(`modelo do agente "${agentId}" mudou (gravado "${resumed.agent.model}", config "${model.id}"); replay incompleto`);
+      }
+      resumedModel = model;
+    } else {
+      const agent = config.agents?.[agentId];
+      if (agent === undefined) {
+        throw new ReplayIncompleteError(`agente "${agentId}" do run não existe mais na configuração; replay incompleto`);
+      }
+      const resolved = registry.resolveModel(agent);
+      if (resumed.agent.model !== resolved.id) {
+        throw new ReplayIncompleteError(`modelo do agente "${agentId}" mudou (gravado "${resumed.agent.model}", config "${resolved.id}"); replay incompleto`);
+      }
+      resumedModel = resolved;
+      resumedProfile = agent.profile;
     }
   }
+  const baseModel = resumedModel ?? model;
+  const baseProfile = resumedProfile ?? config.agent.profile;
   audit.append({
     run,
     agent: AGENT_NAME,
     tipo: "run.started",
     payload: {
       taskHash: shortTaskHash(opts.task),
-      model: resumed?.agent.model ?? config.agent.model,
-      ...(config.agent.profile === undefined ? {} : { profile: config.agent.profile }),
+      model: `${baseModel.provider}/${baseModel.id}`,
+      ...(baseProfile === undefined ? {} : { profile: baseProfile }),
       ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
     },
   });
@@ -662,7 +679,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const total = ledger.total();
   const tokensIn = total.tokensIn - baseline.tokensIn;
   const tokensOut = total.tokensOut - baseline.tokensOut;
-  const costUsd = model.price === undefined ? null : total.costUsd - baseline.costUsd;
+  const costUsd = baseModel.price === undefined ? null : total.costUsd - baseline.costUsd;
 
   audit.append({
     run,
@@ -675,7 +692,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   if (config.telemetry !== undefined) {
     await sendTelemetry(config.telemetry, {
       runId: run,
-      model: config.agent.model,
+      model: `${baseModel.provider}/${baseModel.id}`,
       tokensIn,
       tokensOut,
       latencyMs: Date.now() - startedAt,
@@ -687,7 +704,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   return {
     runId: run,
     final: result.final,
-    model: resumed?.agent.model ?? config.agent.model,
+    model: `${baseModel.provider}/${baseModel.id}`,
     steps: result.steps,
     tokensIn,
     tokensOut,

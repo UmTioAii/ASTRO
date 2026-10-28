@@ -154,9 +154,12 @@ function parseReplayLike(command: "replay" | "resume", rest: string[]): ReplayCo
   let cwd: string | undefined;
   let runId: string | undefined;
   let task: string | undefined;
+  const seen = new Set<string>();
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i] as string;
     if (arg === "--config" || arg === "--cwd" || arg === "--task") {
+      if (seen.has(arg)) throw new UsageError(`${arg} duplicado`);
+      seen.add(arg);
       const value = rest.at(i + 1);
       if (value === undefined || value.startsWith("-")) throw new UsageError(`falta o valor de ${arg}`);
       i++;
