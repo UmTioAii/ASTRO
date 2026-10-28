@@ -82,6 +82,8 @@ export class CompletionCache {
 
 export interface CachedProviderOptions {
   cache: CompletionCache;
+  /** Escopo do cache (ex.: provider/model); evita hit cruzado entre providers com mesmo id. */
+  scope?: string;
   ttlHours: number;
   maxEntries: number;
   /** Callback no hit (auditoria cache.hit). */
@@ -93,7 +95,7 @@ export function cachedProvider(provider: Provider, opts: CachedProviderOptions):
   return {
     async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
       throwIfAborted(signal);
-      const key = cacheKey(req);
+      const key = opts.scope === undefined ? cacheKey(req) : `${opts.scope}|${cacheKey(req)}`;
       const hit = opts.cache.get(key, opts.ttlHours);
       if (hit !== null) {
         opts.onHit?.(key);

@@ -19,7 +19,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 | I-05 | Contrato antes de código; módulo sem contrato e critério não entra | `docs/workflow.md:7` (issue com critério testável) |
 | I-06 | Placement reproduzível: mesmo run + mesma semente, mesma escolha de modelo e credencial | Pendente (#60) |
 | I-07 | Unidade de placement é `(provider, modelo, credencial)`; cota agregada por conta/org | Parcial: `quotaDomain` (`src/config.ts`); pool de credenciais pendente (C6/#60) |
-| I-08 | Nenhuma troca silenciosa de credencial, provider ou modelo; toda troca exige aprovação humana | Parcial: fallback de provider/profile gated (`src/approval.ts`, #160); troca por handoff multi-agent pendente (#161) |
+| I-08 | Nenhuma troca silenciosa de credencial, provider ou modelo; toda troca exige aprovação humana | Coberto: fallback de provider/profile e handoff multi-agent (novo e retomada) passam por `approveSwap` (`src/approval.ts`, `src/session.ts`); sem TTY fica `pending` e o run para |
 | I-09 | Erro é classificado antes de qualquer ação; cota dura não é retentada | `src/provider/types.ts:42` (classes); `src/quota.ts` (`hard_quota` sem retry) |
 | I-10 | Leitor/planejador usa workspace compartilhado read-only; escritor usa worktree próprio; nunca dois escritores no mesmo worktree | Parcial: worktrees no fluxo de dev (`docs/workflow.md:16`); papéis de agente pendentes (#58) |
 | I-11 | Worktree não é fronteira de segurança; execução exige sandbox de FS/rede | Parcial: confinamento de caminho (`src/tools/paths.ts:8`) e sandbox opcional (`src/tools/run-command.ts:107`); pendências: env herdado e symlink (`F-00`) |

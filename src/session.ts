@@ -1,6 +1,6 @@
 import type { Auditor } from "./audit";
 import { isAbortError, throwIfAborted } from "./abort";
-import { SwapDeniedError } from "./approval";
+import { SwapDeniedError, type SwapApprover, type SwapRequest } from "./approval";
 import { CallJournal } from "./call-id";
 import { hashToolCalls, type HandoffEventKind, type Ledger, type LedgerAgentEntry } from "./ledger";
 import { buildHandoffArtifact, HandoffError, handoffId, sanitizeHandoffArtifact, taskHash, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
@@ -420,6 +420,12 @@ export interface MultiAgentSessionOptions {
   resolveIdentity?: IdentityResolver;
   /** Sinal de cancelamento para interromper a sessão (F-06). */
   signal?: AbortSignal;
+  /** Gate de aprovação de troca (F-19): o runtime injeta; ausente = sem gate (componente interno). */
+  approveSwap?: SwapApprover;
+  /** Provider por modelo/agent (F-31d): sem ele, todos usam `provider`. */
+  providerFor?: (model: ModelEntry, profile?: string) => Provider;
+  /** Nome do agente corrente compartilhado com os wrappers (atribui swap.*). */
+  activeAgent?: { name: string };
 }
 
 /**
@@ -438,6 +444,19 @@ export async function runMultiAgentSession(
   const modelFor = (agent: AgentEntry): ModelEntry => opts.registry.resolveModel !== undefined ? opts.registry.resolveModel(agent) : opts.baseModel;
 
   let currentModel = modelFor(currentAgent);
+  /** Gate de troca por handoff (F-19, I-08): só quando a identidade efetiva muda. */
+  const approveHandoff = async (fromModel: ModelEntry, fromAgent: AgentEntry, toModel: ModelEntry, toAgent: AgentEntry): Promise<void> => {
+    if (opts.approveSwap === undefined) return;
+    if (fromModel.provider === toModel.provider && fromModel.id === toModel.id && fromAgent.profile === toAgent.profile) return;
+    const request: SwapRequest = {
+      run: opts.run,
+      agent: currentAgentName,
+      from: { provider: fromModel.provider, model: fromModel.id, ...(fromAgent.profile === undefined ? {} : { profile: fromAgent.profile }) },
+      to: { provider: toModel.provider, model: toModel.id, ...(toAgent.profile === undefined ? {} : { profile: toAgent.profile }) },
+      reason: "handoff",
+    };
+    if (!(await opts.approveSwap(request))) throw new SwapDeniedError(request, "denied");
+  };
   let currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
   let currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
   let step = 0;
@@ -484,7 +503,9 @@ export async function runMultiAgentSession(
       const pending = resume;
       const toAgent = opts.registry.getAgent(pending.artifact.to);
       if (toAgent === undefined) throw new HandoffError("handoff_target_not_found", `agent destino "${pending.artifact.to}" não encontrado na configuração`);
-      currentModel = modelFor(toAgent); // profile resolvido antes da retomada (F-29)
+      const toModel = modelFor(toAgent); // profile resolvido antes da retomada (F-29)
+      await approveHandoff(currentModel, currentAgent, toModel, toAgent);
+      currentModel = toModel;
       currentAgentName = pending.artifact.to;
       currentAgent = toAgent;
       currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
@@ -549,7 +570,9 @@ export async function runMultiAgentSession(
         { model: currentModel.id, provider: currentModel.provider },
         stepSpan ?? rootSpan,
       );
-      const response = await opts.provider.complete({
+      // Wrappers atribuem swap.* ao agente que está executando (F-19/I-04)
+      if (opts.activeAgent !== undefined) opts.activeAgent.name = currentAgentName;
+      const response = await (opts.providerFor?.(currentModel, currentAgent.profile) ?? opts.provider).complete({
         model: currentModel.id,
         messages: safePrompt(messages),
         tools: executor.defs(),
@@ -628,6 +651,7 @@ export async function runMultiAgentSession(
           if (toAgent === undefined) throw new HandoffError("handoff_target_not_found",
             `agent destino "${handoff.to}" não encontrado na configuração`);
           const toModel = modelFor(toAgent); // profile do receptor resolvido ANTES do swap (F-29)
+          await approveHandoff(currentModel, currentAgent, toModel, toAgent);
           // Compactação estruturada (F-25): nível compacto + source_refs do ledger
           const compacted = compactDraft(handoff.draft);
           const bounds = opts.ledger.seqBoundsOfRun(opts.run);
@@ -694,6 +718,9 @@ export async function runMultiAgentSession(
     if (
       activeHandoff !== undefined &&
       !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&
+      // Negação de troca não é falha do handoff já recebido: o estado interrupted
+      // permite retomar e re-perguntar (I-08 + I-19).
+      !(error instanceof SwapDeniedError) &&
       !isAbortError(error, opts.signal)
     ) {
       recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {
