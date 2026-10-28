@@ -11,10 +11,15 @@ import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
 import { formatBudgetEstimate } from "./budget";
 import { replayRun } from "./replay";
+import { AgentSession } from "./chat/agent-session";
+import { SessionStore } from "./chat/store";
+import { runRepl } from "./chat/repl";
+import { nodeReplIO } from "./chat/node-io";
 import { runHealthCheck, runPoolHealthCheck, formatProvidersList, testProvider } from "./health";
 import { GitHubConfigRegistry } from "./config-share";
 import { runSkillsCommand } from "./skills/cli";
 import { runMcpCommand } from "./mcp/cli";
+import { redactSecrets } from "./sanitize-external";
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -73,6 +78,7 @@ const USAGE = `Uso:
   bun src/cli.ts bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
+  bun src/cli.ts chat [--config <path>] [--cwd <dir>]
   bun src/cli.ts resume <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
   bun src/cli.ts providers <health|list|test> [--config <path>]
@@ -143,6 +149,11 @@ interface ReplayCommand {
 
 interface ResumeCommand extends ReplayCommand {}
 
+interface ChatCommand {
+  configPath: string;
+  cwd?: string;
+}
+
 interface HealthCommand {
   configPath: string;
 }
@@ -188,6 +199,7 @@ type ParsedCommand =
   | { kind: "serve"; options: ServeCommand }
   | { kind: "replay"; options: ReplayCommand }
   | { kind: "resume"; options: ResumeCommand }
+  | { kind: "chat"; options: ChatCommand }
   | { kind: "health"; options: HealthCommand }
   | { kind: "providers"; options: ProvidersCommand }
   | { kind: "pool"; options: PoolCommand }
@@ -236,7 +248,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "resume", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills", "mcp"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "resume", "chat", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills", "mcp"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
   }
@@ -463,6 +475,24 @@ function parseArgs(argv: string[]): ParsedCommand {
   if (command === "replay" || command === "resume") {
     const options = parseReplayLike(command, rest);
     return command === "replay" ? { kind: "replay", options } : { kind: "resume", options };
+  }
+
+  if (command === "chat") {
+    let configPath = "astro.config.json";
+    let cwd: string | undefined;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i] as string;
+      if (arg === "--config" || arg === "--cwd") {
+        const value = rest.at(i + 1);
+        if (value === undefined || value.startsWith("-")) throw new UsageError(`falta o valor de ${arg}`);
+        i++;
+        if (arg === "--config") configPath = value;
+        else cwd = value;
+        continue;
+      }
+      throw new UsageError(`opção desconhecida: "${arg}"`);
+    }
+    return { kind: "chat", options: { configPath, ...(cwd === undefined ? {} : { cwd }) } };
   }
 
   if (command === "serve") {
@@ -756,6 +786,24 @@ async function main(argv: string[]): Promise<number> {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`erro: ${message}`);
       return 1;
+    }
+  }
+
+  if (parsed.kind === "chat") {
+    const o = parsed.options;
+    const base = o.cwd ?? process.cwd();
+    const io = nodeReplIO();
+    try {
+      const session = new AgentSession({ configPath: resolve(o.configPath), cwd: base, env: process.env });
+      const store = new SessionStore(resolve(base, ".astro", "sessions"));
+      await runRepl(session, io, { store, signal: io.signal });
+      return 0;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${redactSecrets(message)}`);
+      return 1;
+    } finally {
+      io.close();
     }
   }
 

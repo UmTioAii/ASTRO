@@ -78,6 +78,16 @@ describe("hooks de chat no runTask (T1, #62)", () => {
     }
   });
 
+  test("prompt com token= é redigido e o run não quebra", async () => {
+    const { cwd, configPath, bodies, stop } = setup();
+    try {
+      const report = await runTask({ configPath, task: "use token=abc123456789, para autenticar", cwd, env: { KEY: "k" } });
+      expect(report.final).toBe("ok");
+      expect(JSON.stringify(bodies)).not.toContain("abc123456789");
+    } finally {
+      stop();
+    }
+  });
   test("history sem system ganha o prompt padrão antes do primeiro turno", async () => {
     const { cwd, configPath, bodies, stop } = setup();
     try {

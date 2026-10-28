@@ -73,6 +73,7 @@ export class AgentSession {
   #costUsd = 0;
   #costKnown = true;
   #closed = false;
+  #fatal = false;
   #busy = false;
 
   constructor(opts: AgentSessionOptions) {
@@ -127,7 +128,7 @@ export class AgentSession {
   }
 
   async send(prompt: string, signal?: AbortSignal): Promise<TurnResult> {
-    if (this.#closed) throw new Error("sessão de chat encerrada");
+    if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
     if (this.#busy) throw new Error("turno já em andamento");
     this.#busy = true;
     try {
@@ -159,7 +160,7 @@ export class AgentSession {
           else this.#costUsd += entry.costUsd;
         }
         // Budget/swap negados encerram a sessão (checkpoint fica interrupted)
-        if (isFatalSessionError(error)) this.#closed = true;
+        if (isFatalSessionError(error)) this.#fatal = true;
         throw error;
       }
 
@@ -213,8 +214,7 @@ export class AgentSession {
   close(): void {
     if (this.#closed) return;
     if (this.#busy) throw new Error("turno em andamento");
-    this.#closed = true;
-    this.#append("run.completed", {
+    this.#closed = true;    this.#append("run.completed", {
       session: true,
       steps: this.#steps,
       turns: this.#turns,

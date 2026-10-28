@@ -40,10 +40,10 @@ const REDACT_PREFIX = new RegExp(
   "g",
 );
 // JSON `"apiKey":"..."`, env `TOKEN=...`/`x-api-key: ...` (aspas normais ou escapadas)
-const SECRET_KEY = "(?:api[-_]?key|access[-_]?key|token|secret|password)";
+const SECRET_KEY = "(?:[A-Za-z0-9_-]*(?:api[-_]?key|access[-_]?key|secret|password|token(?!s))[A-Za-z0-9_-]*)";
 const QUOTE = `(?:\\\\"|")`;
 const REDACT_ENV = new RegExp(
-  `\\b([A-Za-z0-9_-]*${SECRET_KEY}[A-Za-z0-9_-]*)((?:${QUOTE})?\\s*[=:]\\s*(?:${QUOTE})?)([^\\s,;"'\\\\]*)((?:${QUOTE}))?`,
+  `\\b(${SECRET_KEY})((?:${QUOTE})?\\s*[=:]\\s*(?:${QUOTE})?)([^\\s,;"'\\\\}]*)((?:${QUOTE}))?`,
   "gi",
 );
 
@@ -58,7 +58,8 @@ export function redactSecrets(text: string): string {
     .replace(REDACT_BEARER, `${BEARER_WORD} ${REDACTED}`)
     .replace(REDACT_NV, REDACTED)
     .replace(REDACT_PREFIX, REDACTED)
-    .replace(REDACT_ENV, "$1$2[REDACTED]$4");
+    .replace(REDACT_ENV, (_match, key: string, separator: string, _value: string, closing?: string) =>
+      `${key}${separator}[REDACTED]${closing ?? ""}`);
 }
 
 /** Estimativa conservadora: ~4 chars por token. */
