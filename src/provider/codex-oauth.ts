@@ -1,3 +1,4 @@
+import { isAbortError, throwIfAborted } from "../abort";
 import type { CodexTokens } from "./codex-auth";
 import { readCodexAuth, refreshCodexTokens } from "./codex-auth";
 import type {
@@ -312,7 +313,7 @@ export class CodexOAuthProvider implements Provider {
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
-    const tokens = await this.validTokens();
+    const tokens = await this.validTokens(signal);
 
     let response: Response;
     try {
@@ -323,7 +324,7 @@ export class CodexOAuthProvider implements Provider {
         signal,
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (isAbortError(error, signal)) throw error;
       throw new ProviderError("outage", "falha de rede ao chamar o provider Codex");
     }
 
@@ -331,7 +332,7 @@ export class CodexOAuthProvider implements Provider {
     try {
       text = await response.text();
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (isAbortError(error, signal)) throw error;
       throw new ProviderError(
         "outage",
         "falha ao ler a resposta do provider Codex",
@@ -346,7 +347,8 @@ export class CodexOAuthProvider implements Provider {
     return parseSse(text, (value) => this.redact(value, tokens));
   }
 
-  private async validTokens(): Promise<CodexTokens> {
+  private async validTokens(signal?: AbortSignal): Promise<CodexTokens> {
+    throwIfAborted(signal);
     if (this.tokens === undefined) {
       this.tokens = readCodexAuth(this.credentialsPath);
     }
@@ -354,7 +356,7 @@ export class CodexOAuthProvider implements Provider {
       return this.tokens;
     }
 
-    this.tokens = await refreshCodexTokens(this.tokens, this.fetchFn);
+    this.tokens = await refreshCodexTokens(this.tokens, this.fetchFn, signal);
     return this.tokens;
   }
 

@@ -7,6 +7,7 @@
  * (I-03: mensagens de erro já vêm redigidas do adapter, F2).
  */
 import type { Auditor } from "../audit";
+import { isAbortError } from "../abort";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type Provider } from "./types";
 
 const RETRYABLE: ReadonlySet<string> = new Set(["transient_rate_limit", "outage"]);
@@ -71,7 +72,7 @@ export class FallbackProvider implements Provider {
           this.#log("provider.success", { provider: entry.name, latencyMs: Date.now() - startedAt, attempt });
           return { ...response, provider: entry.name, model: response.model ?? req.model };
         } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") throw error;
+          if (isAbortError(error, signal)) throw error;
           lastError = error;
           const errorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
           this.#log("provider.failure", { provider: entry.name, errorClass, attempt });

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Auditor } from "./audit";
+import { isAbortError } from "./abort";
 import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
 import { ConfigError, loadConfig } from "./config";
 import { Ledger } from "./ledger";
@@ -610,7 +611,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     }
 
     // Cancelamento explícito (F-06): o estado interrupted já foi gravado pela sessão
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbortError(error, opts.signal)) {
       audit.append({
         run,
         agent: AGENT_NAME,

@@ -1,3 +1,4 @@
+import { isAbortError } from "../abort";
 import type {
   ChatMessage,
   CompletionRequest,
@@ -253,7 +254,7 @@ export class OpenAICompatProvider implements Provider {
         signal,
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (isAbortError(error, signal)) throw error;
       throw new ProviderError(
         "outage",
         `falha de rede ao chamar o provider: ${this.describe(error)}`,
@@ -264,7 +265,7 @@ export class OpenAICompatProvider implements Provider {
     try {
       text = await response.text();
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (isAbortError(error, signal)) throw error;
       throw new ProviderError(
         "outage",
         `falha ao ler a resposta do provider: ${this.describe(error)}`,

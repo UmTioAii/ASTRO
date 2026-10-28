@@ -1,4 +1,5 @@
 import type { Auditor } from "./audit";
+import { isAbortError, throwIfAborted } from "./abort";
 import { CallJournal } from "./call-id";
 import { hashToolCalls, type HandoffEventKind, type Ledger } from "./ledger";
 import { buildHandoffArtifact, HandoffError, handoffId, sanitizeHandoffArtifact, taskHash, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
@@ -192,6 +193,7 @@ export async function runSession(
 
   try {
     for (let step = 1; step <= opts.maxSteps; step++) {
+      throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
       // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
@@ -254,6 +256,7 @@ export async function runSession(
       });
 
       for (const call of response.toolCalls) {
+        throwIfAborted(opts.signal); // ponto seguro: nenhuma tool nova após cancelamento (I-16)
         assertKnownTarget(call, knownAgents);
         const toolSpan = tracer?.start(
           "tool.exec",
@@ -308,13 +311,13 @@ export async function runSession(
     if (!errorHasHandoffName(error)) {
       opts.ledger.recordState(opts.run, "interrupted", {
         agent: opts.agent,
-        reason: interruptReason(error),
+        reason: interruptReason(error, opts.signal),
       });
     }
     if (rootSpan !== undefined && !errorHasHandoffName(error)) {
       tracer?.end(rootSpan, {
         status: "error",
-        "error.class": interruptReason(error),
+        "error.class": interruptReason(error, opts.signal),
       });
     }
     throw error;
@@ -330,8 +333,8 @@ function errorHasHandoffName(error: unknown): boolean {
 }
 
 /** Razão registrada no `run_state interrupted`: abort vira "cancelled" (F-06). */
-function interruptReason(error: unknown): string {
-  if (error instanceof DOMException && error.name === "AbortError") return "cancelled";
+function interruptReason(error: unknown, signal?: AbortSignal): string {
+  if (isAbortError(error, signal)) return "cancelled";
   return error instanceof Error ? error.name : String(error);
 }
 
@@ -462,6 +465,7 @@ export async function runMultiAgentSession(
     agentsUsed.push(currentAgentName);
 
     while (step < opts.baseMaxSteps) {
+      throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
       // Verificar limite do agent atual
       if (agentSteps >= currentMaxSteps) {
         tracer?.end(rootSpan, { status: "error", "error.class": "MaxStepsError" });
@@ -546,6 +550,7 @@ export async function runMultiAgentSession(
 
       let handoffTriggered = false;
       for (const [callIndex, call] of response.toolCalls.entries()) {
+        throwIfAborted(opts.signal); // ponto seguro: nenhuma tool nova após cancelamento (I-16)
         assertKnownTarget(call, knownAgents);
         const toolSpan = tracer?.start(
           "tool.exec",
@@ -630,22 +635,28 @@ export async function runMultiAgentSession(
     tracer?.end(rootSpan, { status: "max_steps" });
     throw new MaxStepsError(opts.baseMaxSteps);
   } catch (error) {
-    // Falha pós-ack é terminal para o handoff: grava handoff.failed (F-24, I-19)
-    if (activeHandoff !== undefined && !(error instanceof HandoffError && error.code === "handoff_ack_timeout")) {
+    // Falha pós-ack é terminal para o handoff: grava handoff.failed (F-24, I-19).
+    // Cancelamento (F-06) NÃO é falha permanente: o handoff fica pendente para retomada.
+    if (
+      activeHandoff !== undefined &&
+      !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&
+      !isAbortError(error, opts.signal)
+    ) {
       recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {
         reason: error instanceof Error ? error.name : String(error),
       });
     }
     opts.ledger.recordState(opts.run, "interrupted", {
       agent: currentAgentName,
-      reason: interruptReason(error),
+      reason: interruptReason(error, opts.signal),
     });
     if (rootSpan !== undefined) {
       tracer?.end(rootSpan, {
         status: "error",
-        "error.class": interruptReason(error),
+        "error.class": interruptReason(error, opts.signal),
       });
     }
     throw error;
   }
 }
+

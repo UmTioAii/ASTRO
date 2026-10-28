@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
+import { throwIfAborted } from "./abort";
 import type { CompletionRequest, CompletionResponse, Provider } from "./provider/types";
 
 /** Chave determinística da request: modelo + profile + mensagens + tools. */
@@ -91,6 +92,7 @@ export interface CachedProviderOptions {
 export function cachedProvider(provider: Provider, opts: CachedProviderOptions): Provider {
   return {
     async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
+      throwIfAborted(signal);
       const key = cacheKey(req);
       const hit = opts.cache.get(key, opts.ttlHours);
       if (hit !== null) {
@@ -99,6 +101,7 @@ export function cachedProvider(provider: Provider, opts: CachedProviderOptions):
         return { ...hit, usage: { inputTokens: 0, outputTokens: 0 } };
       }
       const response = await provider.complete(req, signal);
+      throwIfAborted(signal); // provider pode ignorar o signal (ex.: plugin): não gravar resposta pós-abort
       opts.cache.set(key, response, opts.maxEntries);
       return response;
     },

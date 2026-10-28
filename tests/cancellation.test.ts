@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
 import { Ledger } from "../src/ledger";
+import { FallbackProvider } from "../src/provider/fallback-provider";
+import { ProfileFallbackProvider } from "../src/provider/profile-fallback-provider";
 import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
 import type { ModelEntry } from "../src/registry";
 import { runTask } from "../src/app";
 import { runSession, type SessionOptions } from "../src/session";
+import { writeFileTool } from "../src/tools/write-file";
 import { ToolExecutor } from "../src/tools/executor";
 
 const model: ModelEntry = {
@@ -136,6 +139,84 @@ describe("cancelamento explícito (F-06, #127)", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test("abort não é retry: FallbackProvider para na primeira chamada e não tenta o próximo provider", async () => {
+    const controller = new AbortController();
+    let firstCalls = 0;
+    let secondCalls = 0;
+    const aborting: Provider = {
+      complete: async (_req, signal) => {
+        firstCalls++;
+        controller.abort(new Error("cancelado pelo SDK")); // reason customizada
+        throw signal?.reason ?? new DOMException("Abortado", "AbortError");
+      },
+    };
+    const second: Provider = {
+      complete: async () => {
+        secondCalls++;
+        return resp({ content: "não deveria executar" });
+      },
+    };
+    const fallback = new FallbackProvider({
+      providers: [
+        { name: "first", priority: 1, create: () => aborting },
+        { name: "second", priority: 2, create: () => second },
+      ],
+      maxRetries: 2,
+      retryBackoffMs: 0,
+    });
+
+    await expect(fallback.complete({ model: "m", messages: [] }, controller.signal)).rejects.toBeDefined();
+    expect(firstCalls).toBe(1);
+    expect(secondCalls).toBe(0);
+  });
+
+  test("reason customizada de abort é tratada como cancelamento (cancelled)", async () => {
+    const { opts } = setup([
+      () => new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("timeout do SDK")), 500);
+      }),
+    ]);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error("timeout do SDK")), 20);
+    opts.signal = controller.signal;
+
+    await expect(runSession(opts, "tarefa")).rejects.toBeDefined();
+
+    const interrupted = opts.ledger.readStates().find((s) => s.state === "interrupted");
+    expect(interrupted).toBeDefined();
+    expect(interrupted!.reason).toBe("cancelled");
+  });
+
+  test("ponto seguro: abort antes das tools impede escrita de arquivo (I-16)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-cancel-tools-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const controller = new AbortController();
+
+    // Provider responde com uma tool call, mas aborta o signal antes de resolver:
+    // a sessão deve parar antes de executar a tool.
+    const provider: Provider = {
+      complete: async () => {
+        controller.abort(new Error("cancelado"));
+        return resp({
+          toolCalls: [{ id: "c1", name: "write_file", arguments: JSON.stringify({ path: "nao-deve-existir.txt", content: "x" }) }],
+        });
+      },
+    };
+    const opts: SessionOptions = {
+      run: "r1", agent: "default", credentialRef: "K", quotaDomain: "default",
+      cwd, provider, model,
+      executor: new ToolExecutor({ tools: [writeFileTool], allow: ["write_file"], audit }),
+      ledger, audit, maxSteps: 3, signal: controller.signal,
+    };
+
+    await expect(runSession(opts, "escreva")).rejects.toBeDefined();
+    expect(existsSync(join(cwd, "nao-deve-existir.txt"))).toBe(false);
+    const interrupted = ledger.readStates().find((s) => s.state === "interrupted");
+    expect(interrupted).toBeDefined();
+    expect(interrupted!.reason).toBe("cancelled");
   });
 
   test("run normal (sem cancelamento) completa normalmente", async () => {
