@@ -9,7 +9,7 @@ import { verifyHandoffIdentity } from "./handoff/verifier";
 import { compactDraft, digestArtifacts } from "./handoff/compact";
 import { DEFAULT_ACK_TIMEOUT_MS } from "./config";
 import type { BudgetConfig, PriceConfig } from "./config";
-import { budgetStatus, budgetWarningPayload } from "./budget";
+import { budgetStatus, budgetWarningPayload, enforceBudget, BudgetExceededError, type BudgetDecider } from "./budget";
 import type { ChatMessage, CompletionResponse, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
@@ -55,6 +55,8 @@ export interface SessionOptions {
   };
   /** Budget (F-05): aviso/limite derivados do ledger (enforcement nas partes 3–4). */
   budget?: BudgetConfig;
+  /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
+  budgetDecide?: BudgetDecider;
   /** Ambiente do run; vai ao ToolContext do shell (default: `process.env` no run_command). */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -205,16 +207,47 @@ export async function runSession(
     budgetWarned = true;
     opts.audit.append({ run: opts.run, agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
   };
+  let ceilingRecorded = false;
+  /** Teto físico também é reavaliado após o uso (último step não escapa, B10). */
+  const checkCeiling = (agent: string): void => {
+    if (opts.budget?.hardCeilingUsd === undefined || ceilingRecorded) return;
+    const status = budgetStatus(opts.budget, opts.ledger);
+    if (status.spentUsd === null) {
+      ceilingRecorded = true;
+      opts.audit.append({ run: opts.run, agent, tipo: "budget.exceeded",
+        payload: { scope: status.scope, spentUsd: status.spentUsd, limitUsd: status.limitUsd, reason: "unknown_price" } });
+      opts.ledger.recordBudgetExceeded({ run: opts.run, agent, exceeded_choice: "stop" });
+      throw new BudgetExceededError("unknown_price", status);
+    }
+    if (!status.ceilingHit) return;
+    ceilingRecorded = true;
+    opts.audit.append({ run: opts.run, agent, tipo: "budget.ceiling_hit",
+      payload: { scope: status.scope, spentUsd: status.spentUsd, hardCeilingUsd: opts.budget.hardCeilingUsd } });
+    opts.ledger.recordCeilingHit({ run: opts.run, agent, ceiling_hit: true });
+    throw new BudgetExceededError("ceiling", status);
+  };
 
   ensureAgentCreated(opts.ledger, opts.audit, opts.run, opts.agent, opts.model.id, opts.agentProfile);
 
   try {
-    for (let step = 1; step <= opts.maxSteps; step++) {
+    let effectiveMaxSteps = opts.maxSteps;
+    for (let step = 1; step <= effectiveMaxSteps; step++) {
       throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
-      // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
+      // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(opts.agent);
+      // Budget (B4/B10, I-17): teto físico/esgotamento antes da chamada
+      if (opts.budget !== undefined) {
+        const choice = await enforceBudget({
+          budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: opts.agent, audit: opts.audit,
+          ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
+        });
+        // "baixar esforço" (B4): metade dos passos **restantes**, ao menos um
+        if (choice === "lower_effort") {
+          effectiveMaxSteps = Math.min(effectiveMaxSteps, step + Math.max(1, Math.floor((effectiveMaxSteps - step) / 2)));
+        }
+      }
       // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
@@ -261,6 +294,7 @@ export async function runSession(
         identity.price,
       );
       maybeWarnBudget(opts.agent);
+      checkCeiling(opts.agent);
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: opts.agent });
@@ -327,7 +361,7 @@ export async function runSession(
       tracer?.end(stepSpan);
     }
     tracer?.end(rootSpan, { status: "max_steps" });
-    throw new MaxStepsError(opts.maxSteps);
+    throw new MaxStepsError(effectiveMaxSteps);
   } catch (error) {
     // HandoffSignal transfere o controle ao caller e não grava run_state:
     // single+handoff não é retomável por planResume (multi-agent tem loop próprio).
@@ -359,6 +393,7 @@ function errorHasHandoffName(error: unknown): boolean {
 function interruptReason(error: unknown, signal?: AbortSignal): string {
   if (isAbortError(error, signal)) return "cancelled";
   if (error instanceof SwapDeniedError) return "swap_denied";
+  if (error instanceof BudgetExceededError) return "budget_exceeded";
   return error instanceof Error ? error.name : String(error);
 }
 
@@ -425,6 +460,8 @@ export interface MultiAgentSessionOptions {
   };
   /** Budget (F-05): aviso/limite derivados do ledger (enforcement nas partes 3–4). */
   budget?: BudgetConfig;
+  /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
+  budgetDecide?: BudgetDecider;
   /** Ambiente do run; vai ao ToolContext do shell. */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -503,6 +540,25 @@ export async function runMultiAgentSession(
     budgetWarned = true;
     opts.audit.append({ run: opts.run, agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
   };
+  let ceilingRecorded = false;
+  /** Teto físico também é reavaliado após o uso (último step não escapa, B10). */
+  const checkCeiling = (agent: string): void => {
+    if (opts.budget?.hardCeilingUsd === undefined || ceilingRecorded) return;
+    const status = budgetStatus(opts.budget, opts.ledger);
+    if (status.spentUsd === null) {
+      ceilingRecorded = true;
+      opts.audit.append({ run: opts.run, agent, tipo: "budget.exceeded",
+        payload: { scope: status.scope, spentUsd: status.spentUsd, limitUsd: status.limitUsd, reason: "unknown_price" } });
+      opts.ledger.recordBudgetExceeded({ run: opts.run, agent, exceeded_choice: "stop" });
+      throw new BudgetExceededError("unknown_price", status);
+    }
+    if (!status.ceilingHit) return;
+    ceilingRecorded = true;
+    opts.audit.append({ run: opts.run, agent, tipo: "budget.ceiling_hit",
+      payload: { scope: status.scope, spentUsd: status.spentUsd, hardCeilingUsd: opts.budget.hardCeilingUsd } });
+    opts.ledger.recordCeilingHit({ run: opts.run, agent, ceiling_hit: true });
+    throw new BudgetExceededError("ceiling", status);
+  };
   const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run, cwd: opts.cwd };
   /** Ack do receptor com timeout (F-24): hook de teste ou o ciclo padrão do ledger. */
   const ackWithTimeout = (h: { handoff_id: string; artifact: HandoffArtifactV1 }, receiver: string) =>
@@ -560,7 +616,8 @@ export async function runMultiAgentSession(
     ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, currentAgent.profile);
     agentsUsed.push(currentAgentName);
 
-    while (step < opts.baseMaxSteps) {
+    let effectiveBaseMaxSteps = opts.baseMaxSteps;
+    while (step < effectiveBaseMaxSteps) {
       throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
       // Verificar limite do agent atual
       if (agentSteps >= currentMaxSteps) {
@@ -576,8 +633,18 @@ export async function runMultiAgentSession(
 
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
-      // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
+      // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(currentAgentName);
+      // Budget (B4/B10, I-17): teto físico/esgotamento antes da chamada
+      if (opts.budget !== undefined) {
+        const choice = await enforceBudget({
+          budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: currentAgentName, audit: opts.audit,
+          ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
+        });
+        if (choice === "lower_effort") {
+          effectiveBaseMaxSteps = Math.min(effectiveBaseMaxSteps, step + Math.max(1, Math.floor((effectiveBaseMaxSteps - step) / 2)));
+        }
+      }
       // Team (F7-5): budget do projeto e quota do agent corrente
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
@@ -635,6 +702,7 @@ export async function runMultiAgentSession(
         identity.price,
       );
       maybeWarnBudget(currentAgentName);
+      checkCeiling(currentAgentName);
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });
@@ -741,7 +809,7 @@ export async function runMultiAgentSession(
     }
 
     tracer?.end(rootSpan, { status: "max_steps" });
-    throw new MaxStepsError(opts.baseMaxSteps);
+    throw new MaxStepsError(effectiveBaseMaxSteps);
   } catch (error) {
     // Falha pós-ack é terminal para o handoff: grava handoff.failed (F-24, I-19).
     // Cancelamento (F-06) NÃO grava failed: o artefato permanece no ledger para auditoria;
@@ -749,9 +817,10 @@ export async function runMultiAgentSession(
     if (
       activeHandoff !== undefined &&
       !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&
-      // Negação de troca não é falha do handoff já recebido: o estado interrupted
-      // permite retomar e re-perguntar (I-08 + I-19).
+      // Negação de troca ou corte de budget não é falha do handoff já recebido:
+      // o estado interrupted permite retomar e re-perguntar (I-08/I-17 + I-19).
       !(error instanceof SwapDeniedError) &&
+      !(error instanceof BudgetExceededError) &&
       !isAbortError(error, opts.signal)
     ) {
       recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {

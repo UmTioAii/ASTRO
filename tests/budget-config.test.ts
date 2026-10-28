@@ -116,7 +116,10 @@ describe("run.maxTurns no runtime (F-05, #132 parte 1)", () => {
   });
 
   test("unlimited fica limitado ao agent.maxSteps até o corte físico (B10)", async () => {
-    const { calls } = await callsFor({ run: { maxTurns: "unlimited" }, budget: { scope: "use-as-you-go", limitUsd: null, hardCeilingUsd: 1 } }, 3);
+    const priced = [{ provider: "openai", id: "m1", tags: ["writing-code"], context: 8192,
+      price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } }];
+    const { calls } = await callsFor({ run: { maxTurns: "unlimited" },
+      budget: { scope: "use-as-you-go", limitUsd: null, hardCeilingUsd: 1000 }, models: priced }, 3);
     expect(calls).toBe(3);
   });
 
