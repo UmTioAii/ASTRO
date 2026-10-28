@@ -383,9 +383,11 @@ export async function runMultiAgentSession(
   let currentModel = modelFor(currentAgent);
   let currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
   let currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
-  let currentTools: Set<string> = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
   let step = 0;
   let agentSteps = 0; // steps do agent atual
+  /** Teto de escopo do agent atual (I-02): máximo de tools disponíveis no baseExecutor. */
+  let currentCeiling: Set<string> = new Set(opts.baseExecutor.allow);
+  let currentTools: Set<string> = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
   /** Handoff ack nesta sessão; falha pós-ack grava handoff.failed (F-24). */
   let activeHandoff: { handoff_id: string; artifact: HandoffArtifactV1 } | undefined;
   const ackTimeoutMs = opts.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS;
@@ -431,6 +433,8 @@ export async function runMultiAgentSession(
       currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
       currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
       currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+      // Teto de escopo na retomada = máximo do baseExecutor (I-02)
+      // currentCeiling não muda — já é o máximo do baseExecutor
       messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
       // Verifier de identidade na retomada (F-26): o receptor começa em source_step+1
       verifyHandoffIdentity(
@@ -474,6 +478,7 @@ export async function runMultiAgentSession(
       const executor = new ToolExecutor({
         tools: opts.baseExecutor.allTools,
         allow: [...currentTools],
+        ceiling: [...currentCeiling],
         audit: opts.audit,
       });
 
@@ -576,6 +581,8 @@ export async function runMultiAgentSession(
           // CAS (F-26, I-18): created já recebido em outro processo → devolve o existente, sem reexecutar
           if (scanHandoffs(opts.ledger, opts.run).find((h) => h.handoff_id === entry.handoff_id)?.state === "completed") continue;
           const emitterName = currentAgentName;
+          // Teto de escopo permanece o máximo do baseExecutor (I-02: teto do sistema)
+          // currentCeiling não muda — já é o máximo do baseExecutor
           if (handoff.to !== currentAgentName) agentSteps = 0;
           currentModel = toModel;
           currentAgentName = handoff.to;
