@@ -14,10 +14,3 @@ regexes = ['Bearer testtoken123456789012']
 [[allowlist]]
 description = "Ignore test files with fake secrets in comments"
 regexes = ['gitleaks-ignore']
-
-[[rule]]
-id = "generic-api-key"
-description = "Generic API key detection"
-regex = '(?i)(?:api[_-]?key|apikey|secret|token|password|passwd)\s*[:=]\s*[''"]?[a-zA-Z0-9_\-]{16,}[''"]?'
-tags = ["key", "API"]
-entropy = 3.0
