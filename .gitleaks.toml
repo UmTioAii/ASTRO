@@ -1,16 +1,12 @@
 # gitleaks configuration
 # https://github.com/gitleaks/gitleaks#configuration
 
-[[allowlist]]
-description = "Test files with fake secrets for testing redactSecrets"
+[allowlist]
+description = "Test files and constants with fake secrets for testing redactSecrets"
 paths = [
   "tests/**/*",
 ]
-
-[[allowlist]]
-description = "Ignore test constants with Bearer pattern in test files"
-regexes = ['Bearer testtoken123456789012']
-
-[[allowlist]]
-description = "Ignore test files with fake secrets in comments"
-regexes = ['gitleaks-ignore']
+regexes = [
+  'Bearer testtoken123456789012',
+  'gitleaks-ignore',
+]
