@@ -66,9 +66,13 @@ test("config valida mcpServers com defaults e rejeita por transport", () => {
     mcpServers: servers,
     paths: { ledger: "l", audit: "a" },
   });
-  const valid = withServers({ fs: { transport: "stdio", command: "bun" }, api: { transport: "http", url: "http://mcp/v1" } });
-  expect(valid.mcpServers!.fs).toMatchObject({ transport: "stdio", command: "bun", args: [], timeoutMs: 30000, enabled: true });
+  const valid = withServers({
+    fs: { transport: "stdio", command: "bun", retryBackoffMs: 250 },
+    api: { transport: "http", url: "http://mcp/v1" },
+  });
+  expect(valid.mcpServers!.fs).toMatchObject({ transport: "stdio", command: "bun", args: [], timeoutMs: 30000, enabled: true, retryBackoffMs: 250 });
   expect(valid.mcpServers!.api).toMatchObject({ transport: "http", url: "http://mcp/v1" });
+  expect(valid.mcpServers!.api.retryBackoffMs).toBeUndefined(); // default vive no registry
 
   const invalid = (servers: unknown) => () => withServers(servers);
   expect(invalid({ x: { transport: "stdio" } })).toThrow(/command/);
@@ -76,6 +80,9 @@ test("config valida mcpServers com defaults e rejeita por transport", () => {
   expect(invalid({ x: { transport: "grpc", command: "x" } })).toThrow(/transport/);
   expect(invalid({ x: { transport: "stdio", command: "x", timeoutMs: -1 } })).toThrow(/timeoutMs/);
   expect(invalid({ x: { transport: "stdio", command: "x", enabled: "sim" } })).toThrow(/enabled/);
+  expect(invalid({ x: { transport: "stdio", command: "x", retryBackoffMs: 0 } })).toThrow(/retryBackoffMs/);
+  expect(invalid({ x: { transport: "stdio", command: "x", retryBackoffMs: 1.5 } })).toThrow(/retryBackoffMs/);
+  expect(invalid({ x: { transport: "stdio", command: "x", retryBackoffMs: "100" } })).toThrow(/retryBackoffMs/);
 });
 
 test("client stdio conecta, lista e chama tools com env sanitizado", async () => {
