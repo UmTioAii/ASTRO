@@ -105,23 +105,26 @@ async function runOnce(budgetCfg: Record<string, unknown>, seed?: (ledgerPath: s
   return { cwd, configPath, calls: () => calls, stop: () => server.stop(true) };
 }
 
-/** Config com profile `cheap` → fallback `big` (modelo caro). */
+/** Config com profiles `cheap → big → huge`; p/q falham e r responde. */
 async function profileRun() {
   const cwd = mkdtempSync(join(tmpdir(), "astro-budget-profile-"));
   let calls = 0;
-  const server = Bun.serve({ port: 0, async fetch() {
+  const server = Bun.serve({ port: 0, async fetch(req) {
     calls++;
+    const path = new URL(req.url).pathname;
+    if (path.startsWith("/p") || path.startsWith("/q")) return new Response("x", { status: 400 });
     return Response.json({ choices: [{ message: { content: "fim" } }], usage: { prompt_tokens: 8192, completion_tokens: 0 } });
   } });
-  const base = `http://127.0.0.1:${server.port}/v1`;
   const configPath = join(cwd, "astro.config.json");
+  const provider = (path: string) => ({ kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}${path}/v1`, credentialRef: "KEY" });
   writeFileSync(configPath, JSON.stringify({
-    providers: { p: { kind: "openai-compat", baseUrl: base, credentialRef: "KEY" }, q: { kind: "openai-compat", baseUrl: base, credentialRef: "KEY" } },
+    providers: { p: provider("/p"), q: provider("/q"), r: provider("/r") },
     models: [
       { provider: "p", id: "m1", tags: ["writing-code"], context: 8192, price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } },
-      { provider: "q", id: "m2", tags: ["writing-code"], context: 8192, price: { inputPerM: 1000, outputPerM: 1000, fonte: "t", verificado: false } },
+      { provider: "q", id: "m2", tags: ["writing-code"], context: 8192, price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } },
+      { provider: "r", id: "m3", tags: ["writing-code"], context: 8192, price: { inputPerM: 1000, outputPerM: 1000, fonte: "t", verificado: false } },
     ],
-    modelPool: { cheap: { model: "p/m1", fallback: ["big"] }, big: { model: "q/m2" } },
+    modelPool: { cheap: { model: "p/m1", fallback: ["big"] }, big: { model: "q/m2", fallback: ["huge"] }, huge: { model: "r/m3" } },
     agent: { profile: "cheap", maxSteps: 2, tools: [] },
     budget: { scope: "day", limitUsd: 2 },
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
@@ -163,7 +166,7 @@ describe("reserva no run (B9, #132 parte 4)", () => {
     }
   });
 
-  test("fallback de profile entra na reserva (B9/F-31)", async () => {
+  test("cadeia transitiva de profile entra na reserva (B9/F-31)", async () => {
     const { cwd, configPath, calls, stop } = await profileRun();
     try {
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" } }))

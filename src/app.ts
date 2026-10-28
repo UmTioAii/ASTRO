@@ -317,17 +317,24 @@ function chainCost(config: AstroConfig, registry: Registry, model: ModelEntry, p
   }, 0);
 }
 
+/** Custo máximo da cadeia de profiles, transitiva e sem repetir (F-31/B9). */
+function profileChainCost(config: AstroConfig, registry: Registry, name: string, visited = new Set<string>()): number {
+  if (visited.has(name)) return 0;
+  visited.add(name);
+  const profile = config.modelPool?.[name];
+  if (profile === undefined) return 0;
+  const model = registry.resolveProfile(name);
+  const own = chainCost(config, registry, model, model.provider);
+  return own + (profile.fallback ?? []).reduce((total, next) => total + profileChainCost(config, registry, next, visited), 0);
+}
+
 /**
  * Custo máximo de uma chamada (B9): soma o provider primário e fallbacks; com
- * profile, soma a cadeia do profile e a dos fallbacks de profile (F-31).
+ * profile, soma a cadeia transitiva de profiles e os fallbacks de cada um (F-31).
  */
 function reserveForCall(config: AstroConfig, registry: Registry, model: ModelEntry, profile?: string): number {
   if (profile !== undefined && config.modelPool?.[profile] !== undefined) {
-    const names = [profile, ...(config.modelPool[profile].fallback ?? [])];
-    return names.reduce((total, name) => {
-      const profileModel = registry.resolveProfile(name);
-      return total + chainCost(config, registry, profileModel, profileModel.provider);
-    }, 0);
+    return profileChainCost(config, registry, profile);
   }
   return chainCost(config, registry, model);
 }
