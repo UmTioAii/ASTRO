@@ -26,6 +26,8 @@ export interface CompletionRequest {
   tools?: ToolDef[];
   /** Profile da model pool que originou a chamada (F-31); roteia o fallback de profile. */
   profile?: string;
+  /** Recebe deltas de texto quando o provider suporta streaming (T3). */
+  onToken?: (text: string) => void;
 }
 
 /** Uma troca de profile durante um completion (F-31); `reason` é a classe do erro. */
@@ -74,3 +76,5 @@ export class ProviderError extends Error {
     this.status = status;
   }
 }
+/** Requisições que já entregaram token: trocar de provider repetiria o texto. */
+export const streamStarted = new WeakSet<object>();

@@ -66,6 +66,8 @@ export interface RunOptions {
   model?: string;
   /** Não emite run.started/run.completed (a sessão de chat emite por sessão). */
   suppressRunEvents?: boolean;
+  /** Recebe deltas de texto do provider (T3); ausente = resposta única. */
+  onToken?: (text: string) => void;
 }
 
 export interface RunReport {
@@ -695,6 +697,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         baseSystemPrompt: config.agent.systemPrompt,
         entryAgent,
         ...(tracer === undefined ? {} : { tracer }),
+        ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
         resolveIdentity,
         ...(budget === undefined ? {} : { budget }),
         ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry, profile?: string) => reserveForCall(config, registry, m, profile) }),
@@ -734,6 +737,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           audit,
           maxSteps: sessionMaxSteps,
           ...(opts.history === undefined ? {} : { history: opts.history }),
+          ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
           ...(baseProfile === undefined ? {} : { agentProfile: baseProfile }),
           ...(config.agent.systemPrompt === undefined
             ? {}

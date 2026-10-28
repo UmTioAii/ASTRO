@@ -17,7 +17,7 @@ export interface ReplIO {
 
 export interface ChatSession {
   readonly model: string;
-  send(prompt: string, signal?: AbortSignal): Promise<TurnResult>;
+  send(prompt: string, signal?: AbortSignal, onToken?: (text: string) => void): Promise<TurnResult>;
   clear(): void;
   resume(snapshot: SessionSnapshot): void;
   setModel(ref: string): string;

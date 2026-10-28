@@ -50,6 +50,10 @@ O ledger (F-31d) grava a identidade efetiva que atendeu — `provider`, `model`,
 
 `bun src/cli.ts pool health` estende `health` (F6-6): imprime `{status, profiles, providers}` em JSON, com status por profile — `ok` quando o provider primário responde, `degraded` quando ele está fora mas há fallback saudável na cadeia, `down` quando nenhum caminho responde. Sai 0 só com o agregado `ok`.
 
+## Streaming (T3)
+
+Com `CompletionRequest.onToken`, o `openai-compat` pede `stream: true` + `stream_options.include_usage` e consome SSE (`data:`), agregando conteúdo, tool calls fatiadas e usage. Resposta 200 que não é `text/event-stream` cai no parser JSON normal (sem deltas), e frames de erro (`data: {"error":...}`) ou stream sem nenhum frame viram `ProviderError("outage")`. Depois do primeiro token não há retry nem troca de provider/profile (`streamStarted`), para não duplicar texto; o custo usa o usage do chunk final (sem chunk de usage, usage fica zero).
+
 ## SDK de provider (`src/sdk/provider.ts`)
 
 Contratos: `Provider`, `CompletionRequest/Response`, `ToolDef`, `ProviderError` com `ErrorClass` (D-18). Fábrica registrável: `defineProviderFactory(kind, create)`. Harness de teste: `createMockProvider(script)` com `mockResponse`/`mockToolCall`. `Provider.complete(req, signal?)` recebe o `AbortSignal` de cancelamento (F-06): repasse-o ao `fetch` e relance abort sem classificá-lo como erro de provider. No runtime, a troca de provider/profile no fallback e no handoff multi-agent passa por `approveSwap` (F-19); sem ele a troca fica `pending` e o run para em ponto seguro. O multi-agent usa `providerFor(model)` para falar com o provider do modelo do agente (F-31d), não o da entrada.

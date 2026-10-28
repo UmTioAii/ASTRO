@@ -39,6 +39,8 @@ export interface SessionOptions {
   cwd: string;
   provider: Provider;
   model: ModelEntry;
+  /** Recebe deltas de texto quando o provider suporta streaming (T3). */
+  onToken?: (text: string) => void;
   executor: ToolExecutor;
   ledger: Ledger;
   audit: Auditor;
@@ -296,6 +298,7 @@ export async function runSession(
         messages: safePrompt(messages),
         tools: opts.executor.defs(),
         ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
+        ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
       }, opts.signal);
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
@@ -486,6 +489,8 @@ export interface MultiAgentSessionOptions {
   entryAgent: string;
   /** Tracing OTLP (F6-2); ausente = sem spans. */
   tracer?: TracerLike;
+  /** Recebe deltas de texto quando o provider suporta streaming (T3). */
+  onToken?: (text: string) => void;
   /** Limites de quota por domínio (F6-3); ausente = sem enforcement. */
   quotaLimits?: Record<string, QuotaLimit>;
   /** Limites de time (F7-5): budget do projeto e quotas por agent. */
@@ -716,6 +721,7 @@ export async function runMultiAgentSession(
         messages: safePrompt(messages),
         tools: executor.defs(),
         ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
+        ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
       }, opts.signal);
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,

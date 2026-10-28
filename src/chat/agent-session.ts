@@ -199,7 +199,7 @@ export class AgentSession {
     this.#append("session.resumed", { turns: snapshot.turns, model: this.#modelRef });
   }
 
-  async send(prompt: string, signal?: AbortSignal): Promise<TurnResult> {
+  async send(prompt: string, signal?: AbortSignal, onToken?: (text: string) => void): Promise<TurnResult> {
     if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
     if (this.#busy) throw new Error("turno já em andamento");
     this.#busy = true;
@@ -222,6 +222,7 @@ export class AgentSession {
           model: this.#modelRef,
           suppressRunEvents: true,
           history,
+          ...(onToken === undefined ? {} : { onToken }),
           ...(this.#approveSwap === undefined ? {} : { approveSwap: this.#approveSwap }),
           ...(this.#budgetDecider === undefined ? {} : { onBudgetExceeded: this.#budgetDecider }),
         });

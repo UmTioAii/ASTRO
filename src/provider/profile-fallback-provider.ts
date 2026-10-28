@@ -1,6 +1,7 @@
 /** Fallback por profile (F-31, ADR-0007): reusa a política F-01/D-14; ordem declarada, sem repetir profile. */
 import type { Auditor } from "../audit";
 import { isAbortError } from "../abort";
+import { streamStarted } from "./types";
 import { SwapDeniedError, type SwapApprover, type SwapRequest } from "../approval";
 import { DEFAULT_LIMITS, errorPolicy } from "./policy";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type ErrorClass, type FallbackRecord, type Provider } from "./types";
@@ -79,13 +80,16 @@ export class ProfileFallbackProvider implements Provider {
         this.#hop(fallbacks, chain, i, "invalid_request");
         continue;
       }
+      let attempt: CompletionRequest | undefined;
       try {
-        const response = await provider.complete({ ...req, model: entry.model }, signal);
+        attempt = { ...req, model: entry.model };
+        const response = await provider.complete(attempt, signal);
         return { ...response, provider: response.provider ?? entry.provider, model: response.model ?? entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
         if (isAbortError(error, signal)) throw error;
         // Negação de troca é terminal (I-08): não vira hop para o próximo profile
         if (error instanceof SwapDeniedError) throw error;
+        if (streamStarted.has(req) || (attempt !== undefined && streamStarted.has(attempt))) throw error;
         lastError = error;
         const errorClass: ErrorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
         lastReason = errorClass;

@@ -8,6 +8,7 @@
  */
 import type { Auditor } from "../audit";
 import { isAbortError } from "../abort";
+import { streamStarted } from "./types";
 import { SwapDeniedError, type SwapApprover, type SwapRequest } from "../approval";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type Provider } from "./types";
 
@@ -99,6 +100,7 @@ export class FallbackProvider implements Provider {
           if (isAbortError(error, signal)) throw error;
           // Negação de troca é terminal (I-08): não tenta o próximo provider
           if (error instanceof SwapDeniedError) throw error;
+          if (streamStarted.has(req)) throw error;
           lastError = error;
           const errorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
           lastClass = errorClass;
