@@ -1,7 +1,4 @@
-/**
- * REPL mínimo do chat (T1): loop de readline com I/O injetável (testes nunca
- * usam TTY) e comandos de barra. A UI não conhece provider/ledger — só a sessão.
- */
+/** REPL mínimo do chat (T1): I/O injetável e comandos; a UI só fala com a sessão. */
 import { HELP_TEXT, parseCommand } from "./commands";
 import type { SessionSnapshot, TurnResult } from "./agent-session";
 import type { SessionStore } from "./store";
@@ -37,13 +34,10 @@ function fmtCost(value: number | null): string {
 }
 
 function statusLine(result: TurnResult): string {
-  const notes = [result.warning ? "⚠ contexto ≥80%" : "", result.trimmed ? "turno antigo descartado" : ""]
-    .filter((note) => note !== "").join(" · ");
-  return [
-    `[${result.model}] ${result.steps} step(s) · ${result.tokensIn}/${result.tokensOut} tokens`,
-    `total ${result.totalTokensIn}/${result.totalTokensOut} · ${fmtCost(result.totalCostUsd)}`,
-    ...(notes === "" ? [] : [notes]),
-  ].join(" · ");
+  const note = [result.warning ? "⚠ contexto ≥80%" : "", result.trimmed ? "turno antigo descartado" : ""]
+    .filter((item) => item !== "").join(" · ");
+  const totals = `total ${result.totalTokensIn}/${result.totalTokensOut} · ${fmtCost(result.totalCostUsd)}`;
+  return `[${result.model}] ${result.steps} step(s) · ${result.tokensIn}/${result.tokensOut} tokens · ${totals}${note === "" ? "" : ` · ${note}`}`;
 }
 
 /** Executa o REPL até `/exit`, EOF ou erro fatal; sempre fecha a sessão. */

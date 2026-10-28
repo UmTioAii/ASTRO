@@ -25,18 +25,22 @@ describe("store de sessão do chat (T1, #62)", () => {
     expect(record).toMatchObject({ schemaVersion: 1, id: "s1", model: "p/m1", turns: 1, costUsd: 0.001 });
     expect(readdirSync(dir).some((name) => name.endsWith(".tmp"))).toBe(false);
   });
-
-  test("sanitiza segredo na escrita (env-like e dentro de toolCalls)", () => {
+  test("sanitiza segredo na escrita (env-like, JSON aninhado e toolCalls)", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-chat-store-"));
     const path = new SessionStore(dir).write(snapshot({
-      messages: [{ role: "assistant", content: "", toolCalls: [{ id: "1", name: "run_command",
-        arguments: "GITHUB_TOKEN=ghp_abc12345678 OPENAI_API_KEY=xyz789 x-api-key: abcd1234efgh5678" }] }],
+      messages: [
+        { role: "assistant", content: "", toolCalls: [{ id: "1", name: "run_command",
+          arguments: JSON.stringify({ apiKey: "abcd1234efgh5678", nested: { password: "hunter2xyz" } }) }] },
+        { role: "user", content: 'GITHUB_TOKEN="ghp_abc12345678" x-api-key: abcd1234efgh5678 TOKEN="abc123456789"' },
+      ],
     }));
     const text = readFileSync(path, "utf8");
-    for (const secret of ["ghp_abc12345678", "xyz789", "abcd1234efgh5678"]) expect(text).not.toContain(secret);
+    for (const secret of ["abcd1234efgh5678", "hunter2xyz", "ghp_abc12345678", "abc123456789"]) {
+      expect(text).not.toContain(secret);
+    }
     expect(text).toContain("REDACTED");
+    expect(() => JSON.parse(text)).not.toThrow();
   });
-
   test("recusa id/startedAt que escapariam do diretório", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-chat-store-"));
     const store = new SessionStore(dir);

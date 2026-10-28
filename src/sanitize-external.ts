@@ -39,9 +39,12 @@ const REDACT_PREFIX = new RegExp(
   `(?:${GHP_PREFIX}|${XOX_PREFIX}[bp]-|${AIZA_PREFIX}|${AKIA_PREFIX}|${GL_PREFIX})[A-Za-z0-9_-]{8,}`,
   "g",
 );
-// JSON `"OPENAI_API_KEY": "..."` e atribuições `TOKEN=...`/`API_KEY: ...`
-const REDACT_ENV_JSON = /"([A-Za-z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|ACCESS_KEY)[A-Za-z0-9_]*)"\s*:\s*"[^"]*"/gi;
-const REDACT_ENV_ASSIGN = /\b([A-Za-z0-9_-]*(?:API[-_]?KEY|TOKEN|SECRET|PASSWORD|ACCESS[-_]?KEY)[A-Za-z0-9_-]*)\s*[=:]\s*[^\s,;"']+/gi;
+// JSON `"apiKey":"..."`, env `TOKEN=...`/`x-api-key: ...` (com ou sem aspas)
+const SECRET_KEY = "(?:api[-_]?key|access[-_]?key|token|secret|password)";
+const REDACT_ENV = new RegExp(
+  `\\b([A-Za-z0-9_-]*${SECRET_KEY}[A-Za-z0-9_-]*)("?\\s*[=:]\\s*"?)([^\\s,;"'\\\\]*)((?:\\\\")|")?`,
+  "gi",
+);
 
 const REDACTED = "[REDACTED]";
 
@@ -54,8 +57,7 @@ export function redactSecrets(text: string): string {
     .replace(REDACT_BEARER, `${BEARER_WORD} ${REDACTED}`)
     .replace(REDACT_NV, REDACTED)
     .replace(REDACT_PREFIX, REDACTED)
-    .replace(REDACT_ENV_JSON, '"$1":"[REDACTED]"')
-    .replace(REDACT_ENV_ASSIGN, "$1=[REDACTED]");
+    .replace(REDACT_ENV, "$1$2[REDACTED]$4");
 }
 
 /** Estimativa conservadora: ~4 chars por token. */

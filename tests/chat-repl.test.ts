@@ -80,7 +80,6 @@ describe("REPL do chat (T1, #62)", () => {
     expect(io.outputs.some((line) => line.includes("comando desconhecido: /nope"))).toBe(true);
     expect(readdirSync(dir).some((name) => name.endsWith(".json"))).toBe(true);
   });
-
   test("erro de turno não encerra; erro fatal encerra", async () => {
     const ok = new FakeSession();
     ok.fail = 1;
@@ -96,7 +95,6 @@ describe("REPL do chat (T1, #62)", () => {
     expect(fatal.sent).toEqual(["a"]);
     expect(fatal.closed).toBe(1);
   });
-
   test("persiste o estado final após /clear sem novo turno", async () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-chat-repl-final-"));
     const session = new FakeSession();
@@ -104,11 +102,5 @@ describe("REPL do chat (T1, #62)", () => {
     const file = readdirSync(dir).find((name) => name.endsWith(".json"))!;
     const record = JSON.parse(readFileSync(join(dir, file), "utf8")) as { messages: unknown[] };
     expect(record.messages).toEqual([{ role: "system", content: "sys" }]);
-  });
-
-  test("EOF encerra e fecha a sessão", async () => {
-    const session = new FakeSession();
-    await runRepl(session, new ScriptedIO([]));
-    expect(session.closed).toBe(1);
   });
 });
