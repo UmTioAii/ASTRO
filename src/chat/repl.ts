@@ -72,7 +72,11 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
   let lastFile: string | undefined;
   const persist = (): void => {
     if (opts.store === undefined) return;
-    lastFile = opts.store.write(session.snapshot());
+    try {
+      lastFile = opts.store.write(session.snapshot());
+    } catch (error) {
+      io.write(paint(`erro: ${messageOf(error)}`, RED, style));
+    }
   };
   io.write(paint("astro chat - /help para comandos, /exit para sair", DIM, style));
   try {
