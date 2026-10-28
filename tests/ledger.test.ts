@@ -317,7 +317,8 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
 
     test("campos opcionais e redactSecrets funcionam", () => {
       const l = new Ledger(join(testDir(), "ledger.jsonl"));
-      const secret = "sk-secret123";
+      // redactSecrets redige: sk-* (8+ chars), Bearer * (12+ chars), nvapi-* (8+ chars)
+      const secret = "sk-secret123456"; // 8+ chars after sk-
       l.recordAgentCreated({
         run: "r1",
         agent_id: "sub-1",
@@ -328,6 +329,7 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
       });
       const content = readFileSync(l.path, "utf8");
       expect(content).not.toContain(secret);
+      expect(content).toContain("[REDACTED]");
     });
   });
 
@@ -459,22 +461,26 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
     test("secret em reason de agent não vaza", () => {
       const path = join(testDir(), "ledger.jsonl");
       const l = new Ledger(path);
-      const secret = "Bearer sk-abc123";
+      // redactSecrets redige: sk-* (8+ chars), Bearer * (12+ chars), nvapi-* (8+ chars)
+      const secret = "sk-secret123456"; // 8+ chars after sk-
       l.recordAgentCreated({
         run: "r1", agent_id: "a1", session_id: "s1", need: "n", model: "m",
         reason: `auth: ${secret}`,
       });
       const content = readFileSync(path, "utf8");
       expect(content).not.toContain(secret);
+      expect(content).toContain("[REDACTED]");
     });
 
     test("secret em detail de budget não vaza", () => {
       const path = join(testDir(), "ledger.jsonl");
       const l = new Ledger(path);
-      const secret = "key-xyz";
+      // redactSecrets redige: sk-* (8+ chars), Bearer * (12+ chars), nvapi-* (8+ chars)
+      const secret = "sk-secret123456"; // 8+ chars after sk-
       l.recordBudgetReserved({ run: "r1", agent: "p", reserved: 0.1, detail: secret });
       const content = readFileSync(path, "utf8");
       expect(content).not.toContain(secret);
+      expect(content).toContain("[REDACTED]");
     });
   });
 });
