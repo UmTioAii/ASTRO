@@ -6,6 +6,7 @@ const files = ["src/app.ts", "notas/ideias.md"];
 describe("completions do editor (T2, #63)", () => {
   test("/ completa comandos e para no primeiro espaço", () => {
     expect(completionItems("/mo", COMMANDS, files)).toContain("/model");
+    expect(completionItems("/ne")).toEqual(["/new"]);
     expect(completionItems("/res")).toEqual(["/resume"]);
     expect(completionItems("/model p/m1", COMMANDS, files)).toEqual([]);
     expect(completionItems("texto", COMMANDS, files)).toEqual([]);

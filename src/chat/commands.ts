@@ -28,7 +28,7 @@ export const HELP_TEXT = [
   "  /save           grava a sessão sanitizada e mostra o caminho",
   "  /export [arquivo]  exporta a conversa em Markdown (default .astro/exports/)",
   "  /init           cria AGENTS.md no cwd se ainda não existir",
-  "  /clear          limpa o histórico (mantém o system)",
+  "  /clear | /new   limpa o histórico (mantém o system)",
   "  /exit | /quit | /q  encerra a sessão",
 ].join("\n");
 
@@ -46,6 +46,7 @@ export function parseCommand(line: string): ReplCommand {
     case "q":
       return { kind: "exit" };
     case "clear":
+    case "new":
       return { kind: "clear" };
     case "model":
       return { kind: "model", ...(arg === "" ? {} : { model: arg }) };

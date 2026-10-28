@@ -120,7 +120,7 @@ On a terminal, swap approval (`s/N`) and budget overrun (`c`/`l`/`p`) are asked 
 
 `bun src/cli.ts tui` opens the Ink interface (ADR-0001): conversation panel, single-line input and a status bar with cwd/branch, model, turns, tokens and cost. Tab completes slash commands and `@` files from the cwd; `!cmd` runs the shell through `run_command` only when it is in `agent.tools` (same sandbox/timeout); swap approval and budget prompts are answered in the panel with the same rules as `chat` (empty or EOF denies, exact budget tokens). It needs a real terminal; `chat` remains the piped option.
 
-It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/sessions`, `/resume`, `/save`, `/export`, `/init`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Markdown rendering, keybindings, theme and session picker land in the next T2 slice (#63).
+It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/sessions`, `/resume`, `/save`, `/export`, `/init`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Assistant replies render basic Markdown (headings, lists, inline code/bold, fenced blocks); `/new` aliases `/clear`. Keybindings, theme, session picker and diff view land in the next slices (#63).
 
 ## Environment variables
 

@@ -37,4 +37,9 @@ describe("comandos do chat (T1, #62)", () => {
     expect(parseCommand("/export notas.md")).toEqual({ kind: "export", path: "notas.md" });
     expect(parseCommand("/init")).toEqual({ kind: "init" });
   });
+
+
+  test("/new é alias de /clear", () => {
+    expect(parseCommand("/new")).toEqual({ kind: "clear" });
+  });
 });
