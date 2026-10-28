@@ -317,6 +317,7 @@ function providerChain(
   quotaLimits: Record<string, QuotaLimit> | undefined,
   profile?: string,
   approveSwap?: SwapApprover,
+  agentName?: () => string,
 ): Provider {
   const primaryConfig = config.providers[model.provider];
   return new FallbackProvider({
@@ -342,6 +343,7 @@ function providerChain(
     run,
     ...(profile === undefined ? {} : { profile }),
     ...(approveSwap === undefined ? {} : { approveSwap }),
+    ...(agentName === undefined ? {} : { agentName }),
   });
 }
 /** Valida as tools pedidas pelo agente e devolve as instâncias correspondentes. */
@@ -401,10 +403,11 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     const from = registry.get(`${request.from.provider}/${request.from.model ?? ""}`);
     const to = registry.get(`${request.to.provider}/${request.to.model ?? ""}`);
     const enriched: SwapRequest = { ...request, ...swapDelta(from, to) };
+    const agent = enriched.agent ?? AGENT_NAME;
     const payload = { from: enriched.from, to: enriched.to, reason: enriched.reason, costDeltaUsd: enriched.costDeltaUsd, capabilityDelta: enriched.capabilityDelta };
-    audit.append({ run, agent: AGENT_NAME, tipo: "swap.requested", payload });
+    audit.append({ run, agent, tipo: "swap.requested", payload });
     if (opts.approveSwap === undefined) {
-      audit.append({ run, agent: AGENT_NAME, tipo: "swap.pending", payload });
+      audit.append({ run, agent, tipo: "swap.pending", payload });
       throw new SwapDeniedError(enriched, "pending");
     }
     let approved: boolean;
@@ -413,11 +416,11 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     } catch (error) {
       // Approver que lança não deixa decisão sem evento (I-04): nega e para
       if (error instanceof SwapDeniedError) throw error;
-      audit.append({ run, agent: AGENT_NAME, tipo: "swap.denied",
+      audit.append({ run, agent, tipo: "swap.denied",
         payload: { ...payload, error: error instanceof Error ? error.name : "unknown" } });
       throw new SwapDeniedError(enriched, "denied");
     }
-    audit.append({ run, agent: AGENT_NAME, tipo: approved ? "swap.approved" : "swap.denied", payload });
+    audit.append({ run, agent, tipo: approved ? "swap.approved" : "swap.denied", payload });
     return approved;
   };
   const registry = new Registry(config);
@@ -476,8 +479,10 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   // F-31c: providers preguiçosos; sem profile, o caminho é o anterior (C6 só
   // com fallback de provider declarado).
   const baseConfig = config.providers[model.provider];
+  /** Agente corrente do multi-agent; os wrappers atribuem swap.* a ele. */
+  const activeAgent = { name: AGENT_NAME };
   let effectiveProvider = (baseConfig?.fallback ?? []).length > 0
-    ? providerChain(config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap)
+    ? providerChain(config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
     : lazyProvider(() => createGuardedProvider(
       config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits,
     ));
@@ -493,7 +498,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         provider: profileModel.provider,
         fallback: profile.fallback ?? [],
         create: () => (chain ??= providerChain(
-          config, profileModel, env, loaded.providerFactories, audit, run, ledger, quotaLimits, name, approveSwap,
+          config, profileModel, env, loaded.providerFactories, audit, run, ledger, quotaLimits, name, approveSwap, () => activeAgent.name,
         )),
       };
     });
@@ -505,27 +510,46 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       audit,
       run,
       approveSwap,
+      agentName: () => activeAgent.name,
     });
   }
 
-  // Completion cache (F6-4): wrap do provider com cache SQLite (por cima do fallback quando ativo)
-  if (config.cache?.enabled === true) {
-    const cacheDbPath = join(dirname(ledgerPath), "cache.db");
-    const cache = new CompletionCache(cacheDbPath);
-    effectiveProvider = cachedProvider(effectiveProvider, {
-      cache,
-      ttlHours: config.cache.ttlHours,
-      maxEntries: config.cache.maxEntries,
+  // Completion cache (F6-4): vale para o provider base/profile e para os
+  // providers por modelo do multi-agent (mesma instância de cache).
+  let cache: CompletionCache | undefined;
+  const withCache = (provider: Provider): Provider => {
+    const c = cache;
+    if (c === undefined) return provider;
+    return cachedProvider(provider, {
+      cache: c,
+      ttlHours: config.cache!.ttlHours,
+      maxEntries: config.cache!.maxEntries,
       onHit: (key) => {
-        audit.append({
-          run,
-          agent: AGENT_NAME,
-          tipo: "cache.hit",
-          payload: { key: key.slice(0, 16) },
-        });
+        audit.append({ run, agent: AGENT_NAME, tipo: "cache.hit", payload: { key: key.slice(0, 16) } });
       },
     });
+  };
+  if (config.cache?.enabled === true) {
+    cache = new CompletionCache(join(dirname(ledgerPath), "cache.db"));
+    effectiveProvider = withCache(effectiveProvider);
   }
+
+  // Provider por modelo do agent (F-31d): o multi-agent troca de modelo e precisa
+  // falar com o provider certo, não com o do modelo de entrada. Agents com
+  // profile usam o wrapper da pool (roteia por `req.profile`).
+  const modelProviders = new Map<string, Provider>();
+  const providerFor = (m: ModelEntry, profile?: string): Provider => {
+    if (profile !== undefined) return effectiveProvider;
+    const key = `${m.provider}/${m.id}`;
+    let provider = modelProviders.get(key);
+    if (provider === undefined) {
+      provider = (config.providers[m.provider]?.fallback ?? []).length > 0
+        ? providerChain(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
+        : createGuardedProvider(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits);
+      modelProviders.set(key, withCache(provider));
+    }
+    return provider;
+  };
 
   // O shell não deve ver chaves de nenhum provider configurado, mesmo inativo
   const secretEnvNames: string[] = [];
@@ -594,6 +618,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         quotaDomain,
         cwd,
         provider: effectiveProvider,
+        providerFor,
+        approveSwap,
+        activeAgent,
         registry,
         baseModel: model,
         baseExecutor,

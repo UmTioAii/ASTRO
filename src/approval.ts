@@ -14,6 +14,8 @@ export interface SwapTarget {
 
 export interface SwapRequest {
   run: string;
+  /** Agente que pediu a troca (handoff); ausente = agente base do run. */
+  agent?: string;
   from: SwapTarget;
   to: SwapTarget;
   reason: string;
