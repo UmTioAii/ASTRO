@@ -407,7 +407,16 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       audit.append({ run, agent: AGENT_NAME, tipo: "swap.pending", payload });
       throw new SwapDeniedError(enriched, "pending");
     }
-    const approved = await opts.approveSwap(enriched);
+    let approved: boolean;
+    try {
+      approved = await opts.approveSwap(enriched);
+    } catch (error) {
+      // Approver que lança não deixa decisão sem evento (I-04): nega e para
+      if (error instanceof SwapDeniedError) throw error;
+      audit.append({ run, agent: AGENT_NAME, tipo: "swap.denied",
+        payload: { ...payload, error: error instanceof Error ? error.name : "unknown" } });
+      throw new SwapDeniedError(enriched, "denied");
+    }
     audit.append({ run, agent: AGENT_NAME, tipo: approved ? "swap.approved" : "swap.denied", payload });
     return approved;
   };

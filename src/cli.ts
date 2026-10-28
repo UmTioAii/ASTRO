@@ -33,10 +33,13 @@ function ttyApprover(): SwapApprover | undefined {
       const caps = request.capabilityDelta === undefined || request.capabilityDelta.length === 0
         ? ""
         : `; capacidades ${request.capabilityDelta.join(",")}`;
-      const answer = await new Promise<string>((resolve) =>
-        rl.question(`troca de identidade: ${from} → ${to} (motivo: ${request.reason}${cost}${caps}). aprovar? [s/N] `, resolve),
-      );
-      return /^(s|sim|y|yes)$/i.test(answer.trim());
+      const answer = await new Promise<boolean>((resolve) => {
+        // Stream encerrado sem resposta (EOF/Ctrl-D) nega em vez de pendurar
+        rl.once("close", () => resolve(false));
+        rl.question(`troca de identidade: ${from} → ${to} (motivo: ${request.reason}${cost}${caps}). aprovar? [s/N] `,
+          (input) => resolve(/^(s|sim|y|yes)$/i.test(input.trim())));
+      });
+      return answer;
     } finally {
       rl.close();
     }
