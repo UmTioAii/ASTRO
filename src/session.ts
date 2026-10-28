@@ -1,5 +1,6 @@
 import type { Auditor } from "./audit";
 import { isAbortError, throwIfAborted } from "./abort";
+import { SwapDeniedError } from "./approval";
 import { CallJournal } from "./call-id";
 import { hashToolCalls, type HandoffEventKind, type Ledger, type LedgerAgentEntry } from "./ledger";
 import { buildHandoffArtifact, HandoffError, handoffId, sanitizeHandoffArtifact, taskHash, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
@@ -340,6 +341,7 @@ function errorHasHandoffName(error: unknown): boolean {
 /** Razão registrada no `run_state interrupted`: abort vira "cancelled" (F-06). */
 function interruptReason(error: unknown, signal?: AbortSignal): string {
   if (isAbortError(error, signal)) return "cancelled";
+  if (error instanceof SwapDeniedError) return "swap_denied";
   return error instanceof Error ? error.name : String(error);
 }
 

@@ -52,7 +52,7 @@ O ledger (F-31d) grava a identidade efetiva que atendeu — `provider`, `model`,
 
 ## SDK de provider (`src/sdk/provider.ts`)
 
-Contratos: `Provider`, `CompletionRequest/Response`, `ToolDef`, `ProviderError` com `ErrorClass` (D-18). Fábrica registrável: `defineProviderFactory(kind, create)`. Harness de teste: `createMockProvider(script)` com `mockResponse`/`mockToolCall`. `Provider.complete(req, signal?)` recebe o `AbortSignal` de cancelamento (F-06): repasse-o ao `fetch` e relance abort sem classificá-lo como erro de provider.
+Contratos: `Provider`, `CompletionRequest/Response`, `ToolDef`, `ProviderError` com `ErrorClass` (D-18). Fábrica registrável: `defineProviderFactory(kind, create)`. Harness de teste: `createMockProvider(script)` com `mockResponse`/`mockToolCall`. `Provider.complete(req, signal?)` recebe o `AbortSignal` de cancelamento (F-06): repasse-o ao `fetch` e relance abort sem classificá-lo como erro de provider. No runtime, toda troca de provider/profile passa por `approveSwap` (F-19); sem ele a troca fica `pending` e o run para em ponto seguro.
 
 Exemplo completo: `examples/provider-ollama/ollama.ts` (~90 linhas).
 

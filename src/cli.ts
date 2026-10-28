@@ -16,6 +16,32 @@ import { runSkillsCommand } from "./skills/cli";
 import { runMcpCommand } from "./mcp/cli";
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+import type { SwapApprover } from "./approval";
+
+/** Aprovação interativa de troca (F-19); sem TTY retorna undefined (runtime nega/pending). */
+function ttyApprover(): SwapApprover | undefined {
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return undefined;
+  return async (request) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const from = `${request.from.provider}/${request.from.model ?? "?"}`;
+      const to = `${request.to.provider}/${request.to.model ?? "?"}`;
+      const cost = request.costDeltaUsd === undefined || request.costDeltaUsd === null
+        ? ""
+        : `; custo Δ US$${request.costDeltaUsd.toFixed(2)}/1M`;
+      const caps = request.capabilityDelta === undefined || request.capabilityDelta.length === 0
+        ? ""
+        : `; capacidades ${request.capabilityDelta.join(",")}`;
+      const answer = await new Promise<string>((resolve) =>
+        rl.question(`troca de identidade: ${from} → ${to} (motivo: ${request.reason}${cost}${caps}). aprovar? [s/N] `, resolve),
+      );
+      return /^(s|sim|y|yes)$/i.test(answer.trim());
+    } finally {
+      rl.close();
+    }
+  };
+}
 
 const USAGE = `Uso:
   bun src/cli.ts run "<pedido>" [--config <path>] [--cwd <dir>]
@@ -667,6 +693,7 @@ async function main(argv: string[]): Promise<number> {
         runId: o.runId,
         task: o.task,
         ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
+        approveSwap: ttyApprover(),
       });
       const fmtCost = (v: number | null): string => (v === null ? "n/d" : `US$ ${v.toFixed(6)}`);
       console.log(`replay do run ${result.runId}`);
@@ -690,6 +717,7 @@ async function main(argv: string[]): Promise<number> {
         task: o.task,
         ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
         resume: o.runId,
+        approveSwap: ttyApprover(),
       });
       console.log(`retomado ${report.resumedFrom ?? "?"} do run ${report.runId}`);
       console.log(report.final);
@@ -839,7 +867,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   try {
-    const report = await runTask(parsed.options);
+    const report = await runTask({ ...parsed.options, approveSwap: ttyApprover() });
     console.log(report.final);
     console.log("");
     console.log(formatSummary(report));
