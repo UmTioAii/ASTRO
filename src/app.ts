@@ -312,6 +312,19 @@ function assertProviderKind(
  * `profile`, a cadeia é sempre montada (mesmo sem fallback de provider) para
  * aplicar o retry da F-01 e atribuir `provider.*` ao profile.
  */
+/**
+ * Custo máximo de uma chamada (B9): contexto do modelo × maior preço, somando
+ * o provider primário e os fallbacks declarados (cadeia C6).
+ */
+function reserveForCall(config: AstroConfig, registry: Registry, model: ModelEntry): number {
+  const chain = [model.provider, ...(config.providers[model.provider]?.fallback ?? [])];
+  return chain.reduce((total, name) => {
+    const price = registry.get(`${name}/${model.id}`)?.price ?? model.price;
+    if (price === undefined) return total;
+    return total + (model.context * Math.max(price.inputPerM, price.outputPerM)) / 1e6;
+  }, 0);
+}
+
 function providerChain(
   config: AstroConfig,
   model: ModelEntry,
@@ -648,6 +661,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ...(tracer === undefined ? {} : { tracer }),
         resolveIdentity,
         ...(budget === undefined ? {} : { budget }),
+        ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry) => reserveForCall(config, registry, m) }),
         ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
         ...(config.team === undefined
           ? {}
@@ -690,6 +704,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ...(tracer === undefined ? {} : { tracer }),
           resolveIdentity,
           ...(budget === undefined ? {} : { budget }),
+          ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry) => reserveForCall(config, registry, m) }),
           ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
           ...(config.team === undefined
             ? {}

@@ -17,7 +17,7 @@ I-17 exige corte físico de custo; quota (`src/quota.ts`, por `quotaDomain`) e o
 
 **Aviso e esgotamento (B3, B4).** Aviso em `warnAt` e no esgotamento; o prompt oferece três opções - continuar no mesmo esforço, baixar esforço (metade dos turnos restantes, ao menos um), parar - e a escolha vira `budget.exceeded_choice`. `onExceed: "stop"` para sem perguntar. Sem TTY, `ask` nunca bloqueia: grava checkpoint (L5, ADR-0014), para e registra `budget_exceeded_non_interactive`.
 
-**Corte físico (B10, I-17).** `hardCeilingUsd` atingido → para independente de `onExceed` e registra `budget.ceiling_hit`.
+**Corte físico (B10, I-17).** `hardCeilingUsd` atingido → para independente de `onExceed` e registra `budget.ceiling_hit`. Com preço desconhecido e ceiling configurado, o run para com `unknown_price` (não dá para provar que está abaixo do teto).
 
 **Reserva da cadeia (B9).** Antes de cada chamada, `budget.reserved` = Σ custo máximo do primário + fallbacks declarados; após, `budget.released` com `actual_cost`. No `--resume`, `reserved` sem `released` conta como custo real (crash recovery).
 
