@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HELP_TEXT, parseCommand } from "../src/chat/commands";
@@ -93,6 +93,7 @@ describe("comandos de sessão e estilo do chat (T1.5, #173)", () => {
     const saved = io.outputs.find((item) => item.startsWith("sessão salva em "))!;
     const path = saved.slice("sessão salva em ".length);
     expect(existsSync(path)).toBe(true);
+    expect(statSync(path).isFile()).toBe(true);
     expect(store.writes).toBe(2); // /save + fechamento
   });
 
@@ -117,5 +118,44 @@ describe("comandos de sessão e estilo do chat (T1.5, #173)", () => {
     expect(nodeReplOptions(true).historySize).toBeGreaterThanOrEqual(100);
     expect(nodeReplOptions(true).removeHistoryDuplicates).toBe(true);
     expect(nodeReplOptions(false).historySize).toBe(0);
+  });
+
+  test("falha de gravação vira erro e o REPL continua", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-chat-savefail-"));
+    const blocked = join(dir, "sessions");
+    writeFileSync(blocked, "não é diretório");
+    const io = new ScriptedIO(["/save", "olá", "/exit"]);
+    const session = new FakeSession();
+    await runRepl(session, io, { store: new SessionStore(blocked) });
+    const errors = io.outputs.filter((item) => item.startsWith("erro:"));
+    expect(errors).toHaveLength(1); // mesma falha não vira spam
+    expect(io.outputs.some((item) => item.startsWith("sessão salva em"))).toBe(false);
+    expect(session.sent).toEqual(["olá"]); // não encerrou
+  });
+
+  test("falha depois de um save não deixa o caminho antigo como atual", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-chat-saveflaky-"));
+    class Flaky extends SessionStore {
+      calls = 0;
+      override write(snapshot: Parameters<SessionStore["write"]>[0]): string {
+        this.calls++;
+        if (this.calls > 1) throw new Error("disco cheio");
+        return super.write(snapshot);
+      }
+    }
+    const io = new ScriptedIO(["/save", "olá", "/session", "/exit"]);
+    await runRepl(new FakeSession(), io, { store: new Flaky(dir) });
+    expect(io.outputs.some((item) => item.includes("sessão salva em"))).toBe(true);
+    const sessionLine = io.outputs.find((item) => item.startsWith("sessão s1"))!;
+    expect(sessionLine).toContain("arquivo: ainda não salvo");
+  });
+
+  test("/save explícito responde mesmo repetindo a falha do turno", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-chat-saveecho-"));
+    const blocked = join(dir, "sessions");
+    writeFileSync(blocked, "não é diretório");
+    const io = new ScriptedIO(["olá", "/save", "/exit"]);
+    await runRepl(new FakeSession(), io, { store: new SessionStore(blocked) });
+    expect(io.outputs.filter((item) => item.startsWith("erro:"))).toHaveLength(2);
   });
 });
