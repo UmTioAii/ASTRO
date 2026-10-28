@@ -150,6 +150,8 @@ export interface MCPServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  /** Base do backoff exponencial entre reconexões em ms; teto de 30s (default 1000). */
+  retryBackoffMs?: number;
   timeoutMs: number;
   enabled: boolean;
 }
@@ -699,6 +701,9 @@ function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
     const env = raw2.env === undefined ? undefined : stringRecord(expectObject(raw2.env, `${field}.env`), `${field}.env`);
     const headers = raw2.headers === undefined ? undefined : stringRecord(expectObject(raw2.headers, `${field}.headers`), `${field}.headers`);
     const timeoutMs = raw2.timeoutMs === undefined ? 30_000 : expectPositiveInteger(raw2.timeoutMs, `${field}.timeoutMs`);
+    const retryBackoffMs = raw2.retryBackoffMs === undefined
+      ? undefined
+      : expectPositiveInteger(raw2.retryBackoffMs, `${field}.retryBackoffMs`);
     const enabled = raw2.enabled === undefined ? true : expectBoolean(raw2.enabled, `${field}.enabled`);
     result[name] = {
       transport: trans,
@@ -707,6 +712,7 @@ function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
       ...(env === undefined ? {} : { env }),
       ...(raw2.url === undefined ? {} : { url: raw2.url as string }),
       ...(headers === undefined ? {} : { headers }),
+      ...(retryBackoffMs === undefined ? {} : { retryBackoffMs }),
       timeoutMs,
       enabled,
     };

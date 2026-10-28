@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MCPError } from "../src/mcp/types";
@@ -7,7 +7,9 @@ import type { MCPServerConfig } from "../src/config";
 import { MCPRegistry } from "../src/mcp/registry";
 
 const STUB = `
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
+if (process.env.ATTEMPT_FILE !== undefined) appendFileSync(process.env.ATTEMPT_FILE, "1\\n");
+if (process.env.FAIL_FILE !== undefined && existsSync(process.env.FAIL_FILE)) process.exit(1);
 process.stdin.setEncoding("utf8");
 let buffer = "";
 process.stdin.on("data", (chunk) => {
@@ -151,6 +153,73 @@ test("close durante connectAll não deixa órfãos", async () => {
   registry.close();
   await expect(inFlight).rejects.toThrow(/fechado/);
   await expect(waitDead(pids(join(dir, "pids-lento"))[0]!)).resolves.toBe(true);
+});
+
+test("reconexão com backoff exponencial: falha rápido no cooldown, dobra e reseta no sucesso", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-mcpreg-"));
+  const script = writeStub(dir);
+  const pidFile = pidFileOf(dir);
+  const attemptFile = join(dir, "attempts");
+  const failFile = join(dir, "fail");
+  const clock = { now: 0 };
+  const warnings: string[] = [];
+  const registry = new MCPRegistry({
+    servers: {
+      fs: {
+        transport: "stdio", command: "bun", args: [script], timeoutMs: 3000, enabled: true, retryBackoffMs: 100,
+        env: { PID_FILE: pidFile, ATTEMPT_FILE: attemptFile, FAIL_FILE: failFile },
+      },
+    },
+    warn: (message) => warnings.push(message),
+    now: () => clock.now,
+  });
+  const attempts = () => (existsSync(attemptFile) ? readFileSync(attemptFile, "utf8").split("\n").filter(Boolean).length : 0);
+  const failure = (promise: Promise<unknown>) => promise.then(() => "ok", (error: Error) => error.message);
+
+  try {
+    await registry.connectAll();
+    expect(attempts()).toBe(1);
+
+    // morte + conexão quebrada: o retry imediato acontece, mas a chamada seguinte cai no cooldown
+    writeFileSync(failFile, "x");
+    const pid = pids(pidFile)[0]!;
+    process.kill(pid);
+    await expect(waitDead(pid)).resolves.toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await failure(registry.call("fs", "echo", {}))).toMatch(/indisponível/);
+    expect(attempts()).toBe(2);
+
+    const cooling = await failure(registry.call("fs", "echo", {}));
+    expect(cooling).toMatch(/nova tentativa em 100ms/);
+    expect(attempts()).toBe(2); // cooldown não spawna
+
+    // fim do cooldown: tenta de novo, falha e dobra o próximo intervalo
+    clock.now = 100;
+    expect(await failure(registry.call("fs", "echo", {}))).toMatch(/indisponível/);
+    expect(attempts()).toBe(3);
+    expect(await failure(registry.call("fs", "echo", {}))).toMatch(/nova tentativa em 200ms/);
+    expect(attempts()).toBe(3);
+
+    // servidor volta: conecta no fim do cooldown e zera o backoff
+    clock.now = 300;
+    rmSync(failFile);
+    expect((await registry.call("fs", "echo", {})).content[0]!.text).toBe("stdio-ok");
+    expect(attempts()).toBe(4);
+
+    // nova queda volta à base (reset), não ao intervalo acumulado
+    writeFileSync(failFile, "x");
+    const alive = pids(pidFile)[1]!;
+    process.kill(alive);
+    await expect(waitDead(alive)).resolves.toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await failure(registry.call("fs", "echo", {}))).toMatch(/indisponível/);
+    expect(attempts()).toBe(5);
+    expect(await failure(registry.call("fs", "echo", {}))).toMatch(/nova tentativa em 100ms/);
+    expect(attempts()).toBe(5);
+    expect(warnings.length).toBeGreaterThanOrEqual(2);
+  } finally {
+    registry.close();
+  }
 });
 
 test("http com sessão expirada reconecta e recupera", async () => {

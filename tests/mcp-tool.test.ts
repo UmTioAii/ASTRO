@@ -3,9 +3,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
+import { mcpToolName } from "../src/mcp/registry";
 import { mcpTools } from "../src/mcp/tool";
 import { MCPError, type MCPToolResult } from "../src/mcp/types";
 import { ToolExecutor } from "../src/tools/executor";
+
+test("namespace mcp__<server>__<tool> é o contrato da tool vista pelo modelo", () => {
+  expect(mcpToolName("filesystem", "read_file")).toBe("mcp__filesystem__read_file");
+  expect(mcpToolName("server-1", "tool_2")).toBe("mcp__server-1__tool_2");
+});
 
 /** Fonte MCP de mentira: duas tools e chamadas gravadas (sem transporte real). */
 function fakeSource(call: (server: string, tool: string, args: Record<string, unknown>) => Promise<MCPToolResult> = async (server, tool, args) => ({
