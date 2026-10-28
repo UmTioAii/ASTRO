@@ -60,6 +60,8 @@ export interface SessionOptions {
   knownAgents?: readonly string[];
   /** Resolve a identidade efetiva quando o fallback troca provider/model (F-31d). */
   resolveIdentity?: IdentityResolver;
+  /** Sinal de cancelamento para interromper a sessão (F-06). */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -210,7 +212,7 @@ export async function runSession(
         messages: safePrompt(messages),
         tools: opts.executor.defs(),
         ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
-      });
+      }, opts.signal);
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
         "tokens.out": response.usage.outputTokens,
@@ -306,13 +308,13 @@ export async function runSession(
     if (!errorHasHandoffName(error)) {
       opts.ledger.recordState(opts.run, "interrupted", {
         agent: opts.agent,
-        reason: error instanceof Error ? error.name : String(error),
+        reason: interruptReason(error),
       });
     }
     if (rootSpan !== undefined && !errorHasHandoffName(error)) {
       tracer?.end(rootSpan, {
         status: "error",
-        "error.class": error instanceof Error ? error.name : String(error),
+        "error.class": interruptReason(error),
       });
     }
     throw error;
@@ -325,6 +327,12 @@ function errorHasHandoffName(error: unknown): boolean {
     error !== null &&
     (error as { name?: unknown }).name === "HandoffSignal"
   );
+}
+
+/** Razão registrada no `run_state interrupted`: abort vira "cancelled" (F-06). */
+function interruptReason(error: unknown): string {
+  if (error instanceof DOMException && error.name === "AbortError") return "cancelled";
+  return error instanceof Error ? error.name : String(error);
 }
 
 /** Opções para sessão multi-agent. */
@@ -363,6 +371,8 @@ export interface MultiAgentSessionOptions {
   ackHandoff?: (artifact: HandoffArtifactV1, receiverAgent: string) => unknown;
   /** Resolve a identidade efetiva quando o fallback troca provider/model (F-31d). */
   resolveIdentity?: IdentityResolver;
+  /** Sinal de cancelamento para interromper a sessão (F-06). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -493,7 +503,7 @@ export async function runMultiAgentSession(
         messages: safePrompt(messages),
         tools: executor.defs(),
         ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
-      });
+      }, opts.signal);
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
         "tokens.out": response.usage.outputTokens,
@@ -628,12 +638,12 @@ export async function runMultiAgentSession(
     }
     opts.ledger.recordState(opts.run, "interrupted", {
       agent: currentAgentName,
-      reason: error instanceof Error ? error.name : String(error),
+      reason: interruptReason(error),
     });
     if (rootSpan !== undefined) {
       tracer?.end(rootSpan, {
         status: "error",
-        "error.class": error instanceof Error ? error.name : String(error),
+        "error.class": interruptReason(error),
       });
     }
     throw error;

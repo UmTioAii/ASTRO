@@ -90,7 +90,7 @@ export interface CachedProviderOptions {
 /** Decorator de provider com cache: hit = resposta cacheada com usage zerado. */
 export function cachedProvider(provider: Provider, opts: CachedProviderOptions): Provider {
   return {
-    async complete(req: CompletionRequest): Promise<CompletionResponse> {
+    async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
       const key = cacheKey(req);
       const hit = opts.cache.get(key, opts.ttlHours);
       if (hit !== null) {
@@ -98,7 +98,7 @@ export function cachedProvider(provider: Provider, opts: CachedProviderOptions):
         // hit não gasta tokens: usage zerado → custo 0 no ledger
         return { ...hit, usage: { inputTokens: 0, outputTokens: 0 } };
       }
-      const response = await provider.complete(req);
+      const response = await provider.complete(req, signal);
       opts.cache.set(key, response, opts.maxEntries);
       return response;
     },

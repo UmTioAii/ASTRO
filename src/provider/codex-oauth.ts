@@ -311,7 +311,7 @@ export class CodexOAuthProvider implements Provider {
     this.now = opts.now ?? (() => Date.now());
   }
 
-  async complete(req: CompletionRequest): Promise<CompletionResponse> {
+  async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     const tokens = await this.validTokens();
 
     let response: Response;
@@ -320,15 +320,18 @@ export class CodexOAuthProvider implements Provider {
         method: "POST",
         headers: this.headersFor(tokens),
         body: JSON.stringify(this.bodyFor(req)),
+        signal,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       throw new ProviderError("outage", "falha de rede ao chamar o provider Codex");
     }
 
     let text: string;
     try {
       text = await response.text();
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
       throw new ProviderError(
         "outage",
         "falha ao ler a resposta do provider Codex",
