@@ -33,7 +33,7 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-09 | Sanitização de conteúdo externo antes de logar e de entrar no contexto | concluído | #70 | — | C2, C3, F-11 |
 | F-10 | Manifesto estendido: `idempotent` e `sideEffects` (I-12) | concluído | #93 | F-03 | C1, C2, F-14, F-15, F-16 |
 | F-11 | Limites de saída por tool com metadados de truncamento | planejado | — | F-09 | F-14, F-15, C3 |
-| F-12 | ADR de dependências de runtime | planejado | — | — | T2 |
+| F-12 | ADR de dependências de runtime | concluído | #63 | — | T2 |
 | F-14 | `git_status` e `git_diff` estruturadas | planejado | — | F-11 | C5, T3 |
 | F-15 | `run_tests` (fonte do gate de conclusão) | planejado | — | F-11 | C5 |
 | F-16 | `apply_patch` multi-arquivo atômico (alvo do I-16) | planejado | — | F-04, F-09 | ADR de deprecação do write_file |
@@ -59,8 +59,8 @@ Nota: F-13 (`glob`) ficou fora por não ser confirmado como lacuna dos diferenci
 
 | ID | Título | Status | Issue | Depende de | Bloqueia |
 |---|---|---|---|---|---|
-| T1 | REPL mínimo sem dependência nova | planejado | #62 | — | T2 |
-| T2 | TUI com biblioteca de terminal; perfis de confirmação; painel de tarefas | planejado | #63 | F-06, F-12, F-17, F-18 | T3, T4 |
+| T1 | REPL mínimo sem dependência nova | concluído | #62 | - | T2 |
+| T2 | TUI com biblioteca de terminal; perfis de confirmação; painel de tarefas | em andamento | #63 | F-06, F-12, F-17, F-18 | T3, T4 |
 | T3 | Streaming, temas e diff viewer | planejado | #64 | T2, F-14 | — |
 | T4 | Sessões e memória com escopo definido | planejado | #65 | T2, F-21, F-22 | P-02, P-03 |
 
@@ -106,7 +106,7 @@ C4 inclui o blackboard entre agentes como sub-itens: entradas tipadas (`fact`, `
 
 | ADR | Assunto | Antes de |
 |---|---|---|
-| ADR-0001 | Dependências de runtime (se aceita, quais condições) | T2 |
+| ADR-0001 | Dependências de runtime — aceita em `docs/adr/0001-ink-tui-dependencia-de-runtime.md` | T2 |
 | ADR-0002 | `schemaVersion` inteiro do ledger (config mantém semver, `src/config.ts:129`) | F-02 |
 | ADR-0003 | Estrutura de módulos | C7 |
 | ADR-0004 | Perfis de execução por ambiente | C7 |
