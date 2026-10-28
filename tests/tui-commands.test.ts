@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatSession } from "../src/chat/repl";
@@ -150,5 +150,20 @@ describe("comandos da TUI (T2, #63)", () => {
     const bad = runCommand({ kind: "resume", ref: "9" }, session, {}, store);
     expect(bad.entries[0]!.text).toBe("índice fora da lista; use /sessions");
     expect(session.resumed).toHaveLength(1);
+  });
+
+  test("export e init gravam no cwd e recusam escape", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-tui-export-"));
+    const session = new FakeSession();
+    const exported = runCommand({ kind: "export" }, session, {}, undefined, cwd);
+    expect(exported.entries[0]!.text).toContain("sessão exportada em");
+    expect(existsSync(join(cwd, ".astro", "exports"))).toBe(true);
+
+    const escape = runCommand({ kind: "export", path: "../fora.md" }, session, {}, undefined, cwd);
+    expect(escape.entries[0]).toMatchObject({ kind: "error" });
+    expect(escape.entries[0]!.text).toContain("fora do cwd");
+
+    expect(runCommand({ kind: "init" }, session, {}, undefined, cwd).entries[0]!.text).toContain("AGENTS.md criado");
+    expect(runCommand({ kind: "init" }, session, {}, undefined, cwd).entries[0]!.text).toContain("já existe");
   });
 });

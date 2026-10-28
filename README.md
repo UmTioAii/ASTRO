@@ -109,6 +109,8 @@ All commands run as `bun src/cli.ts <command>`.
 | `/sessions` | lists saved sessions, newest first |
 | `/resume <n\|id>` | loads a saved session (messages and counters) |
 | `/save` | forces a sanitized write and prints the path |
+| `/export [file]` | writes the conversation as Markdown (default `.astro/exports/`, confined to cwd) |
+| `/init` | creates `AGENTS.md` in the cwd if absent |
 | `/clear` | drops history (keeps the system prompt) |
 | `/help`, `/exit` | help, quit |
 
@@ -118,7 +120,7 @@ On a terminal, swap approval (`s/N`) and budget overrun (`c`/`l`/`p`) are asked 
 
 `bun src/cli.ts tui` opens the Ink interface (ADR-0001): conversation panel, single-line input and a status bar with cwd/branch, model, turns, tokens and cost. Swap approval and budget prompts are answered in the panel with the same rules as `chat` (empty or EOF denies, exact budget tokens). It needs a real terminal; `chat` remains the piped option.
 
-It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/sessions`, `/resume`, `/save`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Autocomplete, markdown, keybindings and session picker land in the next T2 slice (#63).
+It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/sessions`, `/resume`, `/save`, `/export`, `/init`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Autocomplete, markdown, keybindings and session picker land in the next T2 slice (#63).
 
 ## Environment variables
 

@@ -30,4 +30,11 @@ describe("comandos do chat (T1, #62)", () => {
     expect(parseCommand("/sessions")).toEqual({ kind: "sessions" });
     expect(parseCommand("/resume")).toEqual({ kind: "resume" });
     expect(parseCommand("/resume 2")).toEqual({ kind: "resume", ref: "2" });
-  });});
+  });
+
+  test("/export e /init", () => {
+    expect(parseCommand("/export")).toEqual({ kind: "export" });
+    expect(parseCommand("/export notas.md")).toEqual({ kind: "export", path: "notas.md" });
+    expect(parseCommand("/init")).toEqual({ kind: "init" });
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runRepl, type ChatSession, type ReplIO } from "../src/chat/repl";
@@ -153,4 +153,15 @@ describe("REPL do chat (T1, #62)", () => {
     expect(io.outputs).toContain("sessão retomada: xyz (2 turnos)");
     expect(io.outputs).toContain("índice fora da lista; use /sessions");
     expect(session.resumed).toHaveLength(1);
-  });});
+  });
+  test("/export grava Markdown e /init cria AGENTS.md no cwd", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-repl-export-"));
+    const io = new ScriptedIO(["/export", "/export notas/s.md", "/init", "/init", "/exit"]);
+    await runRepl(new FakeSession(), io, { cwd });
+    expect(io.outputs.some((line) => line.includes("sessão exportada em") && line.includes(".astro"))).toBe(true);
+    expect(existsSync(join(cwd, "notas", "s.md"))).toBe(true);
+    expect(io.outputs.some((line) => line.includes("AGENTS.md criado em"))).toBe(true);
+    expect(io.outputs.some((line) => line.startsWith("erro:") && line.includes("já existe"))).toBe(true);
+    expect(existsSync(join(cwd, "AGENTS.md"))).toBe(true);
+  });
+});

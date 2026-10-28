@@ -115,7 +115,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
       return;
     }
     if (command.kind !== "prompt") {
-      const outcome = runCommand(command, session, commandState.current, store);
+      const outcome = runCommand(command, session, commandState.current, store, cwd);
       if (outcome.lastFile !== undefined) commandState.current.lastFile = outcome.lastFile ?? undefined;
       setEntries((current) => [...current, ...outcome.entries]);
       setStatus(statusOf(session.snapshot()));

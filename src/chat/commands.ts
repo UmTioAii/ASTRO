@@ -12,6 +12,8 @@ export type ReplCommand =
   | { kind: "save" }
   | { kind: "sessions" }
   | { kind: "resume"; ref?: string }
+  | { kind: "export"; path?: string }
+  | { kind: "init" }
   | { kind: "unknown"; raw: string };
 
 export const HELP_TEXT = [
@@ -24,6 +26,8 @@ export const HELP_TEXT = [
   "  /sessions       lista sessões gravadas (mais recentes primeiro)",
   "  /resume <n|id>  retoma uma sessão da lista ou pelo id",
   "  /save           grava a sessão sanitizada e mostra o caminho",
+  "  /export [arquivo]  exporta a conversa em Markdown (default .astro/exports/)",
+  "  /init           cria AGENTS.md no cwd se ainda não existir",
   "  /clear          limpa o histórico (mantém o system)",
   "  /exit | /quit | /q  encerra a sessão",
 ].join("\n");
@@ -57,6 +61,10 @@ export function parseCommand(line: string): ReplCommand {
       return { kind: "sessions" };
     case "resume":
       return { kind: "resume", ...(arg === "" ? {} : { ref: arg }) };
+    case "export":
+      return { kind: "export", ...(arg === "" ? {} : { path: arg }) };
+    case "init":
+      return { kind: "init" };
     default:
       return { kind: "unknown", raw: name ?? "" };
   }
