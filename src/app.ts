@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Auditor } from "./audit";
+import { isAbortError } from "./abort";
 import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
 import { ConfigError, loadConfig } from "./config";
 import { Ledger } from "./ledger";
@@ -46,6 +47,8 @@ export interface RunOptions {
   metrics?: Metrics;
   /** Raiz de skills do usuário (C1c); default `~/.astro/skills`. Injetável para teste. */
   skillsUserRoot?: string;
+  /** Sinal de cancelamento do run (F-06); aborta a chamada em voo e para em estado seguro. */
+  signal?: AbortSignal;
 }
 
 export interface RunReport {
@@ -249,9 +252,9 @@ function createGuardedProvider(
   });
   if (quotaLimits === undefined) return setup.provider;
   return {
-    complete: async (req) => {
+    complete: async (req, signal) => {
       assertWithinQuota(ledger, quotaLimits, setup.quotaDomain);
-      return setup.provider.complete(req);
+      return setup.provider.complete(req, signal);
     },
   };
 }
@@ -269,7 +272,7 @@ function memoizedCreate(create: () => Provider): () => Provider {
 /** Provider criado na primeira chamada (F-31c): credencial só resolve quando o provider entra em uso. */
 function lazyProvider(create: () => Provider): Provider {
   const get = memoizedCreate(create);
-  return { complete: (req) => get().complete(req) };
+  return { complete: (req, signal) => get().complete(req, signal) };
 }
 
 /**
@@ -505,6 +508,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const startedAt = Date.now();
   // Tracing OTLP (F6-2): habilitado por OTEL_EXPORTER_OTLP_ENDPOINT
   const tracer = tracerFromEnv(env);
+  // Cancellation (F-06): o caller fornece o sinal; sem sinal, o run não é cancelável
+  const signal = opts.signal;
 
   let result: { final: string; steps: number; agentsUsed?: string[] };
   try {
@@ -547,6 +552,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         secretEnvNames,
         // Handoff (F-24): timeout do ack; default 30000ms (D-15)
         ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
+        signal,
       };
       result = await runMultiAgentSession(multiOpts, task);
     } else {
@@ -584,6 +590,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           env,
           protectedPaths: [ledgerPath, auditPath],
           secretEnvNames,
+          signal,
         },
         task,
       );
@@ -601,6 +608,17 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           `aumente "agent.maxSteps" na configuração`,
         { cause: error },
       );
+    }
+
+    // Cancelamento explícito (F-06): o estado interrupted já foi gravado pela sessão
+    if (isAbortError(error, opts.signal)) {
+      audit.append({
+        run,
+        agent: AGENT_NAME,
+        tipo: "run.stopped",
+        payload: { reason: "cancelled" },
+      });
+      throw new Error("run cancelado pelo usuário", { cause: error });
     }
 
     // Falha terminal: auditar reason e classe do erro (I-04), sem segredo (I-03)

@@ -1,5 +1,6 @@
 /** Fallback por profile (F-31, ADR-0007): reusa a política F-01/D-14; ordem declarada, sem repetir profile. */
 import type { Auditor } from "../audit";
+import { isAbortError } from "../abort";
 import { DEFAULT_LIMITS, errorPolicy } from "./policy";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type ErrorClass, type FallbackRecord, type Provider } from "./types";
 
@@ -33,9 +34,9 @@ export class ProfileFallbackProvider implements Provider {
     this.#run = opts.run;
   }
 
-  async complete(req: CompletionRequest): Promise<CompletionResponse> {
+  async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     const requested = req.profile;
-    if (requested === undefined) return this.#base.complete(req);
+    if (requested === undefined) return this.#base.complete(req, signal);
     const start = this.#profiles.get(requested);
     if (start === undefined) {
       throw new ProviderError("invalid_request", `profile "${requested}" não declarado na modelPool; verifique "agent.profile"`);
@@ -57,9 +58,10 @@ export class ProfileFallbackProvider implements Provider {
         continue;
       }
       try {
-        const response = await provider.complete({ ...req, model: entry.model });
+        const response = await provider.complete({ ...req, model: entry.model }, signal);
         return { ...response, provider: response.provider ?? entry.provider, model: response.model ?? entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
+        if (isAbortError(error, signal)) throw error;
         lastError = error;
         const errorClass: ErrorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
         this.#log("profile.failure", { profile: entry.name, provider: entry.provider, errorClass });

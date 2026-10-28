@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isAbortError, throwIfAborted } from "../abort";
 import type { ErrorClass, FetchLike } from "./types";
 import { ProviderError } from "./types";
 
@@ -86,7 +87,12 @@ export function readCodexAuth(path: string): CodexTokens {
  * Renova os tokens em memória via endpoint OAuth do Codex.
  * Não grava no `auth.json`; o arquivo de credenciais permanece somente leitura.
  */
-export async function refreshCodexTokens(tokens: CodexTokens, fetchFn: FetchLike): Promise<CodexTokens> {
+export async function refreshCodexTokens(
+  tokens: CodexTokens,
+  fetchFn: FetchLike,
+  signal?: AbortSignal,
+): Promise<CodexTokens> {
+  throwIfAborted(signal);
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: tokens.refreshToken,
@@ -99,8 +105,10 @@ export async function refreshCodexTokens(tokens: CodexTokens, fetchFn: FetchLike
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
+      signal,
     });
-  } catch {
+  } catch (error) {
+    if (isAbortError(error, signal)) throw error;
     throw new ProviderError("outage", "falha de rede ao renovar as credenciais do Codex");
   }
 
