@@ -34,6 +34,8 @@ export interface FallbackProviderOptions {
   profile?: string;
   /** Gate de aprovação (F-19): obrigatório no runtime; ausente = sem gate (componente interno). */
   approveSwap?: SwapApprover;
+  /** Nome do agente corrente no multi-agent (atribui swap.* corretamente). */
+  agentName?: () => string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,6 +48,7 @@ export class FallbackProvider implements Provider {
   readonly #run?: string;
   readonly #profile?: string;
   readonly #approveSwap?: SwapApprover;
+  readonly #agentName?: () => string;
 
   constructor(opts: FallbackProviderOptions) {
     this.#chain = [...opts.providers].sort((a, b) => a.priority - b.priority);
@@ -55,6 +58,7 @@ export class FallbackProvider implements Provider {
     this.#run = opts.run;
     this.#profile = opts.profile;
     this.#approveSwap = opts.approveSwap;
+    this.#agentName = opts.agentName;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
@@ -65,6 +69,7 @@ export class FallbackProvider implements Provider {
       if (previous !== undefined && this.#approveSwap !== undefined) {
         const request: SwapRequest = {
           run: this.#run ?? "",
+          ...(this.#agentName === undefined ? {} : { agent: this.#agentName() }),
           from: { provider: previous, model: req.model },
           to: { provider: entry.name, model: req.model },
           reason: previousReason,
