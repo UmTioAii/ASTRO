@@ -169,8 +169,10 @@ describe("FallbackProvider (C6)", () => {
       }));
       const report = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { KEY_A: "test-key", KEY_B: "test-key" } });
       expect(report.final).toBe("veio do B");
-      const usage = JSON.parse(readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").split("\n")[0]!);
-      expect(usage.provider).toBe("mockb"); // provider real, não o wrapper nem o primário
+      const usage = readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").trim().split("\n")
+        .map((line) => JSON.parse(line) as { kind?: string; provider?: string })
+        .find((e) => e.kind === undefined || e.kind === "usage");
+      expect(usage?.provider).toBe("mockb"); // provider real, não o wrapper nem o primário
       const audit = readFileSync(join(dir, ".astro", "audit.jsonl"), "utf8");
       expect(audit).toContain("provider.failure");
       expect(audit).toContain("provider.success");

@@ -27,13 +27,13 @@ interface AuditLine {
   payload: Record<string, unknown>;
 }
 
-/** Entradas de uso (tokens/custo); entradas de estado (F-02) ficam de fora. */
+/** Entradas de uso (tokens/custo); estado, agent e handoff ficam de fora. */
 function readLedger(dir: string): LedgerLine[] {
   const text = readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").trim();
   return text
     .split("\n")
     .map((line) => JSON.parse(line) as LedgerLine)
-    .filter((e) => e.kind !== "run_state");
+    .filter((e) => e.kind === undefined || e.kind === "usage");
 }
 
 /** Entradas de estado de execução gravadas pelo run (F-02). */

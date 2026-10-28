@@ -103,8 +103,10 @@ test("fallback de provider dentro do profile carrega o profile no audit", async 
     const events = auditEvents(dir);
     expect(events.find((e) => e.tipo === "provider.failure")!.payload).toMatchObject({ provider: "a", profile: "p1" });
     expect(events.find((e) => e.tipo === "provider.success")!.payload).toMatchObject({ provider: "b", profile: "p1" });
-    const usage = JSON.parse(readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").split("\n")[0]!);
-    expect(usage.provider).toBe("b");
+    const usage = readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line) as { kind?: string; provider?: string })
+      .find((e) => e.kind === undefined || e.kind === "usage");
+    expect(usage?.provider).toBe("b");
     expect(readFileSync(join(dir, ".astro", "audit.jsonl"), "utf8")).not.toContain("test-key"); // I-03
   } finally {
     down.stop(true);
