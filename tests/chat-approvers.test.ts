@@ -8,6 +8,22 @@ function io(answers: Array<string | null>): ReplIO {
   return { read: async () => answers.shift() ?? null, write: () => {} };
 }
 
+function ioWithFresh(queued: string[], fresh: Array<string | null>) {
+  const state = { read: 0, readFresh: 0, queued: [...queued] };
+  const fake: ReplIO = {
+    read: async () => {
+      state.read++;
+      return state.queued.shift() ?? null;
+    },
+    readFresh: async () => {
+      state.readFresh++;
+      return fresh.shift() ?? null;
+    },
+    write: () => {},
+  };
+  return { io: fake, state };
+}
+
 const swap: SwapRequest = {
   run: "r1", from: { provider: "a", model: "m1" }, to: { provider: "b", model: "m2" },
   reason: "fallback", costDeltaUsd: 1,
@@ -32,5 +48,24 @@ describe("decisores interativos do chat", () => {
   });
   test("sem TTY não injeta decisores", () => {
     expect(chatApprovers(io([]), false)).toEqual({});
+  });
+  test("budget só aceita tokens exatos; 'cancelar' e instrução param", async () => {
+    const decider = (answer: string) => chatApprovers(io([answer]), true).onBudgetExceeded!;
+    expect(await decider("cancelar")(budget)).toBe("stop");
+    expect(await decider("corrija o bug")(budget)).toBe("stop");
+    expect(await decider("")(budget)).toBe("stop");
+    expect(await decider("continuar")(budget)).toBe("continue_same");
+    expect(await decider("baixar")(budget)).toBe("lower_effort");
+  });
+  test("decisores leem linha nova e preservam a fila do REPL", async () => {
+    const swapIo = ioWithFresh(["corrija o bug"], ["n"]);
+    expect(await chatApprovers(swapIo.io, true).approveSwap!(swap)).toBe(false);
+    expect(swapIo.state.read).toBe(0);
+    expect(swapIo.state.readFresh).toBe(1);
+    expect(swapIo.state.queued).toEqual(["corrija o bug"]);
+
+    const budgetIo = ioWithFresh([], ["c"]);
+    expect(await chatApprovers(budgetIo.io, true).onBudgetExceeded!(budget)).toBe("continue_same");
+    expect(budgetIo.state.readFresh).toBe(1);
   });
 });
