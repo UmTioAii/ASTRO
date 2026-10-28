@@ -212,6 +212,13 @@ export async function runSession(
   const checkCeiling = (agent: string): void => {
     if (opts.budget?.hardCeilingUsd === undefined || ceilingRecorded) return;
     const status = budgetStatus(opts.budget, opts.ledger);
+    if (status.spentUsd === null) {
+      ceilingRecorded = true;
+      opts.audit.append({ run: opts.run, agent, tipo: "budget.exceeded",
+        payload: { scope: status.scope, spentUsd: status.spentUsd, limitUsd: status.limitUsd, reason: "unknown_price" } });
+      opts.ledger.recordBudgetExceeded({ run: opts.run, agent, exceeded_choice: "stop" });
+      throw new BudgetExceededError("unknown_price", status);
+    }
     if (!status.ceilingHit) return;
     ceilingRecorded = true;
     opts.audit.append({ run: opts.run, agent, tipo: "budget.ceiling_hit",
@@ -538,6 +545,13 @@ export async function runMultiAgentSession(
   const checkCeiling = (agent: string): void => {
     if (opts.budget?.hardCeilingUsd === undefined || ceilingRecorded) return;
     const status = budgetStatus(opts.budget, opts.ledger);
+    if (status.spentUsd === null) {
+      ceilingRecorded = true;
+      opts.audit.append({ run: opts.run, agent, tipo: "budget.exceeded",
+        payload: { scope: status.scope, spentUsd: status.spentUsd, limitUsd: status.limitUsd, reason: "unknown_price" } });
+      opts.ledger.recordBudgetExceeded({ run: opts.run, agent, exceeded_choice: "stop" });
+      throw new BudgetExceededError("unknown_price", status);
+    }
     if (!status.ceilingHit) return;
     ceilingRecorded = true;
     opts.audit.append({ run: opts.run, agent, tipo: "budget.ceiling_hit",
