@@ -1,0 +1,23 @@
+# gitleaks configuration
+# https://github.com/gitleaks/gitleaks#configuration
+
+[allowlist]
+description = "Test files with fake secrets for testing redactSecrets"
+paths = [
+  "tests/**/*",
+]
+
+[[allowlist]]
+description = "Ignore test constants with Bearer pattern in test files"
+regexes = ['Bearer testtoken123456789012']
+
+[[allowlist]]
+description = "Ignore test files with fake secrets in comments"
+regexes = ['gitleaks-ignore']
+
+[rule]
+id = "generic-api-key"
+description = "Generic API key detection"
+regex = """(?i)(?:api[_-]?key|apikey|secret|token|password|passwd)\s*[:=]\s*['\"]?[a-zA-Z0-9_\-]{16,}['\"]?"""
+tags = ["key", "API"]
+entropy = 3.0
