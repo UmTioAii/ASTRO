@@ -12,6 +12,7 @@ import type { ApprovalBridge } from "./approvals";
 import type { ShellRunner } from "./shell";
 import { COMMANDS, applyCompletion, completionItems } from "./editor";
 import { indexFiles } from "./files";
+import { Markdown } from "./markdown";
 
 export interface TuiAppProps {
   session: ChatSession;
@@ -53,7 +54,7 @@ function messageOf(error: unknown): string {
 
 function EntryLine({ entry }: { entry: Entry }): ReactElement {
   if (entry.kind === "user") return <Text color="cyan">{"> "}{entry.text}</Text>;
-  if (entry.kind === "assistant") return <Text>{entry.text}</Text>;
+  if (entry.kind === "assistant") return <Markdown text={entry.text} />;
   if (entry.kind === "error") return <Text color="red">{entry.text}</Text>;
   return <Text dimColor>{entry.text}</Text>;
 }

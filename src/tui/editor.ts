@@ -3,7 +3,7 @@ import { searchFiles } from "./files";
 
 export const COMMANDS = [
   "/help", "/model", "/providers", "/provider", "/session", "/sessions", "/resume",
-  "/save", "/export", "/init", "/clear", "/exit",
+  "/save", "/export", "/init", "/new", "/clear", "/exit",
 ] as const;
 
 /** Itens que o painel deve mostrar para a linha atual. */
