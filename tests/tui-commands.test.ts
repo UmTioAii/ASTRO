@@ -79,7 +79,19 @@ describe("comandos da TUI (T2, #63)", () => {
     const failed = runCommand({ kind: "save" }, session, {}, new SessionStore(blocked));
     expect(failed.entries[0]).toMatchObject({ kind: "error" });
     expect(failed.entries[0]!.text).toMatch(/^erro: /);
-    expect(failed.lastFile).toBeUndefined();
+    expect(failed.lastFile).toBeNull(); // limpa o caminho anterior
+  });
+
+  test("falha de save com segredo na mensagem não vaza", () => {
+    const session = new FakeSession();
+    class Leaky extends SessionStore {
+      override write(): string {
+        throw new Error("falhou com sk-live-SEGREDO123");
+      }
+    }
+    const outcome = runCommand({ kind: "save" }, session, {}, new Leaky(mkdtempSync(join(tmpdir(), "astro-tui-leak-"))));
+    expect(outcome.entries[0]!.text).not.toContain("sk-live-SEGREDO123");
+    expect(outcome.entries[0]!.text).toMatch(/^erro: /);
   });
 
   test("comando desconhecido e exit", () => {

@@ -18,7 +18,8 @@ export interface CommandState {
 export interface CommandOutcome {
   entries: Entry[];
   exit?: boolean;
-  lastFile?: string;
+  /** Caminho gravado; `null` quando a gravação falhou (limpa o anterior). */
+  lastFile?: string | null;
 }
 
 type SlashCommand = Exclude<ReplCommand, { kind: "prompt" } | { kind: "empty" }>;
@@ -79,7 +80,7 @@ export function runCommand(
         const path = store.write(session.snapshot());
         return { entries: [{ kind: "info", text: `sessão salva em ${path}` }], lastFile: path };
       } catch (error) {
-        return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
+        return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }], lastFile: null };
       }
     }
   }
