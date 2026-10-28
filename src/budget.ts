@@ -48,11 +48,11 @@ function inScope(ts: string, scope: BudgetConfig["scope"], now: Date): boolean {
   return scope === "day" ? sameMonth && at.getUTCDate() === now.getUTCDate() : sameMonth;
 }
 
-/** Reservas de budget ainda sem `released` (B9), liberadas em FIFO; inclui runs anteriores (crash recovery). */
-export function outstandingReservations(ledger: Ledger): number {
+/** Reservas ainda sem `released` (B9), liberadas em FIFO; filtro opcional pela janela do escopo. */
+export function outstandingReservations(ledger: Ledger, inWindow: (ts: string) => boolean = () => true): number {
   const pending: number[] = [];
   for (const entry of ledger.readAllEntries()) {
-    if (entry.kind !== "budget") continue;
+    if (entry.kind !== "budget" || !inWindow(entry.ts)) continue;
     if (entry.event === "reserved" && typeof entry.reserved === "number") pending.push(entry.reserved);
     else if (entry.event === "released") pending.shift();
   }
@@ -65,8 +65,8 @@ export function budgetStatus(budget: BudgetConfig, ledger: Ledger, now: Date = n
   const actualUsd = entries.some((entry) => entry.costUsd === null)
     ? null
     : entries.reduce((total, entry) => total + (entry.costUsd ?? 0), 0);
-  // Reserva órfã conta como custo real (B9): crash entre reserve e release.
-  const reservedUsd = outstandingReservations(ledger);
+  // Reserva órfã conta como custo real (B9): crash entre reserve e release, na janela do escopo.
+  const reservedUsd = outstandingReservations(ledger, (ts) => inScope(ts, budget.scope, now));
   const spentUsd = actualUsd === null ? null : actualUsd + reservedUsd;
   const limitUsd = budget.limitUsd;
   const ratio = spentUsd !== null && limitUsd !== null && limitUsd > 0 ? spentUsd / limitUsd : null;

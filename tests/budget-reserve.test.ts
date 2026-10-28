@@ -14,13 +14,14 @@ interface Row {
   reserved?: number;
   released?: number;
   actual_cost?: number;
+  ts?: string;
 }
 
 function ledgerWith(rows: Row[]): Ledger {
   const dir = mkdtempSync(join(tmpdir(), "astro-budget-res-"));
   const path = join(dir, "ledger.jsonl");
   rows.forEach((row, index) => appendFileSync(path, `${JSON.stringify({
-    schemaVersion: 1, ts: new Date().toISOString(), run: "r1", agent: "a", provider: "p", model: "m",
+    schemaVersion: 1, ts: row.ts ?? new Date().toISOString(), run: "r1", agent: "a", provider: "p", model: "m",
     credentialRef: "K", quotaDomain: "default", ...(row.kind === "budget" ? {} : { tokensIn: 1, tokensOut: 1 }),
     ...row, seq: index + 1,
   })}\n`));
@@ -48,6 +49,13 @@ describe("reserva da cadeia (B9, #132 parte 4)", () => {
     ]);
     expect(outstandingReservations(ledger)).toBe(0);
     expect(budgetStatus(budget(), ledger).spentUsd).toBe(2);
+  });
+
+  test("reserva órfã fora da janela (mês anterior) não conta no escopo day", () => {
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    const ledger = ledgerWith([{ kind: "budget", event: "reserved", reserved: 5, ts: yesterday }]);
+    expect(outstandingReservations(ledger, () => false)).toBe(0);
+    expect(budgetStatus(budget(), ledger).spentUsd).toBe(0);
   });
 
   test("reservas são liberadas em FIFO", () => {
