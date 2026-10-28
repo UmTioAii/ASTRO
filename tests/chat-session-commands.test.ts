@@ -127,7 +127,26 @@ describe("comandos de sessão e estilo do chat (T1.5, #173)", () => {
     const io = new ScriptedIO(["/save", "olá", "/exit"]);
     const session = new FakeSession();
     await runRepl(session, io, { store: new SessionStore(blocked) });
-    expect(io.outputs.some((item) => item.startsWith("erro:"))).toBe(true);
+    const errors = io.outputs.filter((item) => item.startsWith("erro:"));
+    expect(errors).toHaveLength(1); // mesma falha não vira spam
+    expect(io.outputs.some((item) => item.startsWith("sessão salva em"))).toBe(false);
     expect(session.sent).toEqual(["olá"]); // não encerrou
+  });
+
+  test("falha depois de um save não deixa o caminho antigo como atual", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-chat-saveflaky-"));
+    class Flaky extends SessionStore {
+      calls = 0;
+      override write(snapshot: Parameters<SessionStore["write"]>[0]): string {
+        this.calls++;
+        if (this.calls > 1) throw new Error("disco cheio");
+        return super.write(snapshot);
+      }
+    }
+    const io = new ScriptedIO(["/save", "olá", "/session", "/exit"]);
+    await runRepl(new FakeSession(), io, { store: new Flaky(dir) });
+    expect(io.outputs.some((item) => item.includes("sessão salva em"))).toBe(true);
+    const sessionLine = io.outputs.find((item) => item.startsWith("sessão s1"))!;
+    expect(sessionLine).toContain("arquivo: ainda não salvo");
   });
 });

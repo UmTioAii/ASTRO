@@ -70,12 +70,19 @@ function statusLine(result: TurnResult): string {
 export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOptions = {}): Promise<void> {
   const style = opts.style === true;
   let lastFile: string | undefined;
-  const persist = (): void => {
-    if (opts.store === undefined) return;
+  let lastPersistError: string | undefined;
+  const persist = (): string | undefined => {
+    if (opts.store === undefined) return undefined;
     try {
       lastFile = opts.store.write(session.snapshot());
+      lastPersistError = undefined;
+      return lastFile;
     } catch (error) {
-      io.write(paint(`erro: ${messageOf(error)}`, RED, style));
+      const message = messageOf(error);
+      if (message !== lastPersistError) io.write(paint(`erro: ${message}`, RED, style));
+      lastPersistError = message;
+      lastFile = undefined;
+      return undefined;
     }
   };
   io.write(paint("astro chat - /help para comandos, /exit para sair", DIM, style));
@@ -121,8 +128,8 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
           io.write("sem persistência configurada");
           continue;
         }
-        persist();
-        io.write(`sessão salva em ${lastFile ?? opts.store.root}`);
+        const saved = persist();
+        if (saved !== undefined) io.write(`sessão salva em ${saved}`);
         continue;
       }
       if (command.kind === "clear") {
