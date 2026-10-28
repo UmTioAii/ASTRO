@@ -7,7 +7,7 @@ import type { SessionStore } from "../chat/store";
 import type { SessionSnapshot } from "../chat/agent-session";
 import { isFatalSessionError } from "../chat/session-errors";
 import { redactSecrets } from "../sanitize-external";
-import { runCommand, type Entry } from "./commands";
+import { runCommand, type CommandState, type Entry } from "./commands";
 import type { ApprovalBridge } from "./approvals";
 
 export interface TuiAppProps {
@@ -68,7 +68,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
-  const lastFile = useRef<string | undefined>(undefined);
+  const commandState = useRef<CommandState>({});
   const exited = useRef(false);
 
   useEffect(() => {
@@ -115,8 +115,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
       return;
     }
     if (command.kind !== "prompt") {
-      const outcome = runCommand(command, session, { lastFile: lastFile.current }, store);
-      if (outcome.lastFile !== undefined) lastFile.current = outcome.lastFile ?? undefined;
+      const outcome = runCommand(command, session, commandState.current, store);
+      if (outcome.lastFile !== undefined) commandState.current.lastFile = outcome.lastFile ?? undefined;
       setEntries((current) => [...current, ...outcome.entries]);
       setStatus(statusOf(session.snapshot()));
       if (outcome.exit) finish();
@@ -139,8 +139,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
       if (isFatalSessionError(error)) exitRequested.current = true;
     } finally {
       const saved = persist(true);
-      if (saved.failed) lastFile.current = undefined;
-      else if (saved.path !== undefined) lastFile.current = saved.path;
+      if (saved.failed) commandState.current.lastFile = undefined;
+      else if (saved.path !== undefined) commandState.current.lastFile = saved.path;
       setStatus(statusOf(session.snapshot()));
       busyRef.current = false;
       turn.current = undefined;

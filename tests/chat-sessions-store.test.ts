@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SessionStore, sessionSummaryLine, type SessionRecord } from "../src/chat/store";
+import { MAX_SESSION_BYTES, SessionStore, sessionSummaryLine, type SessionRecord } from "../src/chat/store";
 
 const record = (overrides: Partial<Omit<SessionRecord, "schemaVersion">> = {}) => ({
   id: "s1",
@@ -86,4 +86,31 @@ describe("confinamento e validação ao ler sessões (T2, #63)", () => {
     expect(() => store.load("link/evil.json")).toThrow(/fora do diretório/);
   });
 
-});
+  test("rejeita toolCalls fora do formato no arquivo", () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-sessions-tools-"));
+    writeFileSync(join(dir, "bad-tools.json"), JSON.stringify({
+      schemaVersion: 1, id: "bad", startedAt: "2026-10-01T10:00:00.000Z", model: "p/m1",
+      messages: [{ role: "assistant", content: "x", toolCalls: "boom" }],
+      turns: 1, tokensIn: 1, tokensOut: 1, costUsd: null,
+    }), "utf8");
+    const store = new SessionStore(dir);
+    expect(store.list()).toHaveLength(0);
+    expect(() => store.load("bad")).toThrow(/não encontrada/);
+    expect(() => store.load("bad-tools.json")).toThrow(/toolCalls/);
+  });
+
+  test("recusa gravar acima do teto sem deixar arquivo", () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-sessions-big-"));
+    const store = new SessionStore(dir);
+    expect(() => store.write(record({
+      messages: [{ role: "user", content: "x".repeat(MAX_SESSION_BYTES) }],
+    }))).toThrow(/grande demais/);
+    expect(store.list()).toHaveLength(0);
+  });
+  test("preserva a origem da sessão no round-trip", () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-sessions-origin-"));
+    const store = new SessionStore(dir);
+    const origin = { id: "orig", startedAt: "2026-10-01T09:00:00.000Z" };
+    store.write(record({ resumedFrom: origin }));
+    expect(store.load("s1").record.resumedFrom).toEqual(origin);
+  });});

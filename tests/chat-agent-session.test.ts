@@ -253,4 +253,20 @@ describe("AgentSession resume (T2, #63)", () => {
       stop();
     }
   });
-});
+
+  test("clear esquece a origem retomada", () => {
+    const { session, stop } = setup();
+    const chat = session();
+    try {
+      chat.resume({
+        id: "old", startedAt: "2026-10-01T10:00:00.000Z", model: "p/m1",
+        messages: [{ role: "user", content: "velho" }], turns: 1, tokensIn: 1, tokensOut: 1, costUsd: null,
+      });
+      expect(chat.snapshot().resumedFrom).toEqual({ id: "old", startedAt: "2026-10-01T10:00:00.000Z" });
+      chat.clear();
+      expect(chat.snapshot().resumedFrom).toBeUndefined();
+    } finally {
+      chat.close();
+      stop();
+    }
+  });});

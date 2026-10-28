@@ -1,5 +1,5 @@
 /** Persistência sanitizada da sessão de chat (T1): schema 1, escrita atômica. */
-import { mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { ChatMessage } from "../provider/types";
 import { redactSecrets } from "../sanitize-external";
@@ -14,6 +14,8 @@ export interface SessionRecord {
   tokensIn: number;
   tokensOut: number;
   costUsd: number | null;
+  /** Origem quando a sessão foi retomada de outra. */
+  resumedFrom?: { id: string; startedAt: string };
 }
 
 const SECRET_KEY = /(token(?!s)|secret|password|api[-_]?key|access[-_]?key)/i;
@@ -28,6 +30,9 @@ export interface SessionSummary {
 }
 
 const ROLES = new Set(["system", "user", "assistant", "tool"]);
+
+/** Teto de uma sessão em disco, na leitura e na escrita. */
+export const MAX_SESSION_BYTES = 5 * 1024 * 1024;
 
 /** Valida um registro vindo do disco (pode ter sido editado à mão). */
 function parseRecord(raw: unknown): SessionRecord {
@@ -46,6 +51,18 @@ function parseRecord(raw: unknown): SessionRecord {
     }
     if (item.toolCallId !== undefined && typeof item.toolCallId !== "string") {
       throw new Error("toolCallId de sessão inválido");
+    }
+    if (item.role === "tool" && typeof item.toolCallId !== "string") {
+      throw new Error("mensagem de tool sem toolCallId");
+    }
+    if (item.toolCalls !== undefined) {
+      if (!Array.isArray(item.toolCalls)) throw new Error("toolCalls de sessão inválido");
+      for (const call of item.toolCalls) {
+        if (call === null || typeof call !== "object") throw new Error("toolCall de sessão inválido");
+        if (typeof call.id !== "string" || typeof call.name !== "string" || typeof call.arguments !== "string") {
+          throw new Error("toolCall de sessão inválido");
+        }
+      }
     }
     return item as ChatMessage;
   });
@@ -66,7 +83,21 @@ function parseRecord(raw: unknown): SessionRecord {
     tokensIn: number(record.tokensIn, "tokens"),
     tokensOut: number(record.tokensOut, "tokens"),
     costUsd,
+    ...parseResumedFrom(record.resumedFrom),
   };
+}
+
+function parseResumedFrom(value: unknown): { resumedFrom?: { id: string; startedAt: string } } {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object") throw new Error("origem da sessão inválida");
+  const origin = value as { id?: unknown; startedAt?: unknown };
+  if (typeof origin.id !== "string" || !/^[A-Za-z0-9-]+$/.test(origin.id)) {
+    throw new Error("origem da sessão inválida");
+  }
+  if (typeof origin.startedAt !== "string" || Number.isNaN(Date.parse(origin.startedAt))) {
+    throw new Error("origem da sessão inválida");
+  }
+  return { resumedFrom: { id: origin.id, startedAt: origin.startedAt } };
 }
 
 /** Sanitiza strings JSON estruturalmente (inclusive `toolCalls.arguments`). */
@@ -138,6 +169,7 @@ export class SessionStore {
     const real = realpathSync(path);
     const root = realpathSync(this.root);
     if (real !== root && !real.startsWith(root + sep)) throw new Error("caminho de sessão fora do diretório");
+    if (statSync(real).size > MAX_SESSION_BYTES) throw new Error("sessão grande demais");
     const raw: unknown = JSON.parse(readFileSync(real, "utf8"));
     return sanitizeValue(parseRecord(raw)) as SessionRecord;
   }
@@ -152,7 +184,11 @@ export class SessionStore {
     const path = join(this.root, `${stamp}-${snapshot.id}.json`);
     const tmp = `${path}.tmp`;
     const record = sanitizeValue({ schemaVersion: 1, ...snapshot }) as SessionRecord;
-    writeFileSync(tmp, JSON.stringify(record, null, 2), { encoding: "utf8", mode: 0o600 });
+    const json = JSON.stringify(record, null, 2);
+    if (Buffer.byteLength(json, "utf8") > MAX_SESSION_BYTES) {
+      throw new Error("sessão grande demais para gravar (máx 5 MB)");
+    }
+    writeFileSync(tmp, json, { encoding: "utf8", mode: 0o600 });
     renameSync(tmp, path);
     return path;
   }

@@ -53,7 +53,13 @@ export function sessionLines(snapshot: SessionSnapshot, lastFile: string | undef
   const line = `sessão ${snapshot.id} · início ${snapshot.startedAt} · modelo ${snapshot.model}`
     + ` · turnos ${snapshot.turns} · tokens ${snapshot.tokensIn}/${snapshot.tokensOut}`
     + ` · custo ${fmtCost(snapshot.costUsd)}`;
-  return [line, `arquivo: ${lastFile ?? "ainda não salvo"}`];
+  return [
+    line,
+    ...(snapshot.resumedFrom === undefined
+      ? []
+      : [`retomada de ${snapshot.resumedFrom.id} (início ${snapshot.resumedFrom.startedAt})`]),
+    `arquivo: ${lastFile ?? "ainda não salvo"}`,
+  ];
 }
 
 export function providerLine(provider: ProviderInfo): string {
