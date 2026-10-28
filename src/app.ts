@@ -21,7 +21,7 @@ import { loadPlugins, type PluginProviderFactory } from "./plugins";
 import { sendAuditWebhook } from "./team";
 import { resolveTaskSkill } from "./skills/executor";
 import type { AuditEvent } from "./audit";
-import { budgetStatus, restrictBudget, type BudgetStatus } from "./budget";
+import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, type BudgetStatus } from "./budget";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { planResume, ReplayIncompleteError } from "./resume";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
@@ -54,6 +54,8 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Gate de aprovação de troca (F-19, I-08); sem ele o runtime nega (pending). Injetável para teste. */
   approveSwap?: SwapApprover;
+  /** Decisor TTY do esgotamento de budget (B4); ausente = não interativo (checkpoint e para). */
+  onBudgetExceeded?: BudgetDecider;
   /** Run-id a retomar (F-22): reconstrói a árvore do ledger e continua do agente ativo. */
   resume?: string;
 }
@@ -646,6 +648,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ...(tracer === undefined ? {} : { tracer }),
         resolveIdentity,
         ...(budget === undefined ? {} : { budget }),
+        ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
         ...(config.team === undefined
           ? {}
           : {
@@ -687,6 +690,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ...(tracer === undefined ? {} : { tracer }),
           resolveIdentity,
           ...(budget === undefined ? {} : { budget }),
+          ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
           ...(config.team === undefined
             ? {}
             : {
@@ -734,6 +738,11 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     }
 
     // Troca não aprovada (F-19): o estado interrupted já foi gravado pela sessão
+    if (error instanceof BudgetExceededError) {
+      audit.append({ run, agent: activeAgent.name, tipo: "run.stopped",
+        payload: { reason: "budget_exceeded", budget: error.reason } });
+      throw new Error(`budget esgotado (${error.reason}); run parado em ponto seguro`, { cause: error });
+    }
     if (error instanceof SwapDeniedError) {
       audit.append({ run, agent: error.request.agent ?? activeAgent.name, tipo: "run.stopped",
         payload: { reason: "swap_denied", from: error.request.from, to: error.request.to } });

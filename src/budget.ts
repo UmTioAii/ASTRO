@@ -4,6 +4,7 @@
  * use-as-you-go só registra/exibe (B2) e preço ausente é "n/d", nunca zero (B6).
  */
 import type { BudgetConfig } from "./config";
+import type { Auditor } from "./audit";
 import type { Ledger } from "./ledger";
 
 export interface BudgetStatus {
@@ -67,6 +68,77 @@ export function budgetStatus(budget: BudgetConfig, ledger: Ledger, now: Date = n
     remainingUsd: limitUsd !== null && spentUsd !== null ? Math.max(0, limitUsd - spentUsd) : null,
     estimate: formatBudgetEstimate(spentUsd),
   };
+}
+
+/** Escolha no esgotamento (B4). */
+export type BudgetChoice = "continue_same" | "lower_effort" | "stop";
+export type BudgetDecider = (status: BudgetStatus) => Promise<BudgetChoice> | BudgetChoice;
+
+/** Parada por budget (I-17/I-19): esgotado, teto físico ou modo não interativo. */
+export class BudgetExceededError extends Error {
+  readonly reason: "limit" | "ceiling" | "non_interactive" | "unknown_price";
+  readonly status: BudgetStatus;
+  constructor(reason: BudgetExceededError["reason"], status: BudgetStatus) {
+    super(`budget esgotado (${reason}): ${status.estimate}${status.limitUsd === null ? "" : ` / US$ ${status.limitUsd}`}`);
+    this.name = "BudgetExceededError";
+    this.reason = reason;
+    this.status = status;
+  }
+}
+
+export interface EnforceBudgetOptions {
+  budget: BudgetConfig;
+  ledger: Ledger;
+  run: string;
+  agent: string;
+  audit: Auditor;
+  /** Só com decisor (TTY) o `ask` pergunta; caso contrário grava checkpoint e para (L5). */
+  decide?: BudgetDecider;
+}
+
+/**
+ * Corte de budget antes da chamada (B4/B10, I-17): teto físico sempre para;
+ * esgotado pergunta só com decisor, senão registra não-interativo e para.
+ */
+export async function enforceBudget(opts: EnforceBudgetOptions): Promise<BudgetChoice> {
+  const status = budgetStatus(opts.budget, opts.ledger);
+  const payload = {
+    scope: status.scope,
+    spentUsd: status.spentUsd,
+    limitUsd: status.limitUsd,
+    ...(opts.budget.hardCeilingUsd === undefined ? {} : { hardCeilingUsd: opts.budget.hardCeilingUsd }),
+  };
+  if (status.ceilingHit) {
+    opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.ceiling_hit", payload });
+    opts.ledger.recordCeilingHit({ run: opts.run, agent: opts.agent, ceiling_hit: true });
+    throw new BudgetExceededError("ceiling", status);
+  }
+  // Teto físico com preço desconhecido: não dá para provar que está abaixo (B6)
+  if (opts.budget.hardCeilingUsd !== undefined && status.spentUsd === null) {
+    opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.exceeded",
+      payload: { ...payload, reason: "unknown_price" } });
+    opts.ledger.recordBudgetExceeded({ run: opts.run, agent: opts.agent, exceeded_choice: "stop" });
+    throw new BudgetExceededError("unknown_price", status);
+  }
+  if (!status.exhausted) return "continue_same";
+
+  if (opts.budget.onExceed === "stop" || opts.decide === undefined) {
+    const nonInteractive = opts.budget.onExceed !== "stop";
+    opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.exceeded",
+      payload: { ...payload, ...(nonInteractive ? { reason: "non_interactive" } : { choice: "stop" }) } });
+    if (nonInteractive) {
+      opts.ledger.recordBudgetExceededNonInteractive({ run: opts.run, agent: opts.agent, budget_exceeded_non_interactive: true });
+      throw new BudgetExceededError("non_interactive", status);
+    }
+    opts.ledger.recordBudgetExceeded({ run: opts.run, agent: opts.agent, exceeded_choice: "stop" });
+    throw new BudgetExceededError("limit", status);
+  }
+
+  const choice = await opts.decide(status);
+  opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.exceeded", payload: { ...payload, choice } });
+  opts.ledger.recordBudgetExceeded({ run: opts.run, agent: opts.agent, exceeded_choice: choice });
+  if (choice === "stop") throw new BudgetExceededError("limit", status);
+  return choice;
 }
 
 /** Payload auditável do aviso (B3), sem preço ausente virar zero. */

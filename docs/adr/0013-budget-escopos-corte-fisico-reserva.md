@@ -15,7 +15,7 @@ I-17 exige corte físico de custo; quota (`src/quota.ts`, por `quotaDomain`) e o
 
 **Escopos sem segundo contador.** O gasto é sempre derivado do ledger. `day`/`month`/`project` usam janelas UTC (`project` = mês corrente, alinhado ao `team.projectBudgetUsd`); quota (`quotaDomain`) e team seguem como enforcement próprio. `project` cruza `team.projectBudgetUsd` e o menor vence; quota por domínio não entra no budget global (gasto global ≠ gasto do domínio) e `day` não tem limite USD em quota (quota diária é em tokens). Use-as-you-go (`limitUsd: null`) registra e exibe, nunca bloqueia (B2); preço ausente exibe "n/d", nunca zero (B6); leitura de assinatura vem com health/C6 (B7).
 
-**Aviso e esgotamento (B3, B4).** Aviso em `warnAt` e no esgotamento; o prompt oferece três opções - continuar no mesmo esforço, baixar esforço, parar - e a escolha vira `budget.exceeded_choice`. `onExceed: "stop"` para sem perguntar. Sem TTY, `ask` nunca bloqueia: grava checkpoint (L5, ADR-0014), para e registra `budget_exceeded_non_interactive`.
+**Aviso e esgotamento (B3, B4).** Aviso em `warnAt` e no esgotamento; o prompt oferece três opções - continuar no mesmo esforço, baixar esforço (metade dos turnos restantes, ao menos um), parar - e a escolha vira `budget.exceeded_choice`. `onExceed: "stop"` para sem perguntar. Sem TTY, `ask` nunca bloqueia: grava checkpoint (L5, ADR-0014), para e registra `budget_exceeded_non_interactive`.
 
 **Corte físico (B10, I-17).** `hardCeilingUsd` atingido → para independente de `onExceed` e registra `budget.ceiling_hit`.
 
