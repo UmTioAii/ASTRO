@@ -101,7 +101,7 @@ async function runWithBudget(budgetCfg: Record<string, unknown>, opts: RunOpts =
 
 describe("corte de budget no run (F-05, #132 parte 3)", () => {
   test("não-interativo: para com checkpoint e resume re-aplica o enforcement", async () => {
-    const { cwd, configPath, calls, stop } = await runWithBudget({ scope: "day", limitUsd: 1 });
+    const { cwd, configPath, calls, stop } = await runWithBudget({ scope: "day", limitUsd: 9 });
     try {
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" } })).rejects.toThrow(/budget esgotado/);
       expect(calls()).toBe(1);
@@ -117,7 +117,7 @@ describe("corte de budget no run (F-05, #132 parte 3)", () => {
   });
 
   test("parada por budget com handoff recebido não invalida a retomada (I-19)", async () => {
-    const { cwd, configPath, stop } = await runWithBudget({ scope: "day", limitUsd: 1 }, { tool: "handoff", agents: true });
+    const { cwd, configPath, stop } = await runWithBudget({ scope: "day", limitUsd: 9 }, { tool: "handoff", agents: true });
     try {
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" } })).rejects.toThrow(/budget esgotado/);
       const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
@@ -130,7 +130,7 @@ describe("corte de budget no run (F-05, #132 parte 3)", () => {
 
   test("TTY: continue_same segue até o teto; lower_effort reduz os restantes", async () => {
     for (const [choice, expected] of [["continue_same", 4], ["lower_effort", 3]] as const) {
-      const { cwd, configPath, calls, stop } = await runWithBudget({ scope: "day", limitUsd: 1 });
+      const { cwd, configPath, calls, stop } = await runWithBudget({ scope: "day", limitUsd: 9 });
       try {
         await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" },
           onBudgetExceeded: () => choice })).rejects.toBeDefined();
@@ -142,7 +142,7 @@ describe("corte de budget no run (F-05, #132 parte 3)", () => {
   });
 
   test("ceiling cruzado no último step também para e registra o evento", async () => {
-    const { cwd, configPath, stop } = await runWithBudget({ scope: "day", limitUsd: 10, hardCeilingUsd: 1 }, { final: true });
+    const { cwd, configPath, stop } = await runWithBudget({ scope: "day", limitUsd: 50, hardCeilingUsd: 9 }, { final: true, usage: 10000 });
     try {
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" }, onBudgetExceeded: () => "continue_same" }))
         .rejects.toThrow(/budget esgotado \(ceiling\)/);
@@ -154,7 +154,7 @@ describe("corte de budget no run (F-05, #132 parte 3)", () => {
   });
 
   test("ceiling no último step do multi também para (I-17)", async () => {
-    const { cwd, configPath, stop } = await runWithBudget({ scope: "day", limitUsd: 10, hardCeilingUsd: 1 }, { final: true, agents: true });
+    const { cwd, configPath, stop } = await runWithBudget({ scope: "day", limitUsd: 50, hardCeilingUsd: 9 }, { final: true, agents: true, usage: 10000 });
     try {
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" }, onBudgetExceeded: () => "continue_same" }))
         .rejects.toThrow(/budget esgotado \(ceiling\)/);
