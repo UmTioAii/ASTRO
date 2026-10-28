@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TuiApp } from "../src/tui/app";
@@ -8,6 +8,7 @@ import { SessionStore } from "../src/chat/store";
 import type { ChatSession } from "../src/chat/repl";
 import type { SessionSnapshot, TurnResult } from "../src/chat/agent-session";
 import { BudgetExceededError } from "../src/budget";
+import { createApprovalBridge } from "../src/tui/approvals";
 
 class FakeSession implements ChatSession {
   model = "p/m1";
@@ -225,6 +226,61 @@ test("/exit encerra e erro de turno não fecha a TUI", async () => {
 
     instance.stdin.write("/exit");
     instance.stdin.write("\r");
+    await waitFor(() => exits === 1);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("pergunta de aprovação aparece no painel e libera o turno", async () => {
+  const bridge = createApprovalBridge();
+  const instance = render(<TuiApp session={new FakeSession()} cwd="/tmp/astro" approvals={bridge} />);
+  try {
+    const decision = bridge.approveSwap({
+      run: "r", from: { provider: "a", model: "m1" }, to: { provider: "b", model: "m2" }, reason: "fallback",
+    });
+    await waitFor(() => instance.lastFrame()?.includes("aprovar? [s/N]") === true);
+    instance.stdin.write("s");
+    instance.stdin.write("\r");
+    expect(await decision).toBe(true);
+    expect(instance.lastFrame()?.includes("aprovar? [s/N]")).toBe(false);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("/exit grava a sessão sanitizada antes de fechar", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-tui-exit-"));
+  let exits = 0;
+  const instance = render(
+    <TuiApp session={new FakeSession()} cwd="/tmp/astro" store={new SessionStore(dir)} onExit={() => { exits++; }} />,
+  );
+  try {
+    instance.stdin.write("/exit");
+    instance.stdin.write("\r");
+    await waitFor(() => exits === 1);
+    expect(readdirSync(dir).some((name) => name.endsWith(".json"))).toBe(true);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("segundo ctrl+c força a saída mesmo com o provider travado", async () => {
+  class Stuck extends FakeSession {
+    override send(): Promise<TurnResult> {
+      return new Promise(() => {});
+    }
+  }
+  let exits = 0;
+  const instance = render(<TuiApp session={new Stuck()} cwd="/tmp/astro" onExit={() => { exits++; }} />);
+  try {
+    instance.stdin.write("trava");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("pensando…") === true);
+    instance.stdin.write("\u0003");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(exits).toBe(0);
+    instance.stdin.write("\u0003");
     await waitFor(() => exits === 1);
   } finally {
     instance.unmount();
