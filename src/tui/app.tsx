@@ -68,13 +68,13 @@ export function TuiApp({ session, cwd, branch, store, onExit }: TuiAppProps): Re
   const lastFile = useRef<string | undefined>(undefined);
   const exited = useRef(false);
 
-  const persist = (report: boolean): string | undefined => {
-    if (store === undefined) return undefined;
+  const persist = (report: boolean): { path?: string; failed: boolean } => {
+    if (store === undefined) return { failed: false };
     try {
-      return store.write(session.snapshot());
+      return { path: store.write(session.snapshot()), failed: false };
     } catch (error) {
       if (report) setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
-      return undefined;
+      return { failed: true };
     }
   };
 
@@ -124,8 +124,9 @@ export function TuiApp({ session, cwd, branch, store, onExit }: TuiAppProps): Re
       setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
       if (isFatalSessionError(error)) exitRequested.current = true;
     } finally {
-      const path = persist(true);
-      if (path !== undefined) lastFile.current = path;
+      const saved = persist(true);
+      if (saved.failed) lastFile.current = undefined;
+      else if (saved.path !== undefined) lastFile.current = saved.path;
       setStatus(statusOf(session.snapshot()));
       busyRef.current = false;
       turn.current = undefined;

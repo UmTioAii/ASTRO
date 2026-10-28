@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { render } from "ink-testing-library";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TuiApp } from "../src/tui/app";
+import { SessionStore } from "../src/chat/store";
 import type { ChatSession } from "../src/chat/repl";
 import type { SessionSnapshot, TurnResult } from "../src/chat/agent-session";
 import { BudgetExceededError } from "../src/budget";
@@ -176,7 +180,36 @@ test("ignora Enter durante o turno e atualiza o status após /model", async () =
   }
 });
 
-test("/exit encerra e erro de turno não fecha a TUI", async () => {  const session = new FakeSession();
+test("falha de gravação limpa o caminho mostrado por /session", async () => {
+  class Flaky extends SessionStore {
+    calls = 0;
+    override write(snapshot: Parameters<SessionStore["write"]>[0]): string {
+      this.calls++;
+      if (this.calls > 1) throw new Error("disco cheio");
+      return super.write(snapshot);
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), "astro-tui-store-"));
+  const instance = render(<TuiApp session={new FakeSession()} cwd="/tmp/astro" store={new Flaky(dir)} />);
+  try {
+    instance.stdin.write("/save");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("sessão salva em") === true);
+
+    instance.stdin.write("olá");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("erro: disco cheio") === true);
+
+    instance.stdin.write("/session");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("ainda não salvo") === true);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("/exit encerra e erro de turno não fecha a TUI", async () => {
+  const session = new FakeSession();
   let exits = 0;
   const instance = render(<TuiApp session={session} cwd="/tmp/astro" onExit={() => { exits++; }} />);
   try {
