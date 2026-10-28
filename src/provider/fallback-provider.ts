@@ -8,6 +8,7 @@
  */
 import type { Auditor } from "../audit";
 import { isAbortError } from "../abort";
+import { SwapDeniedError, type SwapApprover, type SwapRequest } from "../approval";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type Provider } from "./types";
 
 const RETRYABLE: ReadonlySet<string> = new Set(["transient_rate_limit", "outage"]);
@@ -31,6 +32,8 @@ export interface FallbackProviderOptions {
   run?: string;
   /** Profile dono da cadeia (F-31): atribui os eventos ao profile afetado. */
   profile?: string;
+  /** Gate de aprovação (F-19): obrigatório no runtime; ausente = sem gate (componente interno). */
+  approveSwap?: SwapApprover;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,6 +45,7 @@ export class FallbackProvider implements Provider {
   readonly #audit?: Auditor;
   readonly #run?: string;
   readonly #profile?: string;
+  readonly #approveSwap?: SwapApprover;
 
   constructor(opts: FallbackProviderOptions) {
     this.#chain = [...opts.providers].sort((a, b) => a.priority - b.priority);
@@ -50,11 +54,23 @@ export class FallbackProvider implements Provider {
     this.#audit = opts.audit;
     this.#run = opts.run;
     this.#profile = opts.profile;
+    this.#approveSwap = opts.approveSwap;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     let lastError: unknown;
+    let previous: string | undefined;
+    let previousReason = "error";
     for (const entry of this.#chain) {
+      if (previous !== undefined && this.#approveSwap !== undefined) {
+        const request: SwapRequest = {
+          run: this.#run ?? "",
+          from: { provider: previous, model: req.model },
+          to: { provider: entry.name, model: req.model },
+          reason: previousReason,
+        };
+        if (!(await this.#approveSwap(request))) throw new SwapDeniedError(request, "denied");
+      }
       let provider: Provider;
       try {
         provider = entry.create();
@@ -63,8 +79,11 @@ export class FallbackProvider implements Provider {
         // vira evento de falha e o próximo provider saudável é tentado
         lastError = error;
         this.#log("provider.failure", { provider: entry.name, errorClass: "invalid_request", attempt: 1 });
+        previous = entry.name;
+        previousReason = "invalid_request";
         continue;
       }
+      let lastClass = "error";
       for (let attempt = 1; attempt <= this.#maxRetries + 1; attempt++) {
         const startedAt = Date.now();
         try {
@@ -73,13 +92,18 @@ export class FallbackProvider implements Provider {
           return { ...response, provider: entry.name, model: response.model ?? req.model };
         } catch (error) {
           if (isAbortError(error, signal)) throw error;
+          // Negação de troca é terminal (I-08): não tenta o próximo provider
+          if (error instanceof SwapDeniedError) throw error;
           lastError = error;
           const errorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
+          lastClass = errorClass;
           this.#log("provider.failure", { provider: entry.name, errorClass, attempt });
           if (!RETRYABLE.has(errorClass) || attempt > this.#maxRetries) break; // próximo da cadeia
           await sleep(this.#retryBackoffMs * attempt);
         }
       }
+      previous = entry.name;
+      previousReason = lastClass;
     }
     throw lastError;
   }
