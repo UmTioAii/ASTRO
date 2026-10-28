@@ -19,6 +19,7 @@ import { resolve } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import type { SwapApprover } from "./approval";
+import type { BudgetDecider } from "./budget";
 
 /** Aprovação interativa de troca (F-19); sem TTY retorna undefined (runtime nega/pending). */
 function ttyApprover(): SwapApprover | undefined {
@@ -41,6 +42,25 @@ function ttyApprover(): SwapApprover | undefined {
           (input) => resolve(/^(s|sim|y|yes)$/i.test(input.trim())));
       });
       return answer;
+    } finally {
+      rl.close();
+    }
+  };
+}
+
+/** Decisor interativo de budget (B4); sem TTY retorna undefined (não interativo). */
+function ttyBudgetDecider(): BudgetDecider | undefined {
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return undefined;
+  return async (status) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const limit = status.limitUsd === null ? "sem limite" : `US$ ${status.limitUsd}`;
+      const answer = await new Promise<string>((resolve) => {
+        rl.once("close", () => resolve("p")); // EOF nega/para
+        rl.question(`budget esgotado (${status.estimate} / ${limit}). [c] continuar, [l] baixar esforço, [p] parar? `, resolve);
+      });
+      const choice = answer.trim().toLowerCase();
+      return choice.startsWith("c") ? "continue_same" : choice.startsWith("l") ? "lower_effort" : "stop";
     } finally {
       rl.close();
     }
@@ -701,7 +721,7 @@ async function main(argv: string[]): Promise<number> {
         runId: o.runId,
         task: o.task,
         ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
-        approveSwap: ttyApprover(),
+        approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider(),
       });
       const fmtCost = (v: number | null): string => (v === null ? "n/d" : `US$ ${v.toFixed(6)}`);
       console.log(`replay do run ${result.runId}`);
@@ -725,7 +745,7 @@ async function main(argv: string[]): Promise<number> {
         task: o.task,
         ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
         resume: o.runId,
-        approveSwap: ttyApprover(),
+        approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider(),
       });
       console.log(`retomado ${report.resumedFrom ?? "?"} do run ${report.runId}`);
       console.log(report.final);
@@ -875,7 +895,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   try {
-    const report = await runTask({ ...parsed.options, approveSwap: ttyApprover() });
+    const report = await runTask({ ...parsed.options, approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider() });
     console.log(report.final);
     console.log("");
     console.log(formatSummary(report));
