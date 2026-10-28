@@ -19,23 +19,41 @@ import type { Tool } from "../src/tools/types";
 
 const model: ModelEntry = {
   provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000, status: "active",
-  price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false },
-};
+  price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } };
 const resp = (p: Partial<CompletionResponse>): CompletionResponse => ({ content: "", toolCalls: [], usage: { inputTokens: 10, outputTokens: 5 }, ...p });
 const dir = (tag: string) => mkdtempSync(join(tmpdir(), `astro-${tag}-`));
-const abortError = (signal: AbortSignal) => signal.reason ?? new DOMException("Abortado", "AbortError");
 
 /** Tool que cancela o run ao executar (aborta durante o passo). */
 const cancelTool = (controller: AbortController): Tool => ({
   manifest: {
     name: "cancel", description: "aborta o run", parameters: { type: "object", properties: {} },
-    risk: "low", permission: "test", timeoutMs: 1000, retryable: false, idempotent: false, sideEffects: "none",
-  },
+    risk: "low", permission: "test", timeoutMs: 1000, retryable: false, idempotent: false, sideEffects: "none" },
   async execute() {
     controller.abort(new Error("cancelado na tool"));
     return { output: "ok" };
   },
 });
+
+/** Sessão multi-agent de teste: planner delega ao coder; tools handoff/write_file/cancel. */
+function multiSetup(controller: AbortController, provider: Provider) {
+  const cwd = dir("cancel-multi");
+  const audit = new Auditor(join(cwd, "audit.jsonl"));
+  const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+  const agents: Record<string, AgentEntry> = {
+    planner: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff"] },
+    coder: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff", "write_file", "cancel"] },
+  };
+  const registry = {
+    requireAgent: (name: string): AgentEntry => agents[name] ?? (() => { throw new Error(`agent "${name}" não encontrado`); })(),
+    getAgent: (name: string): AgentEntry | undefined => agents[name],
+  };
+  const opts: MultiAgentSessionOptions = {
+    run: "r1", credentialRef: "K", quotaDomain: "default", cwd, provider, registry, baseModel: model,
+    baseExecutor: new ToolExecutor({ tools: [handoffTool, writeFileTool, cancelTool(controller)], allow: ["handoff", "write_file", "cancel"], audit }),
+    ledger, audit, baseMaxSteps: 5, entryAgent: "planner", signal: controller.signal,
+  };
+  return { cwd, ledger, opts };
+}
 
 /** Sessão de teste: script de promessas por passo; abort propaga para o provider fake. */
 function setup(script: (() => Promise<CompletionResponse>)[]) {
@@ -43,11 +61,10 @@ function setup(script: (() => Promise<CompletionResponse>)[]) {
   const audit = new Auditor(join(cwd, "audit.jsonl"));
   const ledger = new Ledger(join(cwd, "ledger.jsonl"));
   let i = 0;
-  const next = () => (script[i++] ?? (() => Promise.reject(new Error("script esgotado"))))();
   const provider: Provider = {
     complete: async (_req, signal) => Promise.race([
-      next(),
-      new Promise<never>((_, reject) => signal?.addEventListener("abort", () => reject(abortError(signal)))),
+      (script[i++] ?? (() => Promise.reject(new Error("script esgotado"))))(),
+      new Promise<never>((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason ?? new DOMException("Abortado", "AbortError")))),
     ]),
   };
   const opts: SessionOptions = {
@@ -178,7 +195,6 @@ describe("cancelamento explícito (F-06, #127)", () => {
       .rejects.toThrow("cancelado antes do refresh");
     expect(fetched).toBe(0);
   });
-
   test("cache: abort não serve hit nem grava resposta", async () => {
     const cache = new CompletionCache(join(dir("cancel-cache"), "cache.db"));
     let hits = 0, calls = 0;
@@ -196,20 +212,8 @@ describe("cancelamento explícito (F-06, #127)", () => {
     expect(calls).toBe(1);
     expect(cache.count()).toBe(1);
   });
-
   test("multi-agent: abort no subagent não executa tools nem grava handoff.failed", async () => {
-    const cwd = dir("cancel-multi");
-    const audit = new Auditor(join(cwd, "audit.jsonl"));
-    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
     const controller = new AbortController();
-    const agents: Record<string, AgentEntry> = {
-      planner: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff"] },
-      coder: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff", "write_file", "cancel"] },
-    };
-    const registry = {
-      requireAgent: (name: string): AgentEntry => agents[name] ?? (() => { throw new Error(`agent "${name}" não encontrado`); })(),
-      getAgent: (name: string): AgentEntry | undefined => agents[name],
-    };
     let calls = 0;
     const provider: Provider = { complete: async () => {
       calls++;
@@ -217,17 +221,13 @@ describe("cancelamento explícito (F-06, #127)", () => {
         return resp({ toolCalls: [{ id: "h1", name: "handoff",
           arguments: JSON.stringify({ to: "coder", task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] }) }] });
       }
-      // [cancel, write_file]: a 1ª tool aborta; a 2ª não pode executar (I-16); o próximo step também não
+      // [cancel, write_file]: a 1ª tool aborta; a 2ª não pode executar (I-16)
       return resp({ toolCalls: [
         { id: "c1", name: "cancel", arguments: "{}" },
         { id: "c2", name: "write_file", arguments: JSON.stringify({ path: "multi-nao-deve-existir.txt", content: "x" }) },
       ] });
     } };
-    const opts: MultiAgentSessionOptions = {
-      run: "r1", credentialRef: "K", quotaDomain: "default", cwd, provider, registry, baseModel: model,
-      baseExecutor: new ToolExecutor({ tools: [handoffTool, writeFileTool, cancelTool(controller)], allow: ["handoff", "write_file", "cancel"], audit }),
-      ledger, audit, baseMaxSteps: 5, entryAgent: "planner", signal: controller.signal,
-    };
+    const { cwd, ledger, opts } = multiSetup(controller, provider);
     await expect(runMultiAgentSession(opts, "delegue")).rejects.toBeDefined();
     expect(calls).toBe(2);
     expect(existsSync(join(cwd, "multi-nao-deve-existir.txt"))).toBe(false);
@@ -235,6 +235,21 @@ describe("cancelamento explícito (F-06, #127)", () => {
     expect(kinds).toContain("handoff.created");
     expect(kinds).toContain("handoff.received");
     expect(kinds).not.toContain("handoff.failed");
+    expect(ledger.readStates().find((s) => s.state === "interrupted")?.reason).toBe("cancelled");
+  });
+
+  test("multi-agent step guard: abort na tool impede o próximo step", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const provider: Provider = { complete: async () => {
+      calls++;
+      const handoff = { id: "h1", name: "handoff",
+        arguments: JSON.stringify({ to: "coder", task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] }) };
+      return resp({ toolCalls: [calls === 1 ? handoff : { id: "c1", name: "cancel", arguments: "{}" }] });
+    } };
+    const { ledger, opts } = multiSetup(controller, provider);
+    await expect(runMultiAgentSession(opts, "delegue")).rejects.toBeDefined();
+    expect(calls).toBe(2); // sem novo step após o cancelamento
     expect(ledger.readStates().find((s) => s.state === "interrupted")?.reason).toBe("cancelled");
   });
 });
