@@ -177,8 +177,21 @@ function resumeDetail(ledger: Ledger, artifact: HandoffArtifactV1): string {
   return ` recuperação: ${JSON.stringify(readSourceRefs(ledger, artifact.source_refs))}`;
 }
 /** Remove segredos do prompt antes de enviar ao provider (I-03). */
+const SECRET_KEY_NAME = /(token|secret|password|api[-_]?key|access[-_]?key)/i;
+
+/** Redige mensagens estruturalmente (sem serializar/parsear JSON de novo). */
+function scrubPrompt(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubPrompt);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key, SECRET_KEY_NAME.test(key) ? "[REDACTED]" : scrubPrompt(item),
+    ]));
+  }
+  return typeof value === "string" ? redactSecrets(value) : value;
+}
+
 function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
-  return JSON.parse(redactSecrets(JSON.stringify(messages))) as ChatMessage[];
+  return scrubPrompt(messages) as ChatMessage[];
 }
 
 /**

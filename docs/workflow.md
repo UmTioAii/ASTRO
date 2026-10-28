@@ -20,13 +20,13 @@ Resumo obrigatório em `AGENTS.md`. Este arquivo tem o detalhe.
 ## 3. Commits
 
 - Formato: `tipo: resumo no imperativo, até 72 caracteres`.
-- Corpo opcional. Rodapé obrigatório: `Refs #14`.
+- Mensagem em inglês. Corpo opcional. Rodapé obrigatório: `Refs #14`. Sem trailer de ferramenta ou link de sessão (expõe histórico e não pertence ao registro). Menção a ferramenta só em revisão de PR, como “Claude Code”, sem modelo nem sessão.
 - RED e GREEN em commits separados (`test:` antes de `feat:`). Facilita a evidência TDD.
 - Nunca commitar: `.env*`, `astro.config.json` real, `.astro/`, arquivos de credencial, saída de teste com segredo.
 
 ## 4. Pull request
 
-- Título em formato de commit, por exemplo `feat: placement com triplet provider/model/credential`.
+- Título, corpo e comentários em inglês, no formato de commit: `feat: provider/model/credential placement`.
 - Corpo pelo template. Termina com `Closes #14`, o que fecha a issue no merge.
 - Tamanho: alvo de até 200 linhas alteradas; teto de 400. Acima disso, dividir em PRs encadeados (schema → adaptador → CLI). Exceção justificada no corpo.
 - Abra como draft enquanto trabalha. Marque "Ready for review" só com CI verde e checklist preenchido.

@@ -74,6 +74,10 @@ describe("REPL do chat (T1, #62)", () => {
     expect(session.closed).toBe(1);
     expect(io.outputs).toContain("eco:olá");
     expect(io.outputs.some((line) => line.includes("1 step(s)") && line.includes("US$"))).toBe(true);
+    expect(io.outputs).toContain("contexto limpo");
+    expect(io.outputs).toContain("modelo: p/m2");
+    expect(io.outputs.some((line) => line.includes("/exit"))).toBe(true);
+    expect(io.outputs.some((line) => line.includes("comando desconhecido: /nope"))).toBe(true);
 
 
 
@@ -102,5 +106,10 @@ describe("REPL do chat (T1, #62)", () => {
     const file = readdirSync(dir).find((name) => name.endsWith(".json"))!;
     const record = JSON.parse(readFileSync(join(dir, file), "utf8")) as { messages: unknown[] };
     expect(record.messages).toEqual([{ role: "system", content: "sys" }]);
+  });
+  test("EOF encerra e fecha a sessão", async () => {
+    const session = new FakeSession();
+    await runRepl(session, new ScriptedIO([]));
+    expect(session.closed).toBe(1);
   });
 });

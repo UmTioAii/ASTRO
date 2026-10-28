@@ -16,7 +16,7 @@ export interface SessionRecord {
   costUsd: number | null;
 }
 
-const SECRET_KEY = /(api[-_]?key|access[-_]?key|token$|secret|password)/i;
+const SECRET_KEY = /(token(?!s)|secret|password|api[-_]?key|access[-_]?key)/i;
 
 /** Sanitiza strings JSON estruturalmente (inclusive `toolCalls.arguments`). */
 function sanitizeValue(value: unknown): unknown {

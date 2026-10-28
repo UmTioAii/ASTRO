@@ -86,6 +86,7 @@ All commands run as `bun src/cli.ts <command>`.
 | `run "<prompt>"` | runs a task end to end; prints answer and summary | `--config`, `--cwd` |
 | `replay <run-id>` | re-runs the task and compares metrics with the original run | `--task`, `--config`, `--cwd` |
 | `resume <run-id>` | resumes an interrupted run from the recorded active agent (ledger is the source) | `--task`, `--config`, `--cwd` |
+| `chat` | interactive REPL (T1): turns share history, `/help`, `/model`, `/clear`, `/exit`; session saved sanitized in `.astro/sessions/` | `--config`, `--cwd` |
 | `eval` | golden dataset in mock mode; regression gate | `--threshold`, `--golden`, `--report`, `--baseline`, `--write-baseline` |
 | `bench` | latency, tokens/s and cost per model | `--config`, `--models`, `--runs`, `--out` |
 | `health` | validates config, credentials and provider connectivity | `--config` |
