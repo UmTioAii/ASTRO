@@ -57,6 +57,8 @@ export interface SessionOptions {
   budget?: BudgetConfig;
   /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
   budgetDecide?: BudgetDecider;
+  /** Custo máximo da cadeia por chamada (B9); ausente = sem reserva. */
+  budgetReserve?: (model: ModelEntry, profile?: string) => number;
   /** Ambiente do run; vai ao ToolContext do shell (default: `process.env` no run_command). */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -237,10 +239,12 @@ export async function runSession(
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
       // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(opts.agent);
-      // Budget (B4/B10, I-17): teto físico/esgotamento antes da chamada
+      // Budget (B4/B9): reserva a cadeia e checa o teto antes da chamada
+      const reserveUsd = opts.budget === undefined ? 0 : (opts.budgetReserve?.(opts.model, opts.agentProfile) ?? 0);
       if (opts.budget !== undefined) {
         const choice = await enforceBudget({
           budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: opts.agent, audit: opts.audit,
+          reserveUsd,
           ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
         });
         // "baixar esforço" (B4): metade dos passos **restantes**, ao menos um
@@ -254,6 +258,9 @@ export async function runSession(
       }
       if (opts.teamLimits?.agentQuotas !== undefined) {
         assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, opts.agent);
+      }
+      if (opts.budget !== undefined && reserveUsd > 0) {
+        opts.ledger.recordBudgetReserved({ run: opts.run, agent: opts.agent, reserved: reserveUsd, detail: "call" });
       }
       const stepSpan = tracer?.start("step", { step, agent: redactSecrets(opts.agent) }, rootSpan);
       const providerSpan = tracer?.start(
@@ -275,7 +282,7 @@ export async function runSession(
       const identity = effectiveIdentityFor(
         opts.resolveIdentity, response, opts.model, opts.credentialRef, opts.quotaDomain,
       );
-      opts.ledger.record(
+      const usage = opts.ledger.record(
         {
           run: opts.run,
           agent: opts.agent,
@@ -293,6 +300,10 @@ export async function runSession(
         },
         identity.price,
       );
+      if (opts.budget !== undefined && reserveUsd > 0) {
+        opts.ledger.recordBudgetReleased({ run: opts.run, agent: opts.agent, released: reserveUsd,
+          ...(usage.costUsd === null ? {} : { actual_cost: usage.costUsd }) });
+      }
       maybeWarnBudget(opts.agent);
       checkCeiling(opts.agent);
 
@@ -462,6 +473,8 @@ export interface MultiAgentSessionOptions {
   budget?: BudgetConfig;
   /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
   budgetDecide?: BudgetDecider;
+  /** Custo máximo da cadeia por chamada (B9); ausente = sem reserva. */
+  budgetReserve?: (model: ModelEntry, profile?: string) => number;
   /** Ambiente do run; vai ao ToolContext do shell. */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -635,10 +648,12 @@ export async function runMultiAgentSession(
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
       // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(currentAgentName);
-      // Budget (B4/B10, I-17): teto físico/esgotamento antes da chamada
+      // Budget (B4/B9): reserva a cadeia e checa o teto antes da chamada
+      const reserveUsd = opts.budget === undefined ? 0 : (opts.budgetReserve?.(currentModel, currentAgent.profile) ?? 0);
       if (opts.budget !== undefined) {
         const choice = await enforceBudget({
           budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: currentAgentName, audit: opts.audit,
+          reserveUsd,
           ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
         });
         if (choice === "lower_effort") {
@@ -651,6 +666,9 @@ export async function runMultiAgentSession(
       }
       if (opts.teamLimits?.agentQuotas !== undefined) {
         assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, currentAgentName);
+      }
+      if (opts.budget !== undefined && reserveUsd > 0) {
+        opts.ledger.recordBudgetReserved({ run: opts.run, agent: currentAgentName, reserved: reserveUsd, detail: "call" });
       }
 
       // Atualizar executor com tools do agent atual
@@ -683,7 +701,7 @@ export async function runMultiAgentSession(
       const identity = effectiveIdentityFor(
         opts.resolveIdentity, response, currentModel, opts.credentialRef, opts.quotaDomain,
       );
-      opts.ledger.record(
+      const usage = opts.ledger.record(
         {
           run: opts.run,
           agent: currentAgentName,
@@ -701,6 +719,10 @@ export async function runMultiAgentSession(
         },
         identity.price,
       );
+      if (opts.budget !== undefined && reserveUsd > 0) {
+        opts.ledger.recordBudgetReleased({ run: opts.run, agent: currentAgentName, released: reserveUsd,
+          ...(usage.costUsd === null ? {} : { actual_cost: usage.costUsd }) });
+      }
       maybeWarnBudget(currentAgentName);
       checkCeiling(currentAgentName);
 

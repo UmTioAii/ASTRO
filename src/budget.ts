@@ -18,6 +18,8 @@ export interface BudgetStatus {
   exhausted: boolean;
   ceilingHit: boolean;
   remainingUsd: number | null;
+  /** Reservas ainda sem `released` (B9); já somadas em `spentUsd`. */
+  reservedUsd: number;
   /** Estimativa pronta para exibição; "n/d" quando o preço é desconhecido. */
   estimate: string;
 }
@@ -46,12 +48,30 @@ function inScope(ts: string, scope: BudgetConfig["scope"], now: Date): boolean {
   return scope === "day" ? sameMonth && at.getUTCDate() === now.getUTCDate() : sameMonth;
 }
 
+/** Reservas ainda sem `released` (B9), casadas por run em FIFO; filtro opcional pela janela do escopo. */
+export function outstandingReservations(ledger: Ledger, inWindow: (ts: string) => boolean = () => true): number {
+  const pending: Array<{ run: string; amount: number }> = [];
+  for (const entry of ledger.readAllEntries()) {
+    if (entry.kind !== "budget" || !inWindow(entry.ts)) continue;
+    if (entry.event === "reserved" && typeof entry.reserved === "number") {
+      pending.push({ run: entry.run, amount: entry.reserved });
+    } else if (entry.event === "released") {
+      const index = pending.findIndex((item) => item.run === entry.run);
+      if (index >= 0) pending.splice(index, 1);
+    }
+  }
+  return pending.reduce((total, item) => total + item.amount, 0);
+}
+
 /** Calcula o status do budget a partir do ledger (fonte única de custo). */
 export function budgetStatus(budget: BudgetConfig, ledger: Ledger, now: Date = new Date()): BudgetStatus {
   const entries = ledger.readAll().filter((entry) => inScope(entry.ts, budget.scope, now));
-  const spentUsd = entries.some((entry) => entry.costUsd === null)
+  const actualUsd = entries.some((entry) => entry.costUsd === null)
     ? null
     : entries.reduce((total, entry) => total + (entry.costUsd ?? 0), 0);
+  // Reserva órfã conta como custo real (B9): crash entre reserve e release, na janela do escopo.
+  const reservedUsd = outstandingReservations(ledger, (ts) => inScope(ts, budget.scope, now));
+  const spentUsd = actualUsd === null ? null : actualUsd + reservedUsd;
   const limitUsd = budget.limitUsd;
   const ratio = spentUsd !== null && limitUsd !== null && limitUsd > 0 ? spentUsd / limitUsd : null;
   const exhausted = limitUsd !== null && spentUsd !== null && spentUsd >= limitUsd;
@@ -66,6 +86,7 @@ export function budgetStatus(budget: BudgetConfig, ledger: Ledger, now: Date = n
     exhausted,
     ceilingHit,
     remainingUsd: limitUsd !== null && spentUsd !== null ? Math.max(0, limitUsd - spentUsd) : null,
+    reservedUsd,
     estimate: formatBudgetEstimate(spentUsd),
   };
 }
@@ -94,6 +115,8 @@ export interface EnforceBudgetOptions {
   audit: Auditor;
   /** Só com decisor (TTY) o `ask` pergunta; caso contrário grava checkpoint e para (L5). */
   decide?: BudgetDecider;
+  /** Custo máximo reservado para a chamada (B9); conta para o limite/teto. */
+  reserveUsd?: number;
 }
 
 /**
@@ -102,25 +125,30 @@ export interface EnforceBudgetOptions {
  */
 export async function enforceBudget(opts: EnforceBudgetOptions): Promise<BudgetChoice> {
   const status = budgetStatus(opts.budget, opts.ledger);
+  const reserveUsd = opts.reserveUsd ?? 0;
+  const committedUsd = status.spentUsd === null ? null : status.spentUsd + reserveUsd;
+  const ceilingHit = opts.budget.hardCeilingUsd !== undefined && committedUsd !== null && committedUsd >= opts.budget.hardCeilingUsd;
+  const exhausted = status.limitUsd !== null && committedUsd !== null && committedUsd >= status.limitUsd;
   const payload = {
     scope: status.scope,
     spentUsd: status.spentUsd,
     limitUsd: status.limitUsd,
+    ...(reserveUsd === 0 ? {} : { reserved: reserveUsd }),
     ...(opts.budget.hardCeilingUsd === undefined ? {} : { hardCeilingUsd: opts.budget.hardCeilingUsd }),
   };
-  if (status.ceilingHit) {
+  if (ceilingHit) {
     opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.ceiling_hit", payload });
     opts.ledger.recordCeilingHit({ run: opts.run, agent: opts.agent, ceiling_hit: true });
     throw new BudgetExceededError("ceiling", status);
   }
   // Teto físico com preço desconhecido: não dá para provar que está abaixo (B6)
-  if (opts.budget.hardCeilingUsd !== undefined && status.spentUsd === null) {
+  if (opts.budget.hardCeilingUsd !== undefined && committedUsd === null) {
     opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.exceeded",
       payload: { ...payload, reason: "unknown_price" } });
     opts.ledger.recordBudgetExceeded({ run: opts.run, agent: opts.agent, exceeded_choice: "stop" });
     throw new BudgetExceededError("unknown_price", status);
   }
-  if (!status.exhausted) return "continue_same";
+  if (!exhausted) return "continue_same";
 
   if (opts.budget.onExceed === "stop" || opts.decide === undefined) {
     const nonInteractive = opts.budget.onExceed !== "stop";

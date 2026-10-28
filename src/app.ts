@@ -307,6 +307,38 @@ function assertProviderKind(
   );
 }
 
+/** Custo máximo de um provider + seus fallbacks para o modelo (B9). */
+function chainCost(config: AstroConfig, registry: Registry, model: ModelEntry, provider = model.provider): number {
+  const chain = [provider, ...(config.providers[provider]?.fallback ?? [])];
+  return chain.reduce((total, name) => {
+    const price = registry.get(`${name}/${model.id}`)?.price ?? model.price;
+    if (price === undefined) return total;
+    return total + (model.context * Math.max(price.inputPerM, price.outputPerM)) / 1e6;
+  }, 0);
+}
+
+/** Custo máximo da cadeia de profiles, transitiva e sem repetir (F-31/B9). */
+function profileChainCost(config: AstroConfig, registry: Registry, name: string, visited = new Set<string>()): number {
+  if (visited.has(name)) return 0;
+  visited.add(name);
+  const profile = config.modelPool?.[name];
+  if (profile === undefined) return 0;
+  const model = registry.resolveProfile(name);
+  const own = chainCost(config, registry, model, model.provider);
+  return own + (profile.fallback ?? []).reduce((total, next) => total + profileChainCost(config, registry, next, visited), 0);
+}
+
+/**
+ * Custo máximo de uma chamada (B9): soma o provider primário e fallbacks; com
+ * profile, soma a cadeia transitiva de profiles e os fallbacks de cada um (F-31).
+ */
+function reserveForCall(config: AstroConfig, registry: Registry, model: ModelEntry, profile?: string): number {
+  if (profile !== undefined && config.modelPool?.[profile] !== undefined) {
+    return profileChainCost(config, registry, profile);
+  }
+  return chainCost(config, registry, model);
+}
+
 /**
  * Cadeia C6 de um modelo (F-31c), com providers criados sob demanda. Com
  * `profile`, a cadeia é sempre montada (mesmo sem fallback de provider) para
@@ -648,6 +680,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ...(tracer === undefined ? {} : { tracer }),
         resolveIdentity,
         ...(budget === undefined ? {} : { budget }),
+        ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry, profile?: string) => reserveForCall(config, registry, m, profile) }),
         ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
         ...(config.team === undefined
           ? {}
@@ -690,6 +723,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ...(tracer === undefined ? {} : { tracer }),
           resolveIdentity,
           ...(budget === undefined ? {} : { budget }),
+          ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry, profile?: string) => reserveForCall(config, registry, m, profile) }),
           ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
           ...(config.team === undefined
             ? {}

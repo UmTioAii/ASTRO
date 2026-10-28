@@ -118,7 +118,7 @@ describe("aviso de budget no run (F-05, #132 parte 2)", () => {
         models: [{ provider: "p", id: "m", tags: ["writing-code"], context: 8192,
           price: { inputPerM: 1000, outputPerM: 1000, fonte: "t", verificado: false } }],
         agent: { model: "p/m", maxSteps: 3, tools: [] },
-        budget: { scope: "day", limitUsd: 10, warnAt: 0.1 },
+        budget: { scope: "day", limitUsd: 20, warnAt: 0.1 },
         paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
       }));
       const report = await runTask({ configPath, task: "x", cwd, env: { KEY: "k" } });
@@ -127,7 +127,7 @@ describe("aviso de budget no run (F-05, #132 parte 2)", () => {
       expect(report.budget?.spentUsd).toBeGreaterThan(0);
       const warnings = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll().filter((e) => e.tipo === "budget.warning");
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]!.payload).toMatchObject({ scope: "day", limitUsd: 10, warnAt: 0.1 });
+      expect(warnings[0]!.payload).toMatchObject({ scope: "day", limitUsd: 20, warnAt: 0.1 });
     } finally {
       server.stop(true);
     }
@@ -145,7 +145,7 @@ describe("aviso de budget no run (F-05, #132 parte 2)", () => {
         models: [{ provider: "p", id: "m", tags: ["writing-code"], context: 8192,
           price: { inputPerM: 1000, outputPerM: 1000, fonte: "t", verificado: false } }],
         agent: { model: "p/m", maxSteps: 1, tools: [] },
-        budget: { scope: "day", limitUsd: 10, warnAt: 0.1 },
+        budget: { scope: "day", limitUsd: 20, warnAt: 0.1 },
         paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
       }));
       const report = await runTask({ configPath, task: "x", cwd, env: { KEY: "k" } });
