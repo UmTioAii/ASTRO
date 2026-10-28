@@ -229,3 +229,28 @@ describe("AgentSession (T1, #62)", () => {
     }
   });
 });
+
+describe("AgentSession resume (T2, #63)", () => {
+  test("retoma mensagens e acumulados sem duplicar o system", async () => {
+    const { bodies, session, stop } = setup();
+    const chat = session();
+    try {
+      chat.resume({
+        id: "old", startedAt: "2026-10-01T10:00:00.000Z", model: "p/m1",
+        messages: [
+          { role: "system", content: "antigo" },
+          { role: "user", content: "velho" },
+          { role: "assistant", content: "resp" },
+        ],
+        turns: 2, tokensIn: 20, tokensOut: 10, costUsd: 0.5,
+      });
+      expect(chat.snapshot()).toMatchObject({ turns: 2, tokensIn: 20, tokensOut: 10, costUsd: 0.5, model: "p/m1" });
+      const result = await chat.send("novo");
+      expect(bodies[0]!.messages?.map((message) => message.content)).toEqual(["sys", "velho", "resp", "novo"]);
+      expect(result.totalTokensIn).toBe(30);
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+});
