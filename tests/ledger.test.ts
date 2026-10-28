@@ -319,7 +319,8 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
     test("campos opcionais e redactSecrets funcionam", () => {
       const l = new Ledger(join(testDir(), "ledger.jsonl"));
       // redactSecrets redige: sk-* (8+ chars), Bearer * (12+ chars), nvapi-* (8+ chars)
-      const secret = "sk-secret123456"; // 8+ chars after sk-
+      // gitleaks-ignore: test constant that matches API key pattern but is not a real secret
+      const secret = "sk-test123456"; // 8+ chars after sk-
       l.recordAgentCreated({
         run: "r1",
         agent_id: "sub-1",
