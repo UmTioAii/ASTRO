@@ -376,10 +376,11 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
   const config = loadConfig(opts.configPath);
-  /** Teto global de turnos (Q-01/L2): run.maxTurns sobrepõe agent.maxSteps. */
-  const sessionMaxSteps = config.run?.maxTurns === "unlimited"
-    ? Number.MAX_SAFE_INTEGER
-    : (config.run?.maxTurns ?? config.agent.maxSteps);
+  /** Teto global de turnos (Q-01/L2): `run.maxTurns` só **capa**, nunca eleva
+   * `agent.maxSteps`; "unlimited" fica limitado ao agente até o corte físico (B10). */
+  const sessionMaxSteps = config.run?.maxTurns !== undefined && config.run.maxTurns !== "unlimited"
+    ? Math.min(config.agent.maxSteps, config.run.maxTurns)
+    : config.agent.maxSteps;
 
   // Plugins (F7-1): tools e provider factories; falha de load é isolada
   const loaded = await loadPlugins(config.plugins ?? []);
@@ -706,8 +707,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         payload: { reason: "max_steps" },
       });
       throw new Error(
-        `a tarefa excedeu ${sessionMaxSteps} passos sem resposta final; ` +
-          `aumente "agent.maxSteps" na configuração`,
+        `a tarefa excedeu ${error.maxSteps} passos sem resposta final; ` +
+          `ajuste "agent.maxSteps"${config.run?.maxTurns === undefined ? "" : ' ou "run.maxTurns"'} na configuração`,
         { cause: error },
       );
     }
