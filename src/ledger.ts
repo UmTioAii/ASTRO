@@ -34,6 +34,14 @@ export interface LedgerEntry {
   kind?: "usage";
   /** Ordem monotônica no arquivo (F-25, ADR-0006); entradas antigas não têm. */
   seq?: number;
+  /** Nível de esforço (E1): 0=low .. 4=ultra. Ausente em entradas legadas. */
+  lvl?: number;
+  /** Esforço mapeado do lvl (E1). Ausente em entradas legadas. */
+  effort?: string;
+  /** Modo de thinking (E2). Ausente em entradas legadas. */
+  thinking?: string;
+  /** Parâmetros proibidos removidos antes do envio (E8). Ausente em entradas legadas. */
+  "param.stripped"?: string[];
 }
 
 /** Estado de execução de um run gravado no ledger (F-02). */
@@ -51,7 +59,66 @@ export interface LedgerStateEntry {
   seq?: number;
 }
 
-export type LedgerAnyEntry = LedgerEntry | LedgerStateEntry | LedgerHandoffEntry;
+/** Evento de ciclo de vida de agent (S-05, PS-5, A4, M3). */
+export type AgentEventKind = "created" | "destroyed";
+
+/** Entrada de lifecycle de agent no ledger (S-05). */
+export interface LedgerAgentEntry {
+  schemaVersion: number;
+  ts: string;
+  run: string;
+  kind: "agent";
+  event: AgentEventKind;
+  agent_id: string;
+  parent_agent_id?: string;
+  session_id: string;
+  need?: string;
+  model?: string;
+  profile?: string;
+  reason?: string;
+  seq: number;
+}
+
+/** Evento de budget no ledger (S-05, B9, B10, B4). */
+export type BudgetEventKind = "reserved" | "released" | "exceeded" | "ceiling_hit" | "non_interactive";
+
+/** Entrada de budget no ledger (S-05). */
+export interface LedgerBudgetEntry {
+  schemaVersion: number;
+  ts: string;
+  run: string;
+  agent: string;
+  kind: "budget";
+  event: BudgetEventKind;
+  reserved?: number;
+  released?: number;
+  actual_cost?: number;
+  detail?: string;
+  exceeded_choice?: "continue_same" | "lower_effort" | "stop";
+  ceiling_hit?: boolean;
+  budget_exceeded_non_interactive?: boolean;
+  seq: number;
+}
+
+/** Evento de compactação no ledger (S-05, CMP-6). */
+export interface LedgerCompactionEntry {
+  schemaVersion: number;
+  ts: string;
+  run: string;
+  agent: string;
+  kind: "compaction";
+  failure_count: number;
+  manual: boolean;
+  seq: number;
+}
+
+export type LedgerAnyEntry =
+  | LedgerEntry
+  | LedgerStateEntry
+  | LedgerHandoffEntry
+  | LedgerAgentEntry
+  | LedgerBudgetEntry
+  | LedgerCompactionEntry;
 
 /** Tipos de evento de handoff durável (ADR-0006). */
 export type HandoffEventKind = "handoff.created" | "handoff.received" | "handoff.failed" | "handoff.ack_timeout";
@@ -107,9 +174,10 @@ function isMissingFile(error: unknown): boolean {
 
 /** Ledger de uso append-only em JSONL, com custo estimado por entrada. */
 export class Ledger {
-  private readonly path: string;
+  readonly path: string;
   private readonly warn: (msg: string) => void;
   /** Callback opcional para observabilidade (F6-1: metrics). */
+  /** Callback opcional para observabilidade (F6-1: metrics) — apenas entradas de uso. */
   private readonly onRecord?: (entry: LedgerEntry) => void;
   /** Próximo `seq` monotônico (F-25); calculado do arquivo na primeira escrita. */
   private nextSeq: number | undefined;
@@ -148,6 +216,9 @@ export class Ledger {
         `sem preço curado para o modelo "${e.provider}/${e.model}"; custo não calculado`,
       );
     }
+    const stripped = e["param.stripped"] === undefined
+      ? undefined
+      : e["param.stripped"].map((s) => redactSecrets(s));
     const entry: LedgerEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
       kind: "usage",
@@ -155,6 +226,7 @@ export class Ledger {
       ...e,
       run: redactSecrets(e.run), agent: redactSecrets(e.agent),
       ...(e.profile === undefined ? {} : { profile: redactSecrets(e.profile) }),
+      ...(stripped === undefined ? {} : { "param.stripped": stripped }),
       costUsd,
       seq: this.takeSeq(),
     };
@@ -325,6 +397,191 @@ export class Ledger {
       agg.costUsd += entry.costUsd ?? 0;
     }
     return result;
+  }
+
+  /** Grava evento de criação de agent (S-05, PS-5, A4, M3). */
+  recordAgentCreated(opts: {
+    run: string;
+    agent_id: string;
+    parent_agent_id?: string;
+    session_id: string;
+    need?: string;
+    model?: string;
+    profile?: string;
+    reason?: string;
+  }): LedgerAgentEntry {
+    const entry: LedgerAgentEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      kind: "agent",
+      event: "created",
+      agent_id: redactSecrets(opts.agent_id),
+      ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: redactSecrets(opts.parent_agent_id) }),
+      session_id: redactSecrets(opts.session_id),
+      ...(opts.need === undefined ? {} : { need: redactSecrets(opts.need) }),
+      ...(opts.model === undefined ? {} : { model: redactSecrets(opts.model) }),
+      ...(opts.profile === undefined ? {} : { profile: redactSecrets(opts.profile) }),
+      ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Grava evento de destruição de agent (S-05, PS-5, A4, M3). */
+  recordAgentDestroyed(opts: {
+    run: string;
+    agent_id: string;
+    session_id: string;
+    reason?: string;
+  }): LedgerAgentEntry {
+    const entry: LedgerAgentEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      kind: "agent",
+      event: "destroyed",
+      agent_id: redactSecrets(opts.agent_id),
+      session_id: redactSecrets(opts.session_id),
+      ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Grava evento de reserva de budget (S-05, B9). */
+  recordBudgetReserved(opts: {
+    run: string;
+    agent: string;
+    reserved: number;
+    detail?: string;
+  }): LedgerBudgetEntry {
+    const entry: LedgerBudgetEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      agent: redactSecrets(opts.agent),
+      kind: "budget",
+      event: "reserved",
+      reserved: opts.reserved,
+      ...(opts.detail === undefined ? {} : { detail: redactSecrets(opts.detail) }),
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Grava evento de liberação de budget (S-05, B10). */
+  recordBudgetReleased(opts: {
+    run: string;
+    agent: string;
+    released: number;
+    actual_cost?: number;
+  }): LedgerBudgetEntry {
+    const entry: LedgerBudgetEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      agent: redactSecrets(opts.agent),
+      kind: "budget",
+      event: "released",
+      released: opts.released,
+      ...(opts.actual_cost === undefined ? {} : { actual_cost: opts.actual_cost }),
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Grava evento de budget excedido (S-05, B4). */
+  recordBudgetExceeded(opts: {
+    run: string;
+    agent: string;
+    exceeded_choice: "continue_same" | "lower_effort" | "stop";
+  }): LedgerBudgetEntry {
+    const entry: LedgerBudgetEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      agent: redactSecrets(opts.agent),
+      kind: "budget",
+      event: "exceeded",
+      exceeded_choice: opts.exceeded_choice,
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Grava evento de ceiling atingido (S-05, B10, I-17). */
+  recordCeilingHit(opts: {
+    run: string;
+    agent: string;
+    ceiling_hit: boolean;
+  }): LedgerBudgetEntry {
+    const entry: LedgerBudgetEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      agent: redactSecrets(opts.agent),
+      kind: "budget",
+      event: "ceiling_hit",
+      ceiling_hit: opts.ceiling_hit,
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Grava evento de budget excedido em modo não-interativo (S-05, B4). */
+  recordBudgetExceededNonInteractive(opts: {
+    run: string;
+    agent: string;
+    budget_exceeded_non_interactive: boolean;
+  }): LedgerBudgetEntry {
+    const entry: LedgerBudgetEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      agent: redactSecrets(opts.agent),
+      kind: "budget",
+      event: "non_interactive",
+      budget_exceeded_non_interactive: opts.budget_exceeded_non_interactive,
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Grava evento de compactação (S-05, CMP-6). */
+  recordCompaction(opts: {
+    run: string;
+    agent: string;
+    failure_count: number;
+    manual: boolean;
+  }): LedgerCompactionEntry {
+    const entry: LedgerCompactionEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      agent: redactSecrets(opts.agent),
+      kind: "compaction",
+      failure_count: opts.failure_count,
+      manual: opts.manual,
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
   }
 
   private readLines(): string[] {
