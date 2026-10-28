@@ -13,7 +13,7 @@ I-17 exige corte físico de custo; quota (`src/quota.ts`, por `quotaDomain`) e o
 
 **Config (B1, D-CFG1).** `budget {scope: day|month|project|use-as-you-go, limitUsd, warnAt: 0.8, onExceed: "ask", hardCeilingUsd}`, cada campo com validação non-discard.
 
-**Escopos sem segundo contador.** `day`/`month` integram `quota.ts`, `project` integra `team.ts` (`projectBudgetUsd`); o mais restritivo vence. `project` usa a janela mensal do team e `day` não tem limite USD em quota (quota diária é em tokens); janelas em UTC. Use-as-you-go (`limitUsd: null`) registra e exibe, nunca bloqueia (B2); preço ausente exibe "n/d", nunca zero (B6); leitura de assinatura vem com health/C6 (B7).
+**Escopos sem segundo contador.** O gasto é sempre derivado do ledger. `day`/`month`/`project` usam janelas UTC (`project` = mês corrente, alinhado ao `team.projectBudgetUsd`); quota (`quotaDomain`) e team seguem como enforcement próprio. `project` cruza `team.projectBudgetUsd` e o menor vence; quota por domínio não entra no budget global (gasto global ≠ gasto do domínio) e `day` não tem limite USD em quota (quota diária é em tokens). Use-as-you-go (`limitUsd: null`) registra e exibe, nunca bloqueia (B2); preço ausente exibe "n/d", nunca zero (B6); leitura de assinatura vem com health/C6 (B7).
 
 **Aviso e esgotamento (B3, B4).** Aviso em `warnAt` e no esgotamento; o prompt oferece três opções - continuar no mesmo esforço, baixar esforço, parar - e a escolha vira `budget.exceeded_choice`. `onExceed: "stop"` para sem perguntar. Sem TTY, `ask` nunca bloqueia: grava checkpoint (L5, ADR-0014), para e registra `budget_exceeded_non_interactive`.
 
