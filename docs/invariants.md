@@ -28,7 +28,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 | I-14 | Skill não amplia permissão; só sugere tools que o agente já tem | Pendente (#55) |
 | I-15 | MCP é registrado como plugin de tool, com namespace, e a saída é dado não confiável | Pendente (#56) |
 | I-16 | Toda escrita de arquivo é diff revisável e reversível; nenhuma escrita direta sem registro | Parcial: `edit` com backup e rollback (`src/tools/edit.ts:218`); `write_file` direto, deprecação em ADR (ver `F-04`/`F-16`) |
-| I-17 | Orçamento tem corte físico, não só aviso | Parcial: `src/quota.ts` bloqueia antes da chamada; pausa com aprovação pendente (`F-05`) |
+| I-17 | Orçamento tem corte físico, não só aviso | Parcial: `src/quota.ts` bloqueia antes da chamada; `src/budget.ts` calcula status/aviso do ledger (B2/B3/B6); corte físico/onExceed na parte 3 (`#132`) |
 | I-18 | Comunicação entre agentes passa pelo orquestrador; não há canal peer-to-peer | Parcial: handoff via orquestrador (`src/session.ts:54`); blackboard pendente (C4/#58) |
 | I-19 | Negação de aprovação ou esgotamento de opções termina em parada graciosa com checkpoint | Parcial: cancelamento em ponto seguro e retomada determinística por agente via ledger (`src/resume.ts`, `astro resume`); breaker de compactação pendente (S-17/#134) |
 | I-20 | Modelo 1 para modelo 2 sem mudar os contratos de orquestrador, placement, pool e aprovação | Parcial: `Provider` abstrato (`src/provider/types.ts:36`) |

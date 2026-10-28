@@ -9,6 +9,7 @@ import { formatAgentsList } from "./agent-manager";
 import { evalFailsThreshold, runEval, writeBaseline, type EvalReport } from "./eval/harness";
 import { runBenchmark, type BenchReport } from "./eval/bench";
 import { Metrics, startMetricsServer } from "./metrics";
+import { formatBudgetEstimate } from "./budget";
 import { replayRun } from "./replay";
 import { runHealthCheck, runPoolHealthCheck, formatProvidersList, testProvider } from "./health";
 import { GitHubConfigRegistry } from "./config-share";
@@ -581,10 +582,14 @@ function formatCost(costUsd: number | null): string {
 
 /** Uma linha com modelo, tokens, custo e os caminhos de ledger/auditoria. */
 function formatSummary(report: RunReport): string {
+  const budget = report.budget === undefined
+    ? []
+    : [`budget ${report.budget.scope} ${formatBudgetEstimate(report.budget.spentUsd)}${report.budget.limitUsd === null ? " (use-as-you-go)" : ` / US$ ${report.budget.limitUsd.toFixed(2)}`}`];
   return [
     report.model,
     `${report.tokensIn} tokens in / ${report.tokensOut} out`,
     `custo ${formatCost(report.costUsd)}`,
+    ...budget,
     `ledger ${report.ledgerPath}`,
     `auditoria ${report.auditPath}`,
   ].join(" · ");
