@@ -9,6 +9,7 @@ import { isFatalSessionError } from "../chat/session-errors";
 import { redactSecrets } from "../sanitize-external";
 import { runCommand, type CommandState, type Entry } from "./commands";
 import type { ApprovalBridge } from "./approvals";
+import type { ShellRunner } from "./shell";
 import { COMMANDS, applyCompletion, completionItems } from "./editor";
 import { indexFiles } from "./files";
 
@@ -18,6 +19,7 @@ export interface TuiAppProps {
   branch?: string;
   store?: SessionStore;
   approvals?: ApprovalBridge;
+  shell?: ShellRunner;
   onExit?: () => void;
 }
 
@@ -56,7 +58,7 @@ function EntryLine({ entry }: { entry: Entry }): ReactElement {
   return <Text dimColor>{entry.text}</Text>;
 }
 
-export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAppProps): ReactElement {
+export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }: TuiAppProps): ReactElement {
   const [entries, setEntries] = useState<Entry[]>([{ kind: "info", text: WELCOME }]);
   const [question, setQuestion] = useState<string | undefined>(() => approvals?.current()?.text);
   const [files, setFiles] = useState<string[]>([]);
@@ -116,6 +118,30 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
     const text = inputRef.current.trim();
     if (text === "") return;
     setInput(() => "");
+    if (text.startsWith("!")) {
+      setEntries((current) => [...current, { kind: "user", text }]);
+      if (shell === undefined) {
+        setEntries((current) => [...current, { kind: "error", text: "shell indisponível" }]);
+        return;
+      }
+      busyRef.current = true;
+      const shellTurn = new AbortController();
+      turn.current = shellTurn;
+      setBusy(true);
+      try {
+        const result = await shell.run(text.slice(1), shellTurn.signal);
+        setEntries((current) => [
+          ...current,
+          { kind: result.isError ? "error" : "info", text: result.output },
+        ]);
+      } finally {
+        busyRef.current = false;
+        turn.current = undefined;
+        setBusy(false);
+        if (exitRequested.current) finish();
+      }
+      return;
+    }
     const command = parseCommand(text);
     if (command.kind === "empty") return;
     if (command.kind === "exit") {

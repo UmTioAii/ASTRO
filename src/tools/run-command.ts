@@ -56,6 +56,31 @@ function truncate(text: string): string {
   return text.length > MAX_OUTPUT ? text.slice(0, MAX_OUTPUT) : text;
 }
 
+/** Mata o processo e os filhos (taskkill /T no Windows; grupo no POSIX). */
+function killProcessTree(proc: { pid: number; kill: () => void }): void {
+  if (process.platform === "win32") {
+    try {
+      Bun.spawnSync(["taskkill", "/pid", String(proc.pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" });
+    } catch {
+      try {
+        proc.kill();
+      } catch {
+        // já saiu
+      }
+    }
+    return;
+  }
+  try {
+    process.kill(-proc.pid, "SIGKILL");
+  } catch {
+    try {
+      proc.kill();
+    } catch {
+      // já saiu
+    }
+  }
+}
+
 // --- Sandbox (F4-6) ---
 
 let sandboxEnabled = false;
@@ -137,7 +162,7 @@ function dockerArgv(containerName: string, cwd: string, command: string): string
 }
 
 /** Executa um comando dentro do container Docker efêmero. */
-async function runInDocker(command: string, ctx: { cwd: string }, timeoutMs: number): Promise<ToolResult> {
+async function runInDocker(command: string, ctx: { cwd: string; signal?: AbortSignal }, timeoutMs: number): Promise<ToolResult> {
   const containerName = `astro-sb-${randomUUID().slice(0, 12)}`;
   const proc = Bun.spawn({
     cmd: dockerArgv(containerName, ctx.cwd, command),
@@ -145,36 +170,59 @@ async function runInDocker(command: string, ctx: { cwd: string }, timeoutMs: num
     stdout: "pipe",
     stderr: "pipe",
     env: minimalHostEnv(),
+    detached: ctx.signal !== undefined && process.platform !== "win32",
   });
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = Symbol("timeout");
-  const timeout = new Promise<typeof timedOut>((res) => {
-    timer = setTimeout(() => {
-      proc.kill();
-      res(timedOut);
-    }, timeoutMs);
-  });
-
-  let exited: typeof timedOut | number;
-  try {
-    exited = await Promise.race([proc.exited, timeout]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-
-  if (exited === timedOut) {
-    // docker run morto não para o container: limpeza forçada best-effort
+  const removeContainer = (): void => {
     try {
-      Bun.spawn({
-        cmd: ["docker", "rm", "-f", containerName],
-        stdout: "ignore",
-        stderr: "ignore",
-        env: minimalHostEnv(),
+      Bun.spawnSync(["docker", "rm", "-f", containerName], {
+        stdout: "ignore", stderr: "ignore", env: minimalHostEnv(),
       });
     } catch {
       // best-effort
     }
+  };
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = Symbol("timeout");
+  const aborted = Symbol("aborted");
+  const timeout = new Promise<typeof timedOut>((res) => {
+    timer = setTimeout(() => {
+      killProcessTree(proc);
+      res(timedOut);
+    }, timeoutMs);
+  });
+  let onCancel: (() => void) | undefined;
+  const cancellation = new Promise<typeof aborted>((resolve) => {
+    if (ctx.signal === undefined) return;
+    if (ctx.signal.aborted) {
+      killProcessTree(proc);
+      resolve(aborted);
+      return;
+    }
+    onCancel = (): void => {
+      killProcessTree(proc);
+      resolve(aborted);
+    };
+    ctx.signal.addEventListener("abort", onCancel, { once: true });
+  });
+
+  let exited: typeof timedOut | typeof aborted | number;
+  try {
+    exited = await Promise.race([proc.exited, timeout, cancellation]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onCancel !== undefined) ctx.signal?.removeEventListener("abort", onCancel);
+  }
+
+  if (exited === aborted) {
+    removeContainer();
+    return { output: "comando cancelado no sandbox", isError: true };
+  }
+
+  if (exited === timedOut) {
+    // docker run morto não para o container: limpeza forçada best-effort
+    removeContainer();
   }
 
   const [stdout, stderr] = await Promise.all([
@@ -256,22 +304,45 @@ export const runCommandTool: Tool = {
         env: sanitizedEnv(ctx.env ?? process.env, ctx.secretEnvNames ?? []),
         stdout: "pipe",
         stderr: "pipe",
+        detached: ctx.signal !== undefined && process.platform !== "win32",
       });
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timedOut = Symbol("timeout");
+      const aborted = Symbol("aborted");
       const timeout = new Promise<typeof timedOut>((resolve) => {
         timer = setTimeout(() => {
-          proc.kill();
+          killProcessTree(proc);
           resolve(timedOut);
         }, runCommandTool.manifest.timeoutMs);
       });
+      const onAbort = (): void => {
+        killProcessTree(proc);
+      };
+      let onCancel: (() => void) | undefined;
+      const cancellation = new Promise<typeof aborted>((resolve) => {
+        if (ctx.signal === undefined) return;
+        if (ctx.signal.aborted) {
+          killProcessTree(proc);
+          resolve(aborted);
+          return;
+        }
+        onCancel = (): void => resolve(aborted);
+        ctx.signal.addEventListener("abort", onCancel, { once: true });
+        ctx.signal.addEventListener("abort", onAbort, { once: true });
+      });
 
-      let exited: typeof timedOut | number;
+      let exited: typeof timedOut | typeof aborted | number;
       try {
-        exited = await Promise.race([proc.exited, timeout]);
+        exited = await Promise.race([proc.exited, timeout, cancellation]);
       } finally {
         if (timer !== undefined) clearTimeout(timer);
+        ctx.signal?.removeEventListener("abort", onAbort);
+        if (onCancel !== undefined) ctx.signal?.removeEventListener("abort", onCancel);
+      }
+
+      if (exited === aborted) {
+        return { output: "comando cancelado", isError: true };
       }
 
       const [stdout, stderr] = await Promise.all([

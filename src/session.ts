@@ -360,6 +360,7 @@ export async function runSession(
             step,
             journal,
             knownAgents,
+            ...(opts.signal === undefined ? {} : { signal: opts.signal }),
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
