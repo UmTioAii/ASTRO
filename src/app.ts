@@ -415,7 +415,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     tipo: "run.started",
     payload: {
       taskHash: shortTaskHash(opts.task),
-      model: config.agent.model,
+      model: resumed?.agent.model ?? config.agent.model,
       ...(config.agent.profile === undefined ? {} : { profile: config.agent.profile }),
       ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
     },
@@ -687,7 +687,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   return {
     runId: run,
     final: result.final,
-    model: config.agent.model,
+    model: resumed?.agent.model ?? config.agent.model,
     steps: result.steps,
     tokensIn,
     tokensOut,
