@@ -17,13 +17,13 @@ Hoje "a LLM nunca cria agente em runtime" (`src/agent-manager.ts:15`): só exist
 
 **Escolha do modelo (A3).** A LLM só escolhe dentro do snapshot devolvido por `list_model_candidates`; nunca define provider, `credentialRef`, profile fora da pool nem parâmetros de chamada.
 
-**Ciclo de vida e kind `agent` (A5, PS-5).** O ledger ganha o kind `agent` (aditivo, D-10): `event` (`created`|`destroyed`), `agent_id`, `parent_agent_id`, `session_id`, `need`, `model`, `profile`, `reason`. Destruição quando: loop termina sem tool call, segmento bate `maxTurns`, ou orchestrator encerra (S-10, #127). Ordem do destroy: ledger `agent.destroyed` → audit `agent.destroyed` (padrão do `AgentManager`) → liberar lock (ADR-0009) → parar chamadas → persistir histórico (PS-2).
+**Ciclo de vida e kind `agent` (A5, PS-5).** O ledger ganha o kind `agent` (aditivo, D-10): `event` (`created`|`destroyed`), `agent_id`, `parent_agent_id`, `session_id`, `need`, `model`, `profile`, `reason` (na destruição, a causa: loop sem tool call, `maxTurns`, orchestrator (S-10, #127) ou `crash_recovered` do ADR-0009). Ordem do destroy: ledger `agent.destroyed` → audit `agent.destroyed` (padrão do `AgentManager`) → liberar lock — a própria escrita do `agent.destroyed` (ADR-0009), sem segundo mecanismo → parar chamadas → persistir histórico (PS-2).
 
 **Herança e comunicação (A10, A8/A9).** Subagente NÃO herda o profile do pai; herda teto: `tools?` ⊆ allowlist do pai, `maxTurns?` e orçamento nunca maiores que os dele (I-02). Recebe `HandoffArtifactV1` (ADR-0006) com a task + `AGENTS.md`, nunca mensagens do orchestrator nem histórico da sessão (A9); comunicação só via handoff do orchestrator (I-18), sem canal p2p.
 
 **Serial em v1 (A11, Q-12).** Um subagente por vez; paralelo é v2. Testes usam `maxActive=2`. O entryAgent default continua `planner` (Q-03).
 
-**Emendas.** I-01 estende-se a agents nascidos em runtime: a declaração efetiva do subagente (tools, teto, orçamento, sandbox) deriva do `spawn_agent` e é sempre ⊆ à do pai; nada fora dela é acessível. I-06 estende a reprodução ao runtime: `snapshot_id` + escolha registrada no ledger reproduzem o placement; `candidate_set_changed` detecta divergência.
+**Emendas.** I-01 estende-se a agents nascidos em runtime: a declaração efetiva do subagente (tools, teto, orçamento, sandbox) deriva do `spawn_agent` e é sempre ⊆ à do pai; nada fora dela é acessível. I-06 estende a reprodução ao runtime: `snapshot_id` + escolha registrada no ledger reproduzem o placement; `candidate_set_changed` detecta divergência (composição com ADR-0011, #120). Para subagentes nascidos em runtime, esta decisão substitui a cláusula "a LLM nunca escolhe modelo em runtime" do ADR-0007, que segue valendo para agents declarados na config; a auditabilidade exigida lá é preservada por `snapshot_id` + escolha registrada no ledger (I-06).
 
 ## Consequências
 
