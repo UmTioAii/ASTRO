@@ -9,23 +9,36 @@ function failure(message: string): ToolResult {
   return { output: message, isError: true };
 }
 
-/** Executa tools com allowlist, timeout e auditoria; erros voltam como resultado de tool. */
+/** Executa tools com allowlist, teto de escopo (ceiling), timeout e auditoria; erros voltam como resultado de tool. */
 export class ToolExecutor {
   private readonly tools: readonly Tool[];
   private readonly byName: Map<string, Tool>;
-  private readonly allow: Set<string>;
+  private readonly allowSet: Set<string>;
+  private readonly ceilingSet: Set<string>;
   private readonly auditRef: Auditor;
 
-  constructor(opts: { tools: readonly Tool[]; allow: string[]; audit: Auditor }) {
+  constructor(opts: { tools: readonly Tool[]; allow: string[]; audit: Auditor; ceiling?: string[] }) {
     this.tools = opts.tools;
     this.byName = new Map(opts.tools.map((tool) => [tool.manifest.name, tool]));
-    this.allow = new Set(opts.allow);
+    this.allowSet = new Set(opts.allow);
+    // Ceiling: teto de escopo para subagents (I-02). Default = allow (sem restrição extra).
+    this.ceilingSet = new Set(opts.ceiling ?? opts.allow);
     this.auditRef = opts.audit;
   }
 
   /** Todas as tools registradas (para multi-agent session). */
   get allTools(): readonly Tool[] {
     return this.tools;
+  }
+
+  /** Allowlist do executor (para teto de subagents). */
+  get allow(): ReadonlySet<string> {
+    return this.allowSet;
+  }
+
+  /** Teto de escopo (ceiling) do executor (I-02). */
+  get ceiling(): ReadonlySet<string> {
+    return this.ceilingSet;
   }
 
   /** Auditoria da sessão (para tools de composição logarem eventos próprios). */
@@ -36,7 +49,7 @@ export class ToolExecutor {
   /** Definições das tools permitidas, no formato exposto ao provider. */
   defs(): ToolDef[] {
     return this.tools
-      .filter((tool) => this.allow.has(tool.manifest.name))
+      .filter((tool) => this.allowSet.has(tool.manifest.name))
       .map((tool) => ({
         name: tool.manifest.name,
         description: tool.manifest.description,
@@ -110,8 +123,19 @@ export class ToolExecutor {
       });
       return failure(`tool desconhecida: "${call.name}"`);
     }
-    if (!this.allow.has(call.name)) {
+    if (!this.allowSet.has(call.name)) {
       const reason = `tool "${call.name}" não permitida para o agent "${ctx.agent}"`;
+      this.auditRef.append({
+        run: ctx.run,
+        agent: ctx.agent,
+        tipo: "tool.denied",
+        payload: { name: call.name, reason },
+      });
+      return failure(reason);
+    }
+    // Ceiling enforcement (I-02): tool no allow mas fora do teto do parent → negado
+    if (!this.ceilingSet.has(call.name)) {
+      const reason = `tool "${call.name}" fora do teto de escopo do agent "${ctx.agent}"`;
       this.auditRef.append({
         run: ctx.run,
         agent: ctx.agent,

@@ -491,6 +491,8 @@ function validateAgent(value: unknown, modelPool?: Record<string, ProfileConfig>
   const raw = expectObject(value, "agent");
   const systemPrompt =
     raw.systemPrompt === undefined ? undefined : expectString(raw.systemPrompt, "agent.systemPrompt");
+  // entryAgent default "planner" (A13, Q-03, pinado em tests/tool-isolation.test.ts)
+  const entryAgent = raw.entryAgent === undefined ? "planner" : expectString(raw.entryAgent, "agent.entryAgent");
 
   // F-27 (ADR-0007): profile substitui model; os dois juntos são ambíguos.
   if (raw.profile !== undefined) {
@@ -500,6 +502,7 @@ function validateAgent(value: unknown, modelPool?: Record<string, ProfileConfig>
       profile,
       maxSteps: expectPositiveInteger(raw.maxSteps, "agent.maxSteps"),
       tools: expectStringArray(raw.tools, "agent.tools"),
+      entryAgent,
       ...(systemPrompt === undefined ? {} : { systemPrompt }),
     };
   }
@@ -508,6 +511,7 @@ function validateAgent(value: unknown, modelPool?: Record<string, ProfileConfig>
     model: expectString(raw.model, "agent.model"),
     maxSteps: expectPositiveInteger(raw.maxSteps, "agent.maxSteps"),
     tools: expectStringArray(raw.tools, "agent.tools"),
+    entryAgent,
     ...(systemPrompt === undefined ? {} : { systemPrompt }),
   };
 }
