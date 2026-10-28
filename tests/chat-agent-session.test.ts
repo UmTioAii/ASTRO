@@ -149,11 +149,15 @@ describe("AgentSession (T1, #62)", () => {
     }
   });
   test("budget negado encerra a sessão (sem segundo turno)", async () => {
-    const { session, stop } = setup({ budget: { scope: "day", limitUsd: 0 } });
+    const { cwd, session, stop } = setup({ budget: { scope: "day", limitUsd: 0 } });
     const chat = session();
     try {
       await expect(chat.send("x")).rejects.toThrow(/budget/);
       await expect(chat.send("y")).rejects.toThrow(/encerrada/);
+      chat.close();
+      const completed = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll()
+        .filter((e) => e.tipo === "run.completed");
+      expect(completed).toHaveLength(1);
     } finally {
       stop();
     }

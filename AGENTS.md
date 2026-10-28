@@ -62,10 +62,11 @@ Estas regras existem para reduzir o custo de tokens ao ler o projeto.
 - Edição pontual. Não reescreva um arquivo inteiro para mudar uma linha.
 - Limites: arquivo de doc até 150 linhas; ADR até 60 linhas. Acima disso, dividir.
 - Novo arquivo em `docs/` entra no `docs/INDEX.md` no mesmo PR.
-- Idioma: docs em português. Identificadores de código em inglês. Mensagens de erro para o usuário em português.
+- Idioma: docs em português; identificadores de código em inglês; mensagens de erro para o usuário em português. Artefatos de colaboração (commits e título/corpo/comentários de PR e issue) em inglês; relatórios no chat para o usuário em português.
 
 ## Não fazer
 
 - Não criar arquivo de estado de projeto (ex.: `progress.md`). Estado vive nas issues e milestones.
 - Não adicionar dependência de runtime sem ADR.
 - Não ler `docs/` inteiro. Use `docs/INDEX.md` e abra só o que a tarefa exige.
+- Não incluir link de sessão nem atribuição de ferramenta em commit, PR, issue, doc ou log. Menção a ferramenta só em revisão de PR, como “Claude Code”, sem modelo nem sessão.
