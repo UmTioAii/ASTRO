@@ -7,9 +7,12 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { runTask, shortTaskHash, type RunReport } from "../app";
 import { Auditor } from "../audit";
+import { BudgetExceededError } from "../budget";
+import { SwapDeniedError } from "../approval";
 import { loadConfig, type AstroConfig } from "../config";
 import type { ChatMessage } from "../provider/types";
 import { Registry } from "../registry";
+import { Ledger } from "../ledger";
 import { DEFAULT_SYSTEM_PROMPT } from "../session";
 import { guardContext } from "./context-guard";
 
@@ -63,7 +66,8 @@ export class AgentSession {
   readonly #env: Record<string, string | undefined> | undefined;
   readonly #config: AstroConfig;
   readonly #registry: Registry;
-  readonly #audit: Auditor;
+  readonly #auditPath: string;
+  readonly #ledger: Ledger;
   readonly #systemPrompt: string;
   #modelRef: string;
   #messages: ChatMessage[];
@@ -74,6 +78,7 @@ export class AgentSession {
   #costUsd = 0;
   #costKnown = true;
   #closed = false;
+  #busy = false;
 
   constructor(opts: AgentSessionOptions) {
     this.#configPath = opts.configPath;
@@ -81,17 +86,18 @@ export class AgentSession {
     this.#env = opts.env;
     this.#config = loadConfig(opts.configPath);
     this.#registry = new Registry(this.#config);
-    this.#audit = new Auditor(resolvePath(this.#cwd, this.#config.paths.audit));
+    this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
+    this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
     this.#systemPrompt = opts.systemPrompt ?? this.#config.agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.#modelRef = opts.model ?? this.#config.agent.model;
     this.#registry.require(this.#modelRef); // falha cedo com modelo inexistente
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
-    this.#audit.append({
-      run: this.id,
-      agent: "default",
-      tipo: "run.started",
-      payload: { session: true, model: this.modelName() },
-    });
+    this.#append("run.started", { session: true, model: this.modelName() });
+  }
+
+  /** Auditor novo por evento: outro Auditor (runTask) avança o seq no mesmo arquivo. */
+  #append(tipo: string, payload: Record<string, unknown>): void {
+    new Auditor(this.#auditPath).append({ run: this.id, agent: "default", tipo, payload });
   }
 
   get messages(): readonly ChatMessage[] {
@@ -119,23 +125,21 @@ export class AgentSession {
     return this.#modelRef;
   }
 
-  /** Limpa o histórico preservando o system prompt (acumulados da sessão continuam). */
+  /** Limpa o histórico preservando o system; acumulados da sessão continuam. */
   clear(): void {
+    if (this.#busy) throw new Error("turno em andamento");
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
-    this.#turns = 0;
   }
 
   async send(prompt: string, signal?: AbortSignal): Promise<TurnResult> {
     if (this.#closed) throw new Error("sessão de chat encerrada");
+    if (this.#busy) throw new Error("turno já em andamento");
+    this.#busy = true;
     const before = this.#messages;
+    const baseline = this.#ledger.readAll().length;
     const guard = guardContext([...before, { role: "user", content: prompt }], this.contextLimit());
     const history = guard.messages.slice(0, -1); // o último é o prompt deste turno
-    this.#audit.append({
-      run: this.id,
-      agent: "default",
-      tipo: "chat.prompt",
-      payload: { taskHash: shortTaskHash(prompt) },
-    });
+    this.#append("chat.prompt", { taskHash: shortTaskHash(prompt) });
 
     let report: RunReport;
     try {
@@ -151,8 +155,18 @@ export class AgentSession {
         history,
       });
     } catch (error) {
-      this.#messages = before; // turno falho não entra no histórico
+      // Uso gasto antes da falha fica no ledger: contabiliza no acumulado da sessão
+      for (const entry of this.#ledger.readAll().slice(baseline)) {
+        this.#tokensIn += entry.tokensIn;
+        this.#tokensOut += entry.tokensOut;
+        if (entry.costUsd === null) this.#costKnown = false;
+        else this.#costUsd += entry.costUsd;
+      }
+      // Budget/swap negados encerram a sessão (checkpoint fica interrupted)
+      if (error instanceof BudgetExceededError || error instanceof SwapDeniedError) this.#closed = true;
       throw error;
+    } finally {
+      this.#busy = false;
     }
 
     this.#messages = [...(report.messages ?? guard.messages), { role: "assistant", content: report.final }];
@@ -201,19 +215,15 @@ export class AgentSession {
   /** Encerra a sessão e audita o run.completed uma única vez. */
   close(): void {
     if (this.#closed) return;
+    if (this.#busy) throw new Error("turno em andamento");
     this.#closed = true;
-    this.#audit.append({
-      run: this.id,
-      agent: "default",
-      tipo: "run.completed",
-      payload: {
-        session: true,
-        steps: this.#steps,
-        turns: this.#turns,
-        tokensIn: this.#tokensIn,
-        tokensOut: this.#tokensOut,
-        costUsd: this.#costKnown ? this.#costUsd : null,
-      },
+    this.#append("run.completed", {
+      session: true,
+      steps: this.#steps,
+      turns: this.#turns,
+      tokensIn: this.#tokensIn,
+      tokensOut: this.#tokensOut,
+      costUsd: this.#costKnown ? this.#costUsd : null,
     });
   }
 }

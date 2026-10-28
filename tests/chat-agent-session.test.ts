@@ -57,7 +57,10 @@ describe("AgentSession (T1, #62)", () => {
       expect(bodies[1]!.messages?.map((m) => m.content)).toEqual(["sys", "primeiro", "ok", "segundo"]);
       const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
       expect(ledger.readAll().filter((e) => e.run === chat.id)).toHaveLength(2);
-      expect(chat.snapshot().turns).toBe(2);
+      expect(chat.snapshot()).toMatchObject({ turns: 2, tokensIn: 20 });
+      chat.clear();
+      expect(chat.snapshot().turns).toBe(2); // acumulados da sessão continuam
+      expect(chat.messages.map((m) => m.content)).toEqual(["sys"]);
     } finally {
       chat.close();
       stop();
@@ -79,6 +82,9 @@ describe("AgentSession (T1, #62)", () => {
       expect(prompts).toHaveLength(1);
       expect((prompts[0]!.payload as { taskHash?: string }).taskHash).toMatch(/^[0-9a-f]{16}$/);
       expect(JSON.stringify(events)).not.toContain("segredo do usuário");
+      const seqs = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll().map((e) => e.seq);
+      expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+      expect(new Set(seqs).size).toBe(seqs.length);
     } finally {
       stop();
     }
@@ -115,20 +121,6 @@ describe("AgentSession (T1, #62)", () => {
     }
   });
 
-  test("/clear preserva o system e descarta o histórico", async () => {
-    const { bodies, session, stop } = setup();
-    const chat = session();
-    try {
-      await chat.send("antes");
-      chat.clear();
-      await chat.send("depois");
-      expect(bodies[1]!.messages?.map((m) => m.content)).toEqual(["sys", "depois"]);
-    } finally {
-      chat.close();
-      stop();
-    }
-  });
-
   test("context guard descarta o turno antigo no nível da sessão", async () => {
     const { bodies, session, stop } = setup({ context: 10 });
     const chat = session();
@@ -145,15 +137,32 @@ describe("AgentSession (T1, #62)", () => {
     }
   });
 
-  test("turno falho não entra no histórico", async () => {
-    const { session, stop } = setup({ reply: () => new Response("boom", { status: 400 }) });
+  test("turno falho não entra no histórico, mas o custo gasto conta", async () => {
+    const { session, stop } = setup({ reply: (call) => (call === 1 ? toolCall() : new Response("boom", { status: 400 })) });
     const chat = session();
     try {
       await expect(chat.send("falha")).rejects.toBeDefined();
-      expect(chat.snapshot().messages).toHaveLength(1);
-      expect(chat.snapshot().turns).toBe(0);
+      const snapshot = chat.snapshot();
+      expect(snapshot.messages).toHaveLength(1);
+      expect(snapshot.turns).toBe(0);
+      expect(snapshot.tokensIn).toBe(10); // uso da 1ª chamada não some
+      expect(snapshot.costUsd).toBeGreaterThan(0);
     } finally {
       chat.close();
+      stop();
+    }
+  });
+
+  test("send concorrente e pós-close falham claro", async () => {
+    const { session, stop } = setup();
+    const chat = session();
+    try {
+      const results = await Promise.allSettled([chat.send("A"), chat.send("B")]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+      chat.close();
+      await expect(chat.send("depois")).rejects.toThrow(/encerrada/);
+    } finally {
       stop();
     }
   });
