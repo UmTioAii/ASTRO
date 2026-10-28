@@ -1,7 +1,7 @@
 # gitleaks configuration
 # https://github.com/gitleaks/gitleaks#configuration
 
-[allowlist]
+[[allowlist]]
 description = "Test files with fake secrets for testing redactSecrets"
 paths = [
   "tests/**/*",
