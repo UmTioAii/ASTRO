@@ -47,19 +47,19 @@ function paint(text: string, code: string, style: boolean): string {
   return style ? `${code}${text}${RESET}` : text;
 }
 
-function sessionLines(snapshot: SessionSnapshot, lastFile: string | undefined): string[] {
+export function sessionLines(snapshot: SessionSnapshot, lastFile: string | undefined): string[] {
   const line = `sessão ${snapshot.id} · início ${snapshot.startedAt} · modelo ${snapshot.model}`
     + ` · turnos ${snapshot.turns} · tokens ${snapshot.tokensIn}/${snapshot.tokensOut}`
     + ` · custo ${fmtCost(snapshot.costUsd)}`;
   return [line, `arquivo: ${lastFile ?? "ainda não salvo"}`];
 }
 
-function providerLine(provider: ProviderInfo): string {
+export function providerLine(provider: ProviderInfo): string {
   const credential = provider.credentialRef === undefined ? "" : ` cred=${provider.credentialRef}`;
   return `${provider.name} (${provider.kind})${credential} quota=${provider.quotaDomain} models=${provider.models.join(",") || "-"}`;
 }
 
-function statusLine(result: TurnResult): string {
+export function statusLine(result: TurnResult): string {
   const note = [result.warning ? "⚠ contexto ≥80%" : "", result.trimmed ? "turno antigo descartado" : ""]
     .filter((item) => item !== "").join(" · ");
   const totals = `total ${result.totalTokensIn}/${result.totalTokensOut} · ${fmtCost(result.totalCostUsd)}`;
