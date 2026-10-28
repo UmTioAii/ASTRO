@@ -718,6 +718,9 @@ export async function runMultiAgentSession(
     if (
       activeHandoff !== undefined &&
       !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&
+      // Negação de troca não é falha do handoff já recebido: o estado interrupted
+      // permite retomar e re-perguntar (I-08 + I-19).
+      !(error instanceof SwapDeniedError) &&
       !isAbortError(error, opts.signal)
     ) {
       recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {

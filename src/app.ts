@@ -245,11 +245,12 @@ function createGuardedProvider(
   ledger: Ledger,
   quotaLimits: Record<string, QuotaLimit> | undefined,
   profile?: string,
+  agentName?: () => string,
 ): Provider {
   const setup = createProvider(config, model, env, pluginFactories);
   audit.append({
     run,
-    agent: AGENT_NAME,
+    agent: agentName?.() ?? AGENT_NAME,
     tipo: "credential.acquired",
     payload: {
       provider: model.provider,
@@ -326,14 +327,14 @@ function providerChain(
         name: model.provider,
         priority: primaryConfig?.priority ?? DEFAULT_PRIORITY,
         create: memoizedCreate(() => createGuardedProvider(
-          config, model, env, pluginFactories, audit, run, ledger, quotaLimits, profile,
+          config, model, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
         )),
       },
       ...(primaryConfig?.fallback ?? []).map((name) => ({
         name,
         priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
         create: memoizedCreate(() => createGuardedProvider(
-          config, { ...model, provider: name }, env, pluginFactories, audit, run, ledger, quotaLimits, profile,
+          config, { ...model, provider: name }, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
         )),
       })),
     ],
@@ -484,7 +485,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   let effectiveProvider = (baseConfig?.fallback ?? []).length > 0
     ? providerChain(config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
     : lazyProvider(() => createGuardedProvider(
-      config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits,
+      config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, () => activeAgent.name,
     ));
 
   const pool = config.modelPool ?? {};
@@ -517,21 +518,22 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   // Completion cache (F6-4): vale para o provider base/profile e para os
   // providers por modelo do multi-agent (mesma instância de cache).
   let cache: CompletionCache | undefined;
-  const withCache = (provider: Provider): Provider => {
+  const withCache = (provider: Provider, scope: string): Provider => {
     const c = cache;
     if (c === undefined) return provider;
     return cachedProvider(provider, {
       cache: c,
+      scope,
       ttlHours: config.cache!.ttlHours,
       maxEntries: config.cache!.maxEntries,
       onHit: (key) => {
-        audit.append({ run, agent: AGENT_NAME, tipo: "cache.hit", payload: { key: key.slice(0, 16) } });
+        audit.append({ run, agent: activeAgent.name, tipo: "cache.hit", payload: { key: key.slice(0, 16) } });
       },
     });
   };
   if (config.cache?.enabled === true) {
     cache = new CompletionCache(join(dirname(ledgerPath), "cache.db"));
-    effectiveProvider = withCache(effectiveProvider);
+    effectiveProvider = withCache(effectiveProvider, `${model.provider}/${model.id}`);
   }
 
   // Provider por modelo do agent (F-31d): o multi-agent troca de modelo e precisa
@@ -541,14 +543,14 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const providerFor = (m: ModelEntry, profile?: string): Provider => {
     if (profile !== undefined) return effectiveProvider;
     const key = `${m.provider}/${m.id}`;
-    let provider = modelProviders.get(key);
-    if (provider === undefined) {
-      provider = (config.providers[m.provider]?.fallback ?? []).length > 0
-        ? providerChain(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
-        : createGuardedProvider(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits);
-      modelProviders.set(key, withCache(provider));
-    }
-    return provider;
+    const cached = modelProviders.get(key);
+    if (cached !== undefined) return cached;
+    const built = (config.providers[m.provider]?.fallback ?? []).length > 0
+      ? providerChain(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
+      : createGuardedProvider(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, () => activeAgent.name);
+    const wrapped = withCache(built, key);
+    modelProviders.set(key, wrapped);
+    return wrapped;
   };
 
   // O shell não deve ver chaves de nenhum provider configurado, mesmo inativo
@@ -719,7 +721,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
     // Troca não aprovada (F-19): o estado interrupted já foi gravado pela sessão
     if (error instanceof SwapDeniedError) {
-      audit.append({ run, agent: AGENT_NAME, tipo: "run.stopped",
+      audit.append({ run, agent: error.request.agent ?? activeAgent.name, tipo: "run.stopped",
         payload: { reason: "swap_denied", from: error.request.from, to: error.request.to } });
       throw new Error(`troca não aprovada (${error.decision}); run parado em ponto seguro`, { cause: error });
     }

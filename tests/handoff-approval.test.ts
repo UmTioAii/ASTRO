@@ -4,8 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
 import { runTask } from "../src/app";
+import { SwapDeniedError } from "../src/approval";
+import { scanHandoffs } from "../src/handoff/lifecycle";
 import { buildHandoffArtifact } from "../src/handoff/types";
 import { Ledger } from "../src/ledger";
+import type { CompletionResponse, Provider } from "../src/provider/types";
+import type { AgentEntry, ModelEntry } from "../src/registry";
+import { runMultiAgentSession, type MultiAgentSessionOptions } from "../src/session";
+import { ToolExecutor } from "../src/tools/executor";
+import { handoffTool } from "../src/tools/handoff";
 
 interface Seen { provider: string; model: string }
 
@@ -49,6 +56,7 @@ function setup(handoffTo = "coder", bFails = false) {
       planner: { model: "a/m1", maxSteps: 2, tools: ["handoff"] },
       coder: { model: "b/m2", maxSteps: 2, tools: [] },
     },
+    cache: { enabled: true, ttlHours: 1, maxEntries: 32 },
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));
   return {
@@ -84,6 +92,9 @@ describe("gate de troca no handoff multi-agent (F-19, #161)", () => {
       const requested = audit().find((e) => e.tipo === "swap.requested");
       expect(requested).toMatchObject({ agent: "planner", payload: { reason: "handoff" } });
       expect(audit().some((e) => e.tipo === "swap.approved")).toBe(true);
+      const acquiredB = audit().filter((e) => e.tipo === "credential.acquired"
+        && (e.payload as { provider?: string }).provider === "b");
+      expect(acquiredB.every((e) => e.agent === "coder")).toBe(true); // I-04 no multi-agent
       const usage = ledger().readAll().filter((e) => e.run === report.runId);
       expect(usage.find((e) => e.model === "m2")).toMatchObject({ provider: "b", credentialRef: "KEY_B" });
     } finally {
@@ -130,6 +141,55 @@ describe("gate de troca no handoff multi-agent (F-19, #161)", () => {
     } finally {
       stop();
     }
+  });
+
+  test("cache habilitado: 2ª execução reusa o planner e mantém gate/roteamento", async () => {
+    const { cwd, configPath, seen, env, stop, audit } = setup();
+    try {
+      await runTask({ configPath, task: "x", cwd, env, approveSwap: () => true });
+      expect(seen.filter((s) => s.provider === "a")).toHaveLength(1);
+      const posts = seen.length;
+      const report = await runTask({ configPath, task: "x", cwd, env, approveSwap: () => true });
+      expect(report.final).toBe("done");
+      expect(seen.filter((s) => s.provider === "a")).toHaveLength(1); // planner veio do cache
+      expect(seen.length).toBe(posts + 1); // só o coder (artefato do handoff muda por run)
+      expect(audit().some((e) => e.tipo === "cache.hit")).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
+  test("negar o 2º handoff não invalida o 1º já recebido (I-19)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-handoff-2-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const model = (provider: string, id: string): ModelEntry =>
+      ({ provider, id, tags: ["writing-code"], context: 8192, status: "active" });
+    const models: Record<string, ModelEntry> = { "a/m1": model("a", "m1"), "b/m2": model("b", "m2"), "c/m3": model("c", "m3") };
+    const agents: Record<string, AgentEntry> = {
+      planner: { model: "a/m1", maxSteps: 2, tools: ["handoff"] },
+      coder: { model: "b/m2", maxSteps: 2, tools: ["handoff"] },
+      reviewer: { model: "c/m3", maxSteps: 2, tools: [] },
+    };
+    const handoff = (to: string): CompletionResponse => ({ content: "", toolCalls: [{ id: `h-${to}`, name: "handoff",
+      arguments: JSON.stringify({ to, task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] }) }],
+      usage: { inputTokens: 1, outputTokens: 1 } });
+    let calls = 0;
+    const provider: Provider = { complete: async () => { calls++; return handoff(calls === 1 ? "coder" : "reviewer"); } };
+    let gates = 0;
+    const opts: MultiAgentSessionOptions = {
+      run: "r1", credentialRef: "K", quotaDomain: "default", cwd, provider,
+      registry: { requireAgent: (n) => agents[n]!, getAgent: (n) => agents[n], resolveModel: (a) => models[a.model]! },
+      baseModel: models["a/m1"]!, baseExecutor: new ToolExecutor({ tools: [handoffTool], allow: ["handoff"], audit }),
+      ledger, audit, baseMaxSteps: 5, entryAgent: "planner",
+      approveSwap: () => { gates++; return gates === 1; },
+    };
+    await expect(runMultiAgentSession(opts, "x")).rejects.toThrow(SwapDeniedError);
+    expect(calls).toBe(2);
+    const handoffs = scanHandoffs(ledger, "r1");
+    expect(handoffs).toHaveLength(1); // 2º handoff nem foi criado (gate antes)
+    expect(handoffs[0]!.state).not.toBe("failed"); // 1º continua válido
+    expect(ledger.lastState("r1")?.reason).toBe("swap_denied");
   });
 
   test("retomada de handoff pendente também passa pelo gate", async () => {
