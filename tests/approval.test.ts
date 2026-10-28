@@ -78,7 +78,6 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
     });
     await expect(fallbackProvider.complete({ model: "m", messages: [] })).rejects.toBeInstanceOf(SwapDeniedError);
     expect(fallbackCalls).toBe(0);
-
     let profileCalls = 0;
     const profileProvider = new ProfileFallbackProvider({
       base: { complete: async () => { profileCalls++; return resp("base"); } },
@@ -154,7 +153,6 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
         agent: { model: "a/m1", maxSteps: 1, tools: [] },
         paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
       }));
-
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY_A: "a", KEY_B: "b" }, approveSwap: () => false }))
         .rejects.toThrow(/troca não aprovada \(denied\)/);
       expect(fallbackCalls).toBe(0);
@@ -163,7 +161,6 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
       server.stop(true);
     }
   });
-
   test("runTask com aprovação explícita: recebe deltas, audita approved e executa", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "astro-approval-"));
     let fallbackCalls = 0;
@@ -184,7 +181,6 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
         agent: { model: "a/m1", maxSteps: 1, tools: [] },
         paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
       }));
-
       let seen: SwapRequest | undefined;
       const report = await runTask({ configPath, task: "x", cwd, env: { KEY_A: "a", KEY_B: "b" },
         approveSwap: (request) => { seen = request; return true; } });
