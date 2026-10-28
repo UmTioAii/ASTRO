@@ -1,8 +1,4 @@
-/**
- * Sessão de chat (T1): multi-turn sobre o mesmo run, histórico em memória,
- * modelo atual e acumulados. A UI (REPL/TUI) só fala com esta classe — nunca
- * com provider, ledger ou audit diretamente.
- */
+/** Sessão de chat (T1): multi-turn sobre o mesmo run; a UI só fala com esta classe. */
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { runTask, shortTaskHash, type RunReport } from "../app";
@@ -56,6 +52,16 @@ export interface SessionSnapshot {
 
 function resolvePath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path);
+}
+
+/** Budget/swap podem chegar reembrulhados pelo app: olha a cadeia de cause. */
+function isFatalSessionError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth++) {
+    if (current instanceof BudgetExceededError || current instanceof SwapDeniedError) return true;
+    current = current.cause;
+  }
+  return false;
 }
 
 export class AgentSession {
@@ -135,64 +141,66 @@ export class AgentSession {
     if (this.#closed) throw new Error("sessão de chat encerrada");
     if (this.#busy) throw new Error("turno já em andamento");
     this.#busy = true;
-    const before = this.#messages;
-    const baseline = this.#ledger.readAll().length;
-    const guard = guardContext([...before, { role: "user", content: prompt }], this.contextLimit());
-    const history = guard.messages.slice(0, -1); // o último é o prompt deste turno
-    this.#append("chat.prompt", { taskHash: shortTaskHash(prompt) });
-
-    let report: RunReport;
     try {
-      report = await runTask({
-        configPath: this.#configPath,
-        task: prompt,
-        cwd: this.#cwd,
-        ...(this.#env === undefined ? {} : { env: this.#env }),
-        ...(signal === undefined ? {} : { signal }),
-        runId: this.id,
-        model: this.#modelRef,
-        suppressRunEvents: true,
-        history,
-      });
-    } catch (error) {
-      // Uso gasto antes da falha fica no ledger: contabiliza no acumulado da sessão
-      for (const entry of this.#ledger.readAll().slice(baseline)) {
-        this.#tokensIn += entry.tokensIn;
-        this.#tokensOut += entry.tokensOut;
-        if (entry.costUsd === null) this.#costKnown = false;
-        else this.#costUsd += entry.costUsd;
+      const before = this.#messages;
+      const baseline = this.#ledger.readAll().length;
+      const guard = guardContext([...before, { role: "user", content: prompt }], this.contextLimit());
+      const history = guard.messages.slice(0, -1); // o último é o prompt deste turno
+      this.#append("chat.prompt", { taskHash: shortTaskHash(prompt) });
+
+      let report: RunReport;
+      try {
+        report = await runTask({
+          configPath: this.#configPath,
+          task: prompt,
+          cwd: this.#cwd,
+          ...(this.#env === undefined ? {} : { env: this.#env }),
+          ...(signal === undefined ? {} : { signal }),
+          runId: this.id,
+          model: this.#modelRef,
+          suppressRunEvents: true,
+          history,
+        });
+      } catch (error) {
+        // Uso gasto antes da falha fica no ledger: contabiliza no acumulado da sessão
+        for (const entry of this.#ledger.readAll().slice(baseline)) {
+          this.#tokensIn += entry.tokensIn;
+          this.#tokensOut += entry.tokensOut;
+          if (entry.costUsd === null) this.#costKnown = false;
+          else this.#costUsd += entry.costUsd;
+        }
+        // Budget/swap negados encerram a sessão (checkpoint fica interrupted)
+        if (isFatalSessionError(error)) this.#closed = true;
+        throw error;
       }
-      // Budget/swap negados encerram a sessão (checkpoint fica interrupted)
-      if (error instanceof BudgetExceededError || error instanceof SwapDeniedError) this.#closed = true;
-      throw error;
+
+      this.#messages = [...(report.messages ?? guard.messages), { role: "assistant", content: report.final }];
+      this.#turns++;
+      this.#steps += report.steps;
+      this.#tokensIn += report.tokensIn;
+      this.#tokensOut += report.tokensOut;
+      if (report.costUsd === null) this.#costKnown = false;
+      else this.#costUsd += report.costUsd;
+
+      return {
+        final: report.final,
+        model: report.model,
+        steps: report.steps,
+        tokensIn: report.tokensIn,
+        tokensOut: report.tokensOut,
+        costUsd: report.costUsd,
+        totalTokensIn: this.#tokensIn,
+        totalTokensOut: this.#tokensOut,
+        totalCostUsd: this.#costKnown ? this.#costUsd : null,
+        contextTokens: guard.tokens,
+        contextLimit: this.contextLimit(),
+        contextRatio: guard.ratio,
+        warning: guard.warning,
+        trimmed: guard.trimmed,
+      };
     } finally {
       this.#busy = false;
     }
-
-    this.#messages = [...(report.messages ?? guard.messages), { role: "assistant", content: report.final }];
-    this.#turns++;
-    this.#steps += report.steps;
-    this.#tokensIn += report.tokensIn;
-    this.#tokensOut += report.tokensOut;
-    if (report.costUsd === null) this.#costKnown = false;
-    else this.#costUsd += report.costUsd;
-
-    return {
-      final: report.final,
-      model: report.model,
-      steps: report.steps,
-      tokensIn: report.tokensIn,
-      tokensOut: report.tokensOut,
-      costUsd: report.costUsd,
-      totalTokensIn: this.#tokensIn,
-      totalTokensOut: this.#tokensOut,
-      totalCostUsd: this.#costKnown ? this.#costUsd : null,
-      contextTokens: guard.tokens,
-      contextLimit: this.contextLimit(),
-      contextRatio: guard.ratio,
-      warning: guard.warning,
-      trimmed: guard.trimmed,
-    };
   }
 
   contextLimit(): number {

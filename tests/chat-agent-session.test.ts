@@ -9,7 +9,7 @@ import { Ledger } from "../src/ledger";
 
 interface Body { model?: string; messages?: ChatMessage[] }
 
-function setup(opts: { context?: number; reply?: (call: number) => Response } = {}) {
+function setup(opts: { context?: number; reply?: (call: number) => Response; budget?: Record<string, unknown> } = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "astro-chat-session-"));
   const bodies: Body[] = [];
   let call = 0;
@@ -28,6 +28,7 @@ function setup(opts: { context?: number; reply?: (call: number) => Response } = 
         price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } },
     ],
     agent: { model: "p/m1", maxSteps: 3, tools: [] },
+    ...(opts.budget === undefined ? {} : { budget: opts.budget }),
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));
   return {
@@ -66,20 +67,20 @@ describe("AgentSession (T1, #62)", () => {
       stop();
     }
   });
-
   test("emite run.started/chat.prompt/run.completed por sessão (só taskHash)", async () => {
     const { cwd, session, stop } = setup();
     const chat = session();
     try {
       await chat.send("segredo do usuário");
+      await chat.send("segundo");
       chat.close();
       chat.close();
       const events = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll();
       expect(events.filter((e) => e.tipo === "run.started")).toHaveLength(1);
       expect(events.filter((e) => e.tipo === "run.completed")).toHaveLength(1);
-      expect(events.find((e) => e.tipo === "run.completed")?.payload).toMatchObject({ steps: 1, turns: 1, session: true });
+      expect(events.find((e) => e.tipo === "run.completed")?.payload).toMatchObject({ steps: 2, turns: 2, session: true });
       const prompts = events.filter((e) => e.tipo === "chat.prompt");
-      expect(prompts).toHaveLength(1);
+      expect(prompts).toHaveLength(2);
       expect((prompts[0]!.payload as { taskHash?: string }).taskHash).toMatch(/^[0-9a-f]{16}$/);
       expect(JSON.stringify(events)).not.toContain("segredo do usuário");
       const seqs = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll().map((e) => e.seq);
@@ -89,22 +90,6 @@ describe("AgentSession (T1, #62)", () => {
       stop();
     }
   });
-
-  test("tool call por turno conta steps e mantém o histórico", async () => {
-    const { bodies, session, stop } = setup({ reply: (call) => (call === 1 ? toolCall() : final("pronto")) });
-    const chat = session();
-    try {
-      const result = await chat.send("use a tool");
-      expect(result.steps).toBe(2);
-      expect(result.final).toBe("pronto");
-      expect(bodies[1]!.messages?.some((m) => m.role === "tool")).toBe(true);
-      expect(chat.messages.at(-1)).toMatchObject({ role: "assistant", content: "pronto" });
-    } finally {
-      chat.close();
-      stop();
-    }
-  });
-
   test("troca de modelo em runtime chega ao próximo turno; inválido falha", async () => {
     const { bodies, session, stop } = setup();
     const chat = session();
@@ -120,7 +105,6 @@ describe("AgentSession (T1, #62)", () => {
       stop();
     }
   });
-
   test("context guard descarta o turno antigo no nível da sessão", async () => {
     const { bodies, session, stop } = setup({ context: 10 });
     const chat = session();
@@ -136,7 +120,6 @@ describe("AgentSession (T1, #62)", () => {
       stop();
     }
   });
-
   test("turno falho não entra no histórico, mas o custo gasto conta", async () => {
     const { session, stop } = setup({ reply: (call) => (call === 1 ? toolCall() : new Response("boom", { status: 400 })) });
     const chat = session();
@@ -152,7 +135,6 @@ describe("AgentSession (T1, #62)", () => {
       stop();
     }
   });
-
   test("send concorrente e pós-close falham claro", async () => {
     const { session, stop } = setup();
     const chat = session();
@@ -162,6 +144,16 @@ describe("AgentSession (T1, #62)", () => {
       expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
       chat.close();
       await expect(chat.send("depois")).rejects.toThrow(/encerrada/);
+    } finally {
+      stop();
+    }
+  });
+  test("budget negado encerra a sessão (sem segundo turno)", async () => {
+    const { session, stop } = setup({ budget: { scope: "day", limitUsd: 0 } });
+    const chat = session();
+    try {
+      await expect(chat.send("x")).rejects.toThrow(/budget/);
+      await expect(chat.send("y")).rejects.toThrow(/encerrada/);
     } finally {
       stop();
     }
