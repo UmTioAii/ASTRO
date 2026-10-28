@@ -23,6 +23,7 @@ const USAGE = `Uso:
   bun src/cli.ts bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
+  bun src/cli.ts resume <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
   bun src/cli.ts providers <health|list|test> [--config <path>]
   bun src/cli.ts handoff show <handoff_id> [--config <path>]
@@ -90,6 +91,8 @@ interface ReplayCommand {
   cwd?: string;
 }
 
+interface ResumeCommand extends ReplayCommand {}
+
 interface HealthCommand {
   configPath: string;
 }
@@ -134,6 +137,7 @@ type ParsedCommand =
   | { kind: "bench"; options: BenchCommand }
   | { kind: "serve"; options: ServeCommand }
   | { kind: "replay"; options: ReplayCommand }
+  | { kind: "resume"; options: ResumeCommand }
   | { kind: "health"; options: HealthCommand }
   | { kind: "providers"; options: ProvidersCommand }
   | { kind: "pool"; options: PoolCommand }
@@ -144,6 +148,32 @@ type ParsedCommand =
   | { kind: "skills"; args: string[] }
   | { kind: "mcp"; args: string[] };
 
+/** Parser comum de `replay`/`resume` (run-id posicional + --task/--config/--cwd). */
+function parseReplayLike(command: "replay" | "resume", rest: string[]): ReplayCommand {
+  let configPath = "astro.config.json";
+  let cwd: string | undefined;
+  let runId: string | undefined;
+  let task: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i] as string;
+    if (arg === "--config" || arg === "--cwd" || arg === "--task") {
+      const value = rest.at(i + 1);
+      if (value === undefined || value.startsWith("-")) throw new UsageError(`falta o valor de ${arg}`);
+      i++;
+      if (arg === "--config") configPath = value;
+      else if (arg === "--cwd") cwd = value;
+      else task = value;
+      continue;
+    }
+    if (arg.startsWith("-")) throw new UsageError(`opção desconhecida: "${arg}"`);
+    if (runId !== undefined) throw new UsageError(`argumento inesperado: "${arg}"`);
+    runId = arg;
+  }
+  if (runId === undefined) throw new UsageError(`falta o run-id; use: ${command} <run-id> --task "<pedido>"`);
+  if (task === undefined) throw new UsageError(`falta a tarefa; use: ${command} <run-id> --task "<pedido>"`);
+  return { runId, task, configPath, ...(cwd === undefined ? {} : { cwd }) };
+}
+
 function parseArgs(argv: string[]): ParsedCommand {
   if (argv.length === 0) {
     throw new UsageError("nenhum argumento informado");
@@ -153,7 +183,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills", "mcp"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "resume", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills", "mcp"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
   }
@@ -377,42 +407,9 @@ function parseArgs(argv: string[]): ParsedCommand {
     return { kind: "skills", args: rest };
   }
 
-  if (command === "replay") {
-    let configPath = "astro.config.json";
-    let cwd: string | undefined;
-    let runId: string | undefined;
-    let task: string | undefined;
-    for (let i = 0; i < rest.length; i++) {
-      const arg = rest[i] as string;
-      if (arg === "--config" || arg === "--cwd" || arg === "--task") {
-        const value = rest.at(i + 1);
-        if (value === undefined || value.startsWith("-")) {
-          throw new UsageError(`falta o valor de ${arg}`);
-        }
-        i++;
-        if (arg === "--config") configPath = value;
-        else if (arg === "--cwd") cwd = value;
-        else task = value;
-        continue;
-      }
-      if (arg.startsWith("-")) {
-        throw new UsageError(`opção desconhecida: "${arg}"`);
-      }
-      if (runId !== undefined) {
-        throw new UsageError(`argumento inesperado: "${arg}"`);
-      }
-      runId = arg;
-    }
-    if (runId === undefined) {
-      throw new UsageError('falta o run-id; use: replay <run-id> --task "<pedido>"');
-    }
-    if (task === undefined) {
-      throw new UsageError('falta a tarefa; use: replay <run-id> --task "<pedido>"');
-    }
-    return {
-      kind: "replay",
-      options: { runId, task, configPath, ...(cwd === undefined ? {} : { cwd }) },
-    };
+  if (command === "replay" || command === "resume") {
+    const options = parseReplayLike(command, rest);
+    return command === "replay" ? { kind: "replay", options } : { kind: "resume", options };
   }
 
   if (command === "serve") {
@@ -675,6 +672,27 @@ async function main(argv: string[]): Promise<number> {
       console.log(`  resposta: ${result.replay.final}`);
       console.log(result.identical ? "  ✓ idêntico ao original" : "  ✗ divergente do original");
       return result.identical ? 0 : 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`erro: ${message}`);
+      return 1;
+    }
+  }
+
+  if (parsed.kind === "resume") {
+    const o = parsed.options;
+    try {
+      const report = await runTask({
+        configPath: resolve(o.configPath),
+        task: o.task,
+        ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
+        resume: o.runId,
+      });
+      console.log(`retomado ${report.resumedFrom ?? "?"} do run ${report.runId}`);
+      console.log(report.final);
+      console.log("");
+      console.log(formatSummary(report));
+      return 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`erro: ${message}`);

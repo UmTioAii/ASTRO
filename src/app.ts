@@ -21,6 +21,7 @@ import { sendAuditWebhook } from "./team";
 import { resolveTaskSkill } from "./skills/executor";
 import type { AuditEvent } from "./audit";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
+import { planResume, ReplayIncompleteError } from "./resume";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
 import { MCPRegistry } from "./mcp/registry";
@@ -49,6 +50,8 @@ export interface RunOptions {
   skillsUserRoot?: string;
   /** Sinal de cancelamento do run (F-06); aborta a chamada em voo e para em estado seguro. */
   signal?: AbortSignal;
+  /** Run-id a retomar (F-22): reconstrói a árvore do ledger e continua do agente ativo. */
+  resume?: string;
 }
 
 export interface RunReport {
@@ -63,6 +66,8 @@ export interface RunReport {
   ledgerPath: string;
   auditPath: string;
   agentsUsed?: string[];
+  /** Agente de onde o run foi retomado (`resume`); ausente em run novo. */
+  resumedFrom?: string;
 }
 
 const AGENT_NAME = "default";
@@ -385,7 +390,25 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         };
   const audit = new Auditor(auditPath, ...(onEvent === undefined ? [] : [{ onEvent }]));
 
-  const run = randomUUID();
+  const run = opts.resume ?? randomUUID();
+  const registry = new Registry(config);
+  const model = registry.require(config.agent.model);
+  let resumed: ReturnType<typeof planResume> | undefined;
+  if (opts.resume !== undefined) {
+    resumed = planResume(ledger, run);
+    const agentId = resumed.agent.agent_id;
+    const agent = config.agents?.[agentId];
+    if (config.agents === undefined && agentId !== AGENT_NAME) {
+      throw new ReplayIncompleteError(`run "${run}" pertence ao agente "${agentId}", mas a config não tem agents; replay incompleto`);
+    }
+    if (config.agents !== undefined && agent === undefined) {
+      throw new ReplayIncompleteError(`agente "${agentId}" do run não existe mais na configuração; replay incompleto`);
+    }
+    const resolved = agent === undefined ? model : registry.resolveModel(agent);
+    if (resumed.agent.model !== undefined && resumed.agent.model !== resolved.id) {
+      throw new ReplayIncompleteError(`modelo do agente "${agentId}" mudou (gravado "${resumed.agent.model}", config "${resolved.id}"); replay incompleto`);
+    }
+  }
   audit.append({
     run,
     agent: AGENT_NAME,
@@ -394,11 +417,10 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       taskHash: shortTaskHash(opts.task),
       model: config.agent.model,
       ...(config.agent.profile === undefined ? {} : { profile: config.agent.profile }),
+      ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
     },
   });
 
-  const registry = new Registry(config);
-  const model = registry.require(config.agent.model);
   const { credentialRef, quotaDomain } = providerIdentity(config, model.provider);
   assertProviderKind(config, model, loaded.providerFactories);
   const resolveIdentity = identityResolver(config, registry);
@@ -518,7 +540,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       ...(opts.skillsUserRoot === undefined ? {} : { userRoot: opts.skillsUserRoot }) });
     // Se há agents configurados, usa multi-agent session
     if (config.agents && Object.keys(config.agents).length > 0) {
-      const entryAgent = config.agent.entryAgent ?? "planner";
+      const entryAgent = resumed?.agent.agent_id ?? config.agent.entryAgent ?? "planner";
       const multiOpts: MultiAgentSessionOptions = {
         run,
         credentialRef,
@@ -673,5 +695,6 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     ledgerPath,
     auditPath,
     agentsUsed: result.agentsUsed,
+    ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
   };
 }
