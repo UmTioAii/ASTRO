@@ -7,6 +7,8 @@ import { redactSecrets } from "../sanitize-external";
 
 export interface ReplIO {
   read(prompt: string): Promise<string | null>;
+  /** Lê só uma linha nova (ignora a fila do REPL); para decisores no meio do turno. */
+  readFresh?(prompt: string): Promise<string | null>;
   write(text: string): void;
 }
 

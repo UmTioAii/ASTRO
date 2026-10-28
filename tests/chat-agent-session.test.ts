@@ -120,10 +120,42 @@ describe("AgentSession (T1, #62)", () => {
       chat.setModel("p/m2");
       expect(chat.setProvider("q")).toBe("q/m2");
       expect(chat.setProvider("p")).toBe("p/m2");
-      expect(() => chat.setProvider("ghost")).toThrow(/não tem modelo/);
+      expect(() => chat.setProvider("ghost")).toThrow(/não está configurado/);
     } finally {
       chat.close();
       stop();
+    }
+  });
+  test("approveSwap é repassado e governa o fallback no turno", async () => {
+    const down = Bun.serve({ port: 0, fetch: async () => new Response("boom", { status: 500 }) });
+    const up = Bun.serve({ port: 0, fetch: async () => final("veio do B") });
+    const cwd = mkdtempSync(join(tmpdir(), "astro-chat-swap-"));
+    const configPath = join(cwd, "astro.config.json");
+    writeFileSync(configPath, JSON.stringify({
+      providers: {
+        a: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${down.port}/v1`, credentialRef: "KEY_A", priority: 1, fallback: ["b"], maxRetries: 0 },
+        b: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${up.port}/v1`, credentialRef: "KEY_B", priority: 2 },
+      },
+      models: [
+        { provider: "a", id: "m1", tags: ["writing-code"], context: 4096 },
+        { provider: "b", id: "m1", tags: ["writing-code"], context: 4096 },
+      ],
+      agent: { model: "a/m1", maxSteps: 2, tools: [] },
+      paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+    }));
+    let asked = 0;
+    const chat = new AgentSession({
+      configPath, cwd, env: { KEY_A: "ka", KEY_B: "kb" },
+      approveSwap: () => { asked++; return true; },
+    });
+    try {
+      const result = await chat.send("x");
+      expect(asked).toBe(1);
+      expect(result.final).toBe("veio do B");
+    } finally {
+      chat.close();
+      down.stop(true);
+      up.stop(true);
     }
   });
   test("onBudgetExceeded é repassado ao runTask", async () => {
