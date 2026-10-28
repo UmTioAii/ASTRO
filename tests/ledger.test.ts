@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Ledger, LEDGER_SCHEMA_VERSION, hashToolCalls } from "../src/ledger";
+import { redactSecrets } from "../src/sanitize-external";
 
 const dir = () => mkdtempSync(join(tmpdir(), "astro-ledger-"));
 const entry = {
@@ -209,5 +210,271 @@ describe("hashToolCalls (F-02)", () => {
     expect(a[0]).not.toBe(b[0]);
     expect(a[0]).not.toBe(c[0]);
     expect(hashToolCalls([])).toEqual([]);
+  });
+});
+
+describe("novos kinds e campos de usage (S-05, #122)", () => {
+  const testDir = () => mkdtempSync(join(tmpdir(), "astro-ledger-kinds-"));
+
+  describe("usage gains lvl, effort, thinking, param.stripped (E7)", () => {
+    test("usage entry aceita lvl, effort, thinking, param.stripped opcionais", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.record({
+        ...entry,
+        tokensIn: 100,
+        tokensOut: 50,
+        lvl: 2,
+        effort: "high",
+        thinking: "enabled",
+        "param.stripped": ["forbidden_param"],
+      }, { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false });
+
+      expect(e.lvl).toBe(2);
+      expect(e.effort).toBe("high");
+      expect(e.thinking).toBe("enabled");
+      expect(e["param.stripped"]).toEqual(["forbidden_param"]);
+      expect(e.kind).toBe("usage");
+      expect(e.schemaVersion).toBe(1);
+    });
+
+    test("campos ausentes em entradas legadas não quebram total()", () => {
+      const path = join(testDir(), "ledger.jsonl");
+      const old = { ...entry, ts: "2026-01-01T00:00:00Z", costUsd: null };
+      writeFileSync(path, `${JSON.stringify(old)}\n`, "utf8");
+      const l = new Ledger(path);
+      l.record({ ...entry, tokensIn: 10, tokensOut: 5 }, undefined);
+      const t = l.total();
+      expect(t.tokensIn).toBe(1010);
+      expect(t.tokensOut).toBe(505);
+    });
+
+    test("lvl, effort, thinking, param.stripped passam por redactSecrets na escrita", () => {
+      const path = join(testDir(), "ledger.jsonl");
+      const l = new Ledger(path);
+      const secret = "sk-secret123";
+      l.record({
+        ...entry,
+        tokensIn: 10,
+        tokensOut: 5,
+        lvl: 1,
+        effort: "low",
+        thinking: "off",
+        "param.stripped": [secret],
+      }, undefined);
+
+      const content = readFileSync(path, "utf8");
+      const written = JSON.parse(content.trim());
+      expect(written.lvl).toBe(1);
+      expect(written.effort).toBe("low");
+      expect(written.thinking).toBe("off");
+      // O secret deve ser redigido
+      expect(content).not.toContain(secret);
+    });
+  });
+
+  describe("kind agent: created/destroyed (PS-5, A4, M3)", () => {
+    test("recordAgentCreated grava kind agent com event=created e campos obrigatórios", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordAgentCreated({
+        run: "r1",
+        agent_id: "sub-1",
+        parent_agent_id: "planner",
+        session_id: "sess-1",
+        need: "coding",
+        model: "gpt-4o-mini",
+        profile: "premium",
+        reason: "delegated by planner",
+      });
+
+      expect(e.kind).toBe("agent");
+      expect(e.event).toBe("created");
+      expect(e.agent_id).toBe("sub-1");
+      expect(e.parent_agent_id).toBe("planner");
+      expect(e.session_id).toBe("sess-1");
+      expect(e.need).toBe("coding");
+      expect(e.model).toBe("gpt-4o-mini");
+      expect(e.profile).toBe("premium");
+      expect(e.reason).toBe("delegated by planner");
+      expect(e.schemaVersion).toBe(1);
+      expect(e.ts).toBeTruthy();
+    });
+
+    test("recordAgentDestroyed grava kind agent com event=destroyed e reason de destruição", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordAgentDestroyed({
+        run: "r1",
+        agent_id: "sub-1",
+        session_id: "sess-1",
+        reason: "maxTurns reached",
+      });
+
+      expect(e.kind).toBe("agent");
+      expect(e.event).toBe("destroyed");
+      expect(e.agent_id).toBe("sub-1");
+      expect(e.session_id).toBe("sess-1");
+      expect(e.reason).toBe("maxTurns reached");
+    });
+
+    test("campos opcionais e redactSecrets funcionam", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const secret = "sk-secret123";
+      l.recordAgentCreated({
+        run: "r1",
+        agent_id: "sub-1",
+        session_id: "sess-1",
+        need: "coding",
+        model: "gpt-4o-mini",
+        reason: `uses ${secret}`,
+      });
+      const content = readFileSync(l.path, "utf8");
+      expect(content).not.toContain(secret);
+    });
+  });
+
+  describe("kind budget: reserved/released/exceeded_choice/ceiling_hit/budget_exceeded_non_interactive (B9, B10, B4)", () => {
+    test("recordBudgetReserved grava kind budget com reserved", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordBudgetReserved({
+        run: "r1",
+        agent: "planner",
+        reserved: 0.50,
+        detail: "primary + fallback chain",
+      });
+
+      expect(e.kind).toBe("budget");
+      expect(e.reserved).toBe(0.50);
+      expect(e.detail).toBe("primary + fallback chain");
+      expect(e.schemaVersion).toBe(1);
+    });
+
+    test("recordBudgetReleased grava kind budget com released e actual_cost", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordBudgetReleased({
+        run: "r1",
+        agent: "planner",
+        released: 0.50,
+        actual_cost: 0.30,
+      });
+
+      expect(e.kind).toBe("budget");
+      expect(e.released).toBe(0.50);
+      expect(e.actual_cost).toBe(0.30);
+    });
+
+    test("recordBudgetExceeded grava kind budget com exceeded_choice", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordBudgetExceeded({
+        run: "r1",
+        agent: "planner",
+        exceeded_choice: "continue_same",
+      });
+
+      expect(e.kind).toBe("budget");
+      expect(e.exceeded_choice).toBe("continue_same");
+    });
+
+    test("recordCeilingHit grava kind budget com ceiling_hit", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordCeilingHit({
+        run: "r1",
+        agent: "planner",
+        ceiling_hit: true,
+      });
+
+      expect(e.kind).toBe("budget");
+      expect(e.ceiling_hit).toBe(true);
+    });
+
+    test("recordBudgetExceededNonInteractive grava kind budget com budget_exceeded_non_interactive", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordBudgetExceededNonInteractive({
+        run: "r1",
+        agent: "planner",
+        budget_exceeded_non_interactive: true,
+      });
+
+      expect(e.kind).toBe("budget");
+      expect(e.budget_exceeded_non_interactive).toBe(true);
+    });
+  });
+
+  describe("kind compaction: failure_count, manual (CMP-6)", () => {
+    test("recordCompaction grava kind compaction com failure_count e manual", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordCompaction({
+        run: "r1",
+        agent: "planner",
+        failure_count: 2,
+        manual: false,
+      });
+
+      expect(e.kind).toBe("compaction");
+      expect(e.failure_count).toBe(2);
+      expect(e.manual).toBe(false);
+    });
+
+    test("recordCompaction manual true registra compaction.manual", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      const e = l.recordCompaction({
+        run: "r1",
+        agent: "planner",
+        failure_count: 0,
+        manual: true,
+      });
+
+      expect(e.kind).toBe("compaction");
+      expect(e.manual).toBe(true);
+    });
+  });
+
+  describe("schemaVersion e compatibilidade (ADR-0002)", () => {
+    test("novos kinds têm schemaVersion 1 e seq monotônico", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      l.recordAgentCreated({ run: "r1", agent_id: "a1", session_id: "s1", need: "n", model: "m" });
+      l.recordBudgetReserved({ run: "r1", agent: "planner", reserved: 0.1 });
+      l.recordCompaction({ run: "r1", agent: "planner", failure_count: 0, manual: false });
+
+      const all = l.readAllEntries();
+      const newKinds = all.filter((e) => e.kind === "agent" || e.kind === "budget" || e.kind === "compaction");
+      expect(newKinds).toHaveLength(3);
+      newKinds.forEach((e) => {
+        expect(e.schemaVersion).toBe(1);
+        expect(typeof e.seq).toBe("number");
+      });
+    });
+
+    test("entrada antiga sem kind continua legível e somada em total()", () => {
+      const path = join(testDir(), "ledger.jsonl");
+      const old = { ...entry, ts: "2026-01-01T00:00:00Z", costUsd: null };
+      writeFileSync(path, `${JSON.stringify(old)}\n`, "utf8");
+      const l = new Ledger(path);
+      l.record({ ...entry, tokensIn: 10, tokensOut: 5 }, undefined);
+      const t = l.total();
+      expect(t.tokensIn).toBe(1010);
+      expect(t.tokensOut).toBe(505);
+    });
+  });
+
+  describe("redactSecrets em todos os novos campos livres (I-03, golden §11.6)", () => {
+    test("secret em reason de agent não vaza", () => {
+      const path = join(testDir(), "ledger.jsonl");
+      const l = new Ledger(path);
+      const secret = "Bearer sk-abc123";
+      l.recordAgentCreated({
+        run: "r1", agent_id: "a1", session_id: "s1", need: "n", model: "m",
+        reason: `auth: ${secret}`,
+      });
+      const content = readFileSync(path, "utf8");
+      expect(content).not.toContain(secret);
+    });
+
+    test("secret em detail de budget não vaza", () => {
+      const path = join(testDir(), "ledger.jsonl");
+      const l = new Ledger(path);
+      const secret = "key-xyz";
+      l.recordBudgetReserved({ run: "r1", agent: "p", reserved: 0.1, detail: secret });
+      const content = readFileSync(path, "utf8");
+      expect(content).not.toContain(secret);
+    });
   });
 });
