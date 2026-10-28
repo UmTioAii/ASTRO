@@ -387,3 +387,25 @@ test("!cmd roda pelo shell runner e não vira turno", async () => {
     instance.unmount();
   }
 });
+
+test("mostra deltas e substitui pela resposta final", async () => {
+  class Streamer extends FakeSession {
+    override async send(prompt: string, signal?: AbortSignal, onToken?: (text: string) => void): Promise<TurnResult> {
+      onToken?.("par");
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      onToken?.("cial");
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return super.send(prompt, signal);
+    }
+  }
+  const instance = render(<TuiApp session={new Streamer()} cwd="/tmp/astro" />);
+  try {
+    instance.stdin.write("olá");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("parcial") === true);
+    await waitFor(() => instance.lastFrame()?.includes("eco:olá") === true);
+    expect(instance.lastFrame()).not.toContain("parcial");
+  } finally {
+    instance.unmount();
+  }
+});

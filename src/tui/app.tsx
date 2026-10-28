@@ -71,6 +71,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
     setInputState(inputRef.current);
   };
   const [busy, setBusy] = useState(false);
+  const [partial, setPartial] = useState<string | undefined>(undefined);
   const busyRef = useRef(false);
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
@@ -163,7 +164,12 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
     turn.current = controller;
     setBusy(true);
     try {
-      const result = await session.send(command.text, controller.signal);
+      let streamed = "";
+      const result = await session.send(command.text, controller.signal, (delta) => {
+        streamed += delta;
+        setPartial(streamed);
+      });
+      setPartial(undefined);
       setEntries((current) => [
         ...current,
         { kind: "assistant", text: result.final },
@@ -173,6 +179,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
       if (isFatalSessionError(error)) exitRequested.current = true;
     } finally {
+      setPartial(undefined);
       const saved = persist(true);
       if (saved.failed) commandState.current.lastFile = undefined;
       else if (saved.path !== undefined) commandState.current.lastFile = saved.path;
@@ -252,6 +259,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
         {(entry, index) => <EntryLine key={index} entry={entry} />}
       </Static>
       {busy ? <Text color="yellow">pensando…</Text> : null}
+      {partial === undefined ? null : <Text>{partial}</Text>}
       {question === undefined ? null : <Text color="yellow">{question}</Text>}
       <Box marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
         <Text color="cyan">{"> "}</Text>
