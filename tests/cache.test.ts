@@ -141,6 +141,25 @@ describe("cachedProvider (F6-4)", () => {
     }
   });
 
+  test("scope separa providers com o mesmo request (sem hit cruzado)", async () => {
+    const cache = makeCache();
+    try {
+      let a = 0;
+      let b = 0;
+      const wa = cachedProvider({ complete: async () => { a++; return resp(); } },
+        { cache, scope: "a/m1", ttlHours: 24, maxEntries: 100 });
+      const wb = cachedProvider({ complete: async () => { b++; return resp(); } },
+        { cache, scope: "b/m1", ttlHours: 24, maxEntries: 100 });
+      await wa.complete(req());
+      await wb.complete(req());
+      expect([a, b]).toEqual([1, 1]); // cada escopo tem sua entrada
+      await wa.complete(req());
+      expect([a, b]).toEqual([1, 1]); // hit no escopo certo
+    } finally {
+      cache.close();
+    }
+  });
+
   test("request diferente é miss separado", async () => {
     const cache = makeCache();
     try {

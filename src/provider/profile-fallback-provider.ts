@@ -20,6 +20,8 @@ export interface ProfileFallbackProviderOptions {
   run?: string;
   /** Gate de aprovação (F-19): obrigatório no runtime; ausente = sem gate (componente interno). */
   approveSwap?: SwapApprover;
+  /** Nome do agente corrente no multi-agent (atribui swap.* corretamente). */
+  agentName?: () => string;
 }
 
 const EXHAUSTED_ATTEMPT = Math.max(DEFAULT_LIMITS.maxRateLimitRetries, DEFAULT_LIMITS.maxOutageRetries) + 1;
@@ -30,6 +32,7 @@ export class ProfileFallbackProvider implements Provider {
   readonly #audit?: Auditor;
   readonly #run?: string;
   readonly #approveSwap?: SwapApprover;
+  readonly #agentName?: () => string;
 
   constructor(opts: ProfileFallbackProviderOptions) {
     this.#base = opts.base;
@@ -37,6 +40,7 @@ export class ProfileFallbackProvider implements Provider {
     this.#audit = opts.audit;
     this.#run = opts.run;
     this.#approveSwap = opts.approveSwap;
+    this.#agentName = opts.agentName;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
@@ -57,6 +61,7 @@ export class ProfileFallbackProvider implements Provider {
         const fromEntry = chain[i - 1]!;
         const request: SwapRequest = {
           run: this.#run ?? "",
+          ...(this.#agentName === undefined ? {} : { agent: this.#agentName() }),
           from: { provider: fromEntry.provider, model: fromEntry.model, profile: fromEntry.name },
           to: { provider: entry.provider, model: entry.model, profile: entry.name },
           reason: lastReason,
