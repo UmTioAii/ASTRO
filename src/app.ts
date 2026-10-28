@@ -11,7 +11,7 @@ import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
 import { FallbackProvider, DEFAULT_PRIORITY } from "./provider/fallback-provider";
 import { ProfileFallbackProvider, type ProfileChainEntry } from "./provider/profile-fallback-provider";
-import type { Provider } from "./provider/types";
+import type { ChatMessage, Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
 import { sendTelemetry } from "./telemetry";
 import { tracerFromEnv } from "./tracing";
@@ -58,6 +58,14 @@ export interface RunOptions {
   onBudgetExceeded?: BudgetDecider;
   /** Run-id a retomar (F-22): reconstrói a árvore do ledger e continua do agente ativo. */
   resume?: string;
+  /** Histórico de conversa (T1): system + turnos anteriores; o `task` é o user do turno. */
+  history?: ChatMessage[];
+  /** Reusa um run-id (sessão de chat): mesmo run no ledger/audit por vários turnos. */
+  runId?: string;
+  /** Modelo do turno (`provider/id`); ausente usa `agent.model`. */
+  model?: string;
+  /** Não emite run.started/run.completed (a sessão de chat emite por sessão). */
+  suppressRunEvents?: boolean;
 }
 
 export interface RunReport {
@@ -76,6 +84,8 @@ export interface RunReport {
   budget?: BudgetStatus;
   /** Agente de onde o run foi retomado (`resume`); ausente em run novo. */
   resumedFrom?: string;
+  /** Histórico após o turno (T1): inclui tool calls, **sem** o assistant final (a sessão anexa). */
+  messages?: ChatMessage[];
 }
 
 const AGENT_NAME = "default";
@@ -88,7 +98,7 @@ const TOOLS_BY_NAME = new Map(TOOLS.map((tool) => [tool.manifest.name, tool]));
 const SYSTEM_ENV = /^(PATH|PATHEXT|HOME|USERPROFILE|SYSTEMROOT|WINDIR|TEMP|TMP|TMPDIR|SHELL|COMSPEC|LANG|LC_ALL|TERM)$/i;
 
 /** Hash curto da tarefa: permite correlacionar execuções sem persistir o prompt. */
-function shortTaskHash(task: string): string {
+export function shortTaskHash(task: string): string {
   return createHash("sha256").update(task).digest("hex").slice(0, TASK_HASH_LENGTH);
 }
 
@@ -440,7 +450,13 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         };
   const audit = new Auditor(auditPath, ...(onEvent === undefined ? [] : [{ onEvent }]));
 
-  const run = opts.resume ?? randomUUID();
+  if (opts.runId !== undefined && opts.resume !== undefined) {
+    throw new ConfigError("runId e resume são mutuamente exclusivos");
+  }
+  if (opts.model !== undefined && opts.resume !== undefined) {
+    throw new ConfigError("model e resume são mutuamente exclusivos");
+  }
+  const run = opts.runId ?? opts.resume ?? randomUUID();
   /** Gate auditado (F-19): sem approver do caller a decisão é "pending" (não bloqueia TTY). */
   const approveSwap: SwapApprover = async (request) => {
     const from = registry.get(`${request.from.provider}/${request.from.model ?? ""}`);
@@ -467,7 +483,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     return approved;
   };
   const registry = new Registry(config);
-  const model = registry.require(config.agent.model);
+  const model = registry.require(opts.model ?? config.agent.model);
   const hasAgents = config.agents !== undefined && Object.keys(config.agents).length > 0;
   let resumed: ReturnType<typeof planResume> | undefined;
   let resumedModel: ModelEntry | undefined;
@@ -500,8 +516,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     }
   }
   const baseModel = resumedModel ?? model;
-  const baseProfile = resumedProfile ?? config.agent.profile;
-  audit.append({
+  const baseProfile = resumedProfile ?? (opts.model === undefined ? config.agent.profile : undefined);
+  if (opts.suppressRunEvents !== true) audit.append({
     run,
     agent: AGENT_NAME,
     tipo: "run.started",
@@ -652,13 +668,14 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   // Cancellation (F-06): o caller fornece o sinal; sem sinal, o run não é cancelável
   const signal = opts.signal;
 
-  let result: { final: string; steps: number; agentsUsed?: string[] };
+  let result: { final: string; steps: number; agentsUsed?: string[]; messages?: ChatMessage[] };
   try {
     // Skills (C1c): /<nome> vira o prompt da skill; tools da skill ⊆ allowlist (I-01); falha fecha o run
     const task = resolveTaskSkill(opts.task, { cwd, allow: config.agent.tools, audit, run, agent: AGENT_NAME,
       ...(opts.skillsUserRoot === undefined ? {} : { userRoot: opts.skillsUserRoot }) });
-    // Se há agents configurados, usa multi-agent session
-    if (config.agents && Object.keys(config.agents).length > 0) {
+    // Se há agents configurados, usa multi-agent session (chat/histórico e
+    // override de modelo são single-agent)
+    if (opts.history === undefined && opts.model === undefined && config.agents && Object.keys(config.agents).length > 0) {
       const entryAgent = resumed?.agent.agent_id ?? config.agent.entryAgent ?? "planner";
       const multiOpts: MultiAgentSessionOptions = {
         run,
@@ -716,7 +733,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ledger,
           audit,
           maxSteps: sessionMaxSteps,
-          ...(config.agent.profile === undefined ? {} : { agentProfile: config.agent.profile }),
+          ...(opts.history === undefined ? {} : { history: opts.history }),
+          ...(baseProfile === undefined ? {} : { agentProfile: baseProfile }),
           ...(config.agent.systemPrompt === undefined
             ? {}
             : { systemPrompt: config.agent.systemPrompt }),
@@ -804,7 +822,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const tokensOut = total.tokensOut - baseline.tokensOut;
   const costUsd = baseModel.price === undefined ? null : total.costUsd - baseline.costUsd;
 
-  audit.append({
+  if (opts.suppressRunEvents !== true) audit.append({
     run,
     agent: AGENT_NAME,
     tipo: "run.completed",
@@ -837,5 +855,6 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     agentsUsed: result.agentsUsed,
     ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
     ...(budget === undefined ? {} : { budget: budgetStatus(budget, ledger) }),
+    ...(result.messages === undefined ? {} : { messages: result.messages }),
   };
 }
