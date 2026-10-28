@@ -50,6 +50,14 @@ class FakeSession implements ChatSession {
   listModels(): string[] {
     return ["p/m1", "p/m2"];
   }
+  listProviders() {
+    return [{ name: "p", kind: "openai-compat", credentialRef: "KEY", quotaDomain: "default", models: ["m1", "m2"] }];
+  }
+  setProvider(name: string): string {
+    if (name !== "p") throw new Error(`provider "${name}" não tem modelo ativo`);
+    this.model = `${name}/m1`;
+    return this.model;
+  }
   snapshot(): SessionSnapshot {
     return {
       id: "s1", startedAt: "2026-10-28T12:00:00.000Z", model: this.model,
@@ -66,16 +74,18 @@ describe("REPL do chat (T1, #62)", () => {
   test("roteia prompt, comandos, status e persistência", async () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-chat-repl-"));
     const session = new FakeSession();
-    const io = new ScriptedIO(["olá", "/clear", "/model", "/model p/m2", "/help", "/nope", "/exit"]);
+    const io = new ScriptedIO(["olá", "/clear", "/model", "/model p/m2", "/providers", "/provider p", "/help", "/nope", "/exit"]);
     await runRepl(session, io, { store: new SessionStore(dir) });
     expect(session.sent).toEqual(["olá"]);
     expect(session.cleared).toBe(1);
-    expect(session.model).toBe("p/m2");
+    expect(session.model).toBe("p/m1");
     expect(session.closed).toBe(1);
     expect(io.outputs).toContain("eco:olá");
     expect(io.outputs.some((line) => line.includes("1 step(s)") && line.includes("US$"))).toBe(true);
     expect(io.outputs).toContain("contexto limpo");
     expect(io.outputs).toContain("modelo: p/m2");
+    expect(io.outputs.some((line) => line.includes("p (openai-compat)") && line.includes("cred=KEY"))).toBe(true);
+    expect(io.outputs).toContain("provider: p/m1");
     expect(io.outputs.some((line) => line.includes("/exit"))).toBe(true);
     expect(io.outputs.some((line) => line.includes("comando desconhecido: /nope"))).toBe(true);
 

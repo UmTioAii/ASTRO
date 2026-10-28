@@ -14,6 +14,7 @@ import { replayRun } from "./replay";
 import { AgentSession } from "./chat/agent-session";
 import { SessionStore } from "./chat/store";
 import { runRepl } from "./chat/repl";
+import { chatApprovers } from "./chat/approvers";
 import { nodeReplIO } from "./chat/node-io";
 import { runHealthCheck, runPoolHealthCheck, formatProvidersList, testProvider } from "./health";
 import { GitHubConfigRegistry } from "./config-share";
@@ -794,7 +795,11 @@ async function main(argv: string[]): Promise<number> {
     const base = o.cwd ?? process.cwd();
     const io = nodeReplIO();
     try {
-      const session = new AgentSession({ configPath: resolve(o.configPath), cwd: base, env: process.env });
+      const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+      const session = new AgentSession({
+        configPath: resolve(o.configPath), cwd: base, env: process.env,
+        ...chatApprovers(io, interactive),
+      });
       const store = new SessionStore(resolve(base, ".astro", "sessions"));
       await runRepl(session, io, { store, signal: io.signal });
       return 0;

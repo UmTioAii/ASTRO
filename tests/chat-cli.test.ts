@@ -25,7 +25,7 @@ test("bun src/cli.ts chat roda um turno e encerra com /exit", async () => {
       cwd: root, stdin: "pipe", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, KEY: "k" } as Record<string, string>,
     });
-    proc.stdin.write("olá\n/help\n/exit\n");
+    proc.stdin.write("olá\n/providers\n/help\n/exit\n");
     proc.stdin.end();
     const exit = await proc.exited;
     const stdout = await new Response(proc.stdout).text();
@@ -35,6 +35,7 @@ test("bun src/cli.ts chat roda um turno e encerra com /exit", async () => {
     expect(stdout).toContain("astro chat");
     expect(stdout).toContain("ok do mock");
     expect(stdout).toContain("Comandos:"); // a linha /help depois do turno não foi perdida
+    expect(stdout).toContain("p (openai-compat)");
     expect(stdout).toContain("1 step(s)");
     expect(existsSync(join(cwd, ".astro", "sessions"))).toBe(true);
     expect(readdirSync(join(cwd, ".astro", "sessions")).some((name) => name.endsWith(".json"))).toBe(true);

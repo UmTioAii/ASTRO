@@ -1,12 +1,14 @@
 /** REPL mínimo do chat (T1): I/O injetável e comandos; a UI só fala com a sessão. */
 import { HELP_TEXT, parseCommand } from "./commands";
-import type { SessionSnapshot, TurnResult } from "./agent-session";
+import type { ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
 import type { SessionStore } from "./store";
 import { isFatalSessionError } from "./session-errors";
 import { redactSecrets } from "../sanitize-external";
 
 export interface ReplIO {
   read(prompt: string): Promise<string | null>;
+  /** Lê só uma linha nova (ignora a fila do REPL); para decisores no meio do turno. */
+  readFresh?(prompt: string): Promise<string | null>;
   write(text: string): void;
 }
 
@@ -16,6 +18,8 @@ export interface ChatSession {
   clear(): void;
   setModel(ref: string): string;
   listModels(): string[];
+  listProviders(): ProviderInfo[];
+  setProvider(name: string): string;
   snapshot(): SessionSnapshot;
   close(): void;
 }
@@ -31,6 +35,11 @@ function messageOf(error: unknown): string {
 
 function fmtCost(value: number | null): string {
   return value === null ? "n/d" : `US$ ${value.toFixed(6)}`;
+}
+
+function providerLine(provider: ProviderInfo): string {
+  const credential = provider.credentialRef === undefined ? "" : ` cred=${provider.credentialRef}`;
+  return `${provider.name} (${provider.kind})${credential} quota=${provider.quotaDomain} models=${provider.models.join(",") || "-"}`;
 }
 
 function statusLine(result: TurnResult): string {
@@ -56,6 +65,22 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
       }
       if (command.kind === "unknown") {
         io.write(`comando desconhecido: /${command.raw}`);
+        continue;
+      }
+      if (command.kind === "providers") {
+        io.write(session.listProviders().map(providerLine).join("\n"));
+        continue;
+      }
+      if (command.kind === "provider") {
+        if (command.provider === undefined) {
+          io.write(session.listProviders().map(providerLine).join("\n"));
+          continue;
+        }
+        try {
+          io.write(`provider: ${session.setProvider(command.provider)}`);
+        } catch (error) {
+          io.write(`erro: ${messageOf(error)}`);
+        }
         continue;
       }
       if (command.kind === "clear") {

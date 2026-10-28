@@ -6,12 +6,16 @@ export type ReplCommand =
   | { kind: "exit" }
   | { kind: "clear" }
   | { kind: "model"; model?: string }
+  | { kind: "providers" }
+  | { kind: "provider"; provider?: string }
   | { kind: "unknown"; raw: string };
 
 export const HELP_TEXT = [
   "Comandos:",
   "  /help           esta ajuda",
   "  /model [alvo]   lista modelos ou troca (provider/id)",
+  "  /providers      lista providers (kind, credencial, quota, modelos)",
+  "  /provider [nome]  lista ou troca de provider",
   "  /clear          limpa o histórico (mantém o system)",
   "  /exit | /quit | /q  encerra a sessão",
 ].join("\n");
@@ -33,6 +37,10 @@ export function parseCommand(line: string): ReplCommand {
       return { kind: "clear" };
     case "model":
       return { kind: "model", ...(arg === "" ? {} : { model: arg }) };
+    case "providers":
+      return { kind: "providers" };
+    case "provider":
+      return { kind: "provider", ...(arg === "" ? {} : { provider: arg }) };
     default:
       return { kind: "unknown", raw: name ?? "" };
   }
