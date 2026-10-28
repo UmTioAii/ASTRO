@@ -636,7 +636,8 @@ export async function runMultiAgentSession(
     throw new MaxStepsError(opts.baseMaxSteps);
   } catch (error) {
     // Falha pós-ack é terminal para o handoff: grava handoff.failed (F-24, I-19).
-    // Cancelamento (F-06) NÃO é falha permanente: o handoff fica pendente para retomada.
+    // Cancelamento (F-06) NÃO grava failed: o artefato permanece no ledger para auditoria;
+    // a retomada determinística do passo do receptor é S-14 (#131).
     if (
       activeHandoff !== undefined &&
       !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&

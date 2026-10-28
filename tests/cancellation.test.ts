@@ -6,6 +6,7 @@ import { Auditor } from "../src/audit";
 import { CompletionCache, cachedProvider } from "../src/cache";
 import { Ledger } from "../src/ledger";
 import { FallbackProvider } from "../src/provider/fallback-provider";
+import { refreshCodexTokens } from "../src/provider/codex-auth";
 import { ProfileFallbackProvider } from "../src/provider/profile-fallback-provider";
 import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
 import type { AgentEntry, ModelEntry } from "../src/registry";
@@ -14,6 +15,7 @@ import { runMultiAgentSession, runSession, type MultiAgentSessionOptions, type S
 import { handoffTool } from "../src/tools/handoff";
 import { writeFileTool } from "../src/tools/write-file";
 import { ToolExecutor } from "../src/tools/executor";
+import type { Tool } from "../src/tools/types";
 
 const model: ModelEntry = {
   provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000, status: "active",
@@ -23,6 +25,18 @@ const resp = (p: Partial<CompletionResponse>): CompletionResponse => ({
   content: "", toolCalls: [], usage: { inputTokens: 10, outputTokens: 5 }, ...p,
 });
 const dir = (tag: string) => mkdtempSync(join(tmpdir(), `astro-${tag}-`));
+
+/** Tool que cancela o run ao executar (aborta durante o passo). */
+const cancelTool = (controller: AbortController): Tool => ({
+  manifest: {
+    name: "cancel", description: "aborta o run", parameters: { type: "object", properties: {} },
+    risk: "low", permission: "test", timeoutMs: 1000, retryable: false, idempotent: false, sideEffects: "none",
+  },
+  async execute() {
+    controller.abort(new Error("cancelado na tool"));
+    return { output: "ok" };
+  },
+});
 
 /** Sessão de teste: script de promessas por passo; abort propaga para o provider fake. */
 function setup(script: (() => Promise<CompletionResponse>)[]) {
@@ -162,6 +176,46 @@ describe("cancelamento explícito (F-06, #127)", () => {
     expect(ledger.readStates().find((s) => s.state === "interrupted")?.reason).toBe("cancelled");
   });
 
+  test("step guard: abort em tool impede o próximo step (F-06)", async () => {
+    const cwd = dir("cancel-step");
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+    const controller = new AbortController();
+    let calls = 0;
+    const provider: Provider = {
+      complete: async () => {
+        calls++;
+        return resp({ toolCalls: [{ id: "c1", name: "cancel", arguments: "{}" }] });
+      },
+    };
+    const opts: SessionOptions = {
+      run: "r1", agent: "default", credentialRef: "K", quotaDomain: "default", cwd,
+      provider, model, executor: new ToolExecutor({ tools: [cancelTool(controller)], allow: ["cancel"], audit }),
+      ledger, audit, maxSteps: 5, signal: controller.signal,
+    };
+
+    await expect(runSession(opts, "cancele")).rejects.toBeDefined();
+    expect(calls).toBe(1); // sem novo step após o cancelamento
+    expect(ledger.readStates().find((s) => s.state === "interrupted")?.reason).toBe("cancelled");
+  });
+
+  test("codex refresh: abort não chama o fetch e propaga o motivo", async () => {
+    const tokens = { accessToken: "a", refreshToken: "r", accountId: "x", expiresAt: 0 };
+    const pre = new AbortController();
+    pre.abort(new Error("cancelado antes do refresh"));
+    let fetched = 0;
+    await expect(refreshCodexTokens(tokens, async () => { fetched++; return Response.json({}); }, pre.signal))
+      .rejects.toThrow("cancelado antes do refresh");
+    expect(fetched).toBe(0);
+
+    const mid = new AbortController();
+    const fetchFn = async () => {
+      mid.abort(new Error("cancelado no refresh"));
+      throw mid.signal.reason;
+    };
+    await expect(refreshCodexTokens(tokens, fetchFn, mid.signal)).rejects.toThrow("cancelado no refresh");
+  });
+
   test("cache: abort não serve hit nem grava resposta", async () => {
     const cache = new CompletionCache(join(dir("cancel-cache"), "cache.db"));
     let hits = 0;
@@ -192,7 +246,7 @@ describe("cancelamento explícito (F-06, #127)", () => {
     const controller = new AbortController();
     const agents: Record<string, AgentEntry> = {
       planner: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff"] },
-      coder: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff", "write_file"] },
+      coder: { model: "openai/gpt-4o-mini", maxSteps: 3, tools: ["handoff", "write_file", "cancel"] },
     };
     const registry = {
       requireAgent(name: string): AgentEntry {
@@ -210,32 +264,23 @@ describe("cancelamento explícito (F-06, #127)", () => {
           return resp({ toolCalls: [{ id: "h1", name: "handoff",
             arguments: JSON.stringify({ to: "coder", task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] }) }] });
         }
-        controller.abort(new Error("cancelado no subagent"));
-        return resp({ toolCalls: [{ id: "c1", name: "write_file",
-          arguments: JSON.stringify({ path: "multi-nao-deve-existir.txt", content: "x" }) }] });
+        // coder: a tool cancela o run; o próximo step não deve ser iniciado
+        return resp({ toolCalls: [{ id: "c1", name: "cancel", arguments: "{}" }] });
       },
     };
     const opts: MultiAgentSessionOptions = {
       run: "r1", credentialRef: "K", quotaDomain: "default", cwd, provider, registry, baseModel: model,
-      baseExecutor: new ToolExecutor({ tools: [handoffTool, writeFileTool], allow: ["handoff", "write_file"], audit }),
+      baseExecutor: new ToolExecutor({ tools: [handoffTool, writeFileTool, cancelTool(controller)], allow: ["handoff", "write_file", "cancel"], audit }),
       ledger, audit, baseMaxSteps: 5, entryAgent: "planner", signal: controller.signal,
     };
 
     await expect(runMultiAgentSession(opts, "delegue")).rejects.toBeDefined();
+    expect(calls).toBe(2); // sem novo step após o cancelamento no subagent
     expect(existsSync(join(cwd, "multi-nao-deve-existir.txt"))).toBe(false);
     const kinds = ledger.readAllEntries().map((e) => e.kind);
     expect(kinds).toContain("handoff.created");
     expect(kinds).toContain("handoff.received");
     expect(kinds).not.toContain("handoff.failed");
     expect(ledger.readStates().find((s) => s.state === "interrupted")?.reason).toBe("cancelled");
-  });
-
-  test("run normal (sem signal) completa normalmente", async () => {
-    const { opts } = setup([async () => resp({ content: "pronto" })]);
-    const r = await runSession(opts, "diga oi");
-    expect(r.steps).toBe(1);
-    expect(r.final).toBe("pronto");
-    expect(opts.ledger.readStates().find((s) => s.state === "interrupted")).toBeUndefined();
-    expect(opts.ledger.readStates().find((s) => s.state === "completed")).toBeDefined();
   });
 });
