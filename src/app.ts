@@ -486,7 +486,6 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   /** Budget efetivo (B1): o limite mais restritivo entre budget, quota e team. */
   const budget = config.budget === undefined ? undefined : restrictBudget(config.budget, [
     config.budget.scope === "project" ? config.team?.projectBudgetUsd : undefined,
-    config.budget.scope === "month" ? quotaLimits?.[quotaDomain]?.monthlyCostUsd : undefined,
   ]);
 
   // Fallback entre providers (C6, D-14) + roteamento por profile (F-31).

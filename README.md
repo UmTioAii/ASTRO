@@ -114,7 +114,7 @@ All commands run as `bun src/cli.ts <command>`.
 | Child shell environment sanitized (credentialRefs and secret names removed) | I-03 | `tests/security-f00.test.ts` |
 | Harness state (`.astro/`) not writable by tools | I-11 | `tests/security-f00.test.ts` |
 | Prompts never persisted; `run.started` stores only `taskHash` | I-04 | `tests/golden-f2.test.ts` |
-| Quota and budget block before spending | I-17 | `tests/quota.test.ts`, `tests/team.test.ts` |
+| Quota and team budget block before spending (budget enforcement lands in #132 part 3) | I-17 | `tests/quota.test.ts`, `tests/team.test.ts`, `tests/budget-status.test.ts` |
 | Handoff is single-path: idempotent by `handoff_id` (CAS), identity verified at reception, digest-checked artifacts | I-18 | `tests/handoff-cas.test.ts`, `tests/handoff-compact.test.ts` |
 
 ## Design principles

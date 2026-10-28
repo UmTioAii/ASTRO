@@ -37,11 +37,12 @@ export function restrictBudget(budget: BudgetConfig, extraLimits: Array<number |
 
 /** Entrada pertence à janela do escopo (UTC, determinístico). */
 function inScope(ts: string, scope: BudgetConfig["scope"], now: Date): boolean {
-  if (scope === "project" || scope === "use-as-you-go") return true;
+  // `project` usa a mesma janela mensal do `team.projectBudgetUsd` (ADR-0013).
+  if (scope === "use-as-you-go") return true;
   const at = new Date(ts);
   if (Number.isNaN(at.getTime())) return false;
   const sameMonth = at.getUTCFullYear() === now.getUTCFullYear() && at.getUTCMonth() === now.getUTCMonth();
-  return scope === "month" ? sameMonth : sameMonth && at.getUTCDate() === now.getUTCDate();
+  return scope === "day" ? sameMonth && at.getUTCDate() === now.getUTCDate() : sameMonth;
 }
 
 /** Calcula o status do budget a partir do ledger (fonte única de custo). */
@@ -60,7 +61,7 @@ export function budgetStatus(budget: BudgetConfig, ledger: Ledger, now: Date = n
     spentUsd,
     ratio,
     warnAt: budget.warnAt,
-    warning: ratio !== null && ratio >= budget.warnAt,
+    warning: (ratio !== null && ratio >= budget.warnAt) || exhausted,
     exhausted,
     ceilingHit,
     remainingUsd: limitUsd !== null && spentUsd !== null ? Math.max(0, limitUsd - spentUsd) : null,

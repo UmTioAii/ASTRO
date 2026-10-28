@@ -197,6 +197,14 @@ export async function runSession(
   const journal = new CallJournal();
   const knownAgents = opts.knownAgents ?? [];
   let budgetWarned = false;
+  /** Aviso B3: antes e depois de cada step (o último step também avisa). */
+  const maybeWarnBudget = (agent: string): void => {
+    if (opts.budget === undefined || budgetWarned) return;
+    const status = budgetStatus(opts.budget, opts.ledger);
+    if (!status.warning) return;
+    budgetWarned = true;
+    opts.audit.append({ run: opts.run, agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
+  };
 
   ensureAgentCreated(opts.ledger, opts.audit, opts.run, opts.agent, opts.model.id, opts.agentProfile);
 
@@ -206,13 +214,7 @@ export async function runSession(
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
       // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
-      if (opts.budget !== undefined && !budgetWarned) {
-        const status = budgetStatus(opts.budget, opts.ledger);
-        if (status.warning) {
-          budgetWarned = true;
-          opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
-        }
-      }
+      maybeWarnBudget(opts.agent);
       // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
@@ -258,6 +260,7 @@ export async function runSession(
         },
         identity.price,
       );
+      maybeWarnBudget(opts.agent);
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: opts.agent });
@@ -492,6 +495,14 @@ export async function runMultiAgentSession(
   const journal = new CallJournal();
   const knownAgents = opts.registry.listAgentNames?.();
   let budgetWarned = false;
+  /** Aviso B3: antes e depois de cada step (o último step também avisa). */
+  const maybeWarnBudget = (agent: string): void => {
+    if (opts.budget === undefined || budgetWarned) return;
+    const status = budgetStatus(opts.budget, opts.ledger);
+    if (!status.warning) return;
+    budgetWarned = true;
+    opts.audit.append({ run: opts.run, agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
+  };
   const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run, cwd: opts.cwd };
   /** Ack do receptor com timeout (F-24): hook de teste ou o ciclo padrão do ledger. */
   const ackWithTimeout = (h: { handoff_id: string; artifact: HandoffArtifactV1 }, receiver: string) =>
@@ -566,13 +577,7 @@ export async function runMultiAgentSession(
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
       // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
-      if (opts.budget !== undefined && !budgetWarned) {
-        const status = budgetStatus(opts.budget, opts.ledger);
-        if (status.warning) {
-          budgetWarned = true;
-          opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "budget.warning", payload: budgetWarningPayload(status) });
-        }
-      }
+      maybeWarnBudget(currentAgentName);
       // Team (F7-5): budget do projeto e quota do agent corrente
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
@@ -629,6 +634,7 @@ export async function runMultiAgentSession(
         },
         identity.price,
       );
+      maybeWarnBudget(currentAgentName);
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });

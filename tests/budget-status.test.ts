@@ -43,9 +43,9 @@ describe("budget status (F-05, #132 parte 2)", () => {
     expect(status.remainingUsd).toBe(8);
   });
 
-  test("escopo month conta o mês corrente; project conta tudo", () => {
+  test("project usa a janela mensal do team; use-as-you-go conta tudo", () => {
     expect(budgetStatus(budget({ scope: "month" }), ledgerWith(rows), now).spentUsd).toBe(10);
-    expect(budgetStatus(budget({ scope: "project" }), ledgerWith(rows), now).spentUsd).toBe(17);
+    expect(budgetStatus(budget({ scope: "project" }), ledgerWith(rows), now).spentUsd).toBe(10);
     expect(budgetStatus(budget({ scope: "use-as-you-go", limitUsd: null }), ledgerWith(rows), now).spentUsd).toBe(17);
   });
 
@@ -55,6 +55,17 @@ describe("budget status (F-05, #132 parte 2)", () => {
     expect(warn.exhausted).toBe(true);
     const below = budgetStatus(budget({ limitUsd: 2, warnAt: 0.9 }), ledgerWith([{ ts: now.toISOString(), costUsd: 1 }]), now);
     expect(below.warning).toBe(false);
+    // Fronteira exata: spent/limit === warnAt conta como aviso
+    const edge = budgetStatus(budget({ limitUsd: 10, warnAt: 0.8 }), ledgerWith([{ ts: now.toISOString(), costUsd: 8 }]), now);
+    expect(edge.warning).toBe(true);
+    // Custo zero é zero real, não n/d
+    const zero = budgetStatus(budget(), ledgerWith([{ ts: now.toISOString(), costUsd: 0 }]), now);
+    expect(zero.spentUsd).toBe(0);
+    expect(zero.estimate).toBe("US$ 0.000000");
+    // Limit 0: qualquer run está no teto e avisa
+    const noBudget = budgetStatus(budget({ limitUsd: 0 }), ledgerWith([{ ts: now.toISOString(), costUsd: 0 }]), now);
+    expect(noBudget.exhausted).toBe(true);
+    expect(noBudget.warning).toBe(true);
   });
 
   test("use-as-you-go nunca esgota nem inventa limite", () => {
@@ -117,6 +128,29 @@ describe("aviso de budget no run (F-05, #132 parte 2)", () => {
       const warnings = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll().filter((e) => e.tipo === "budget.warning");
       expect(warnings).toHaveLength(1);
       expect(warnings[0]!.payload).toMatchObject({ scope: "day", limitUsd: 1, warnAt: 0.8 });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("avisa também quando o warnAt é cruzado no último step", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-budget-last-"));
+    const server = Bun.serve({ port: 0, async fetch() {
+      return Response.json({ choices: [{ message: { content: "fim" } }], usage: { prompt_tokens: 1000, completion_tokens: 1000 } });
+    } });
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      writeFileSync(configPath, JSON.stringify({
+        providers: { p: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" } },
+        models: [{ provider: "p", id: "m", tags: ["writing-code"], context: 8192,
+          price: { inputPerM: 1000, outputPerM: 1000, fonte: "t", verificado: false } }],
+        agent: { model: "p/m", maxSteps: 1, tools: [] },
+        budget: { scope: "day", limitUsd: 1, warnAt: 0.8 },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      }));
+      const report = await runTask({ configPath, task: "x", cwd, env: { KEY: "k" } });
+      expect(report.budget?.warning).toBe(true);
+      expect(new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll().filter((e) => e.tipo === "budget.warning")).toHaveLength(1);
     } finally {
       server.stop(true);
     }
