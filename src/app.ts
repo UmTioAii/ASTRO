@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Auditor } from "./audit";
 import { isAbortError } from "./abort";
+import { SwapDeniedError, swapDelta, type SwapApprover, type SwapRequest } from "./approval";
 import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
 import { ConfigError, loadConfig } from "./config";
 import { Ledger } from "./ledger";
@@ -50,6 +51,8 @@ export interface RunOptions {
   skillsUserRoot?: string;
   /** Sinal de cancelamento do run (F-06); aborta a chamada em voo e para em estado seguro. */
   signal?: AbortSignal;
+  /** Gate de aprovação de troca (F-19, I-08); sem ele o runtime nega (pending). Injetável para teste. */
+  approveSwap?: SwapApprover;
   /** Run-id a retomar (F-22): reconstrói a árvore do ledger e continua do agente ativo. */
   resume?: string;
 }
@@ -313,6 +316,7 @@ function providerChain(
   ledger: Ledger,
   quotaLimits: Record<string, QuotaLimit> | undefined,
   profile?: string,
+  approveSwap?: SwapApprover,
 ): Provider {
   const primaryConfig = config.providers[model.provider];
   return new FallbackProvider({
@@ -337,6 +341,7 @@ function providerChain(
     audit,
     run,
     ...(profile === undefined ? {} : { profile }),
+    ...(approveSwap === undefined ? {} : { approveSwap }),
   });
 }
 /** Valida as tools pedidas pelo agente e devolve as instâncias correspondentes. */
@@ -391,6 +396,30 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const audit = new Auditor(auditPath, ...(onEvent === undefined ? [] : [{ onEvent }]));
 
   const run = opts.resume ?? randomUUID();
+  /** Gate auditado (F-19): sem approver do caller a decisão é "pending" (não bloqueia TTY). */
+  const approveSwap: SwapApprover = async (request) => {
+    const from = registry.get(`${request.from.provider}/${request.from.model ?? ""}`);
+    const to = registry.get(`${request.to.provider}/${request.to.model ?? ""}`);
+    const enriched: SwapRequest = { ...request, ...swapDelta(from, to) };
+    const payload = { from: enriched.from, to: enriched.to, reason: enriched.reason, costDeltaUsd: enriched.costDeltaUsd, capabilityDelta: enriched.capabilityDelta };
+    audit.append({ run, agent: AGENT_NAME, tipo: "swap.requested", payload });
+    if (opts.approveSwap === undefined) {
+      audit.append({ run, agent: AGENT_NAME, tipo: "swap.pending", payload });
+      throw new SwapDeniedError(enriched, "pending");
+    }
+    let approved: boolean;
+    try {
+      approved = await opts.approveSwap(enriched);
+    } catch (error) {
+      // Approver que lança não deixa decisão sem evento (I-04): nega e para
+      if (error instanceof SwapDeniedError) throw error;
+      audit.append({ run, agent: AGENT_NAME, tipo: "swap.denied",
+        payload: { ...payload, error: error instanceof Error ? error.name : "unknown" } });
+      throw new SwapDeniedError(enriched, "denied");
+    }
+    audit.append({ run, agent: AGENT_NAME, tipo: approved ? "swap.approved" : "swap.denied", payload });
+    return approved;
+  };
   const registry = new Registry(config);
   const model = registry.require(config.agent.model);
   const hasAgents = config.agents !== undefined && Object.keys(config.agents).length > 0;
@@ -448,7 +477,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   // com fallback de provider declarado).
   const baseConfig = config.providers[model.provider];
   let effectiveProvider = (baseConfig?.fallback ?? []).length > 0
-    ? providerChain(config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits)
+    ? providerChain(config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap)
     : lazyProvider(() => createGuardedProvider(
       config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits,
     ));
@@ -464,7 +493,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         provider: profileModel.provider,
         fallback: profile.fallback ?? [],
         create: () => (chain ??= providerChain(
-          config, profileModel, env, loaded.providerFactories, audit, run, ledger, quotaLimits, name,
+          config, profileModel, env, loaded.providerFactories, audit, run, ledger, quotaLimits, name, approveSwap,
         )),
       };
     });
@@ -475,6 +504,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       profiles,
       audit,
       run,
+      approveSwap,
     });
   }
 
@@ -658,6 +688,13 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         payload: { reason: "cancelled" },
       });
       throw new Error("run cancelado pelo usuário", { cause: error });
+    }
+
+    // Troca não aprovada (F-19): o estado interrupted já foi gravado pela sessão
+    if (error instanceof SwapDeniedError) {
+      audit.append({ run, agent: AGENT_NAME, tipo: "run.stopped",
+        payload: { reason: "swap_denied", from: error.request.from, to: error.request.to } });
+      throw new Error(`troca não aprovada (${error.decision}); run parado em ponto seguro`, { cause: error });
     }
 
     // Falha terminal: auditar reason e classe do erro (I-04), sem segredo (I-03)

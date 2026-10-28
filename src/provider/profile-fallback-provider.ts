@@ -1,6 +1,7 @@
 /** Fallback por profile (F-31, ADR-0007): reusa a política F-01/D-14; ordem declarada, sem repetir profile. */
 import type { Auditor } from "../audit";
 import { isAbortError } from "../abort";
+import { SwapDeniedError, type SwapApprover, type SwapRequest } from "../approval";
 import { DEFAULT_LIMITS, errorPolicy } from "./policy";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type ErrorClass, type FallbackRecord, type Provider } from "./types";
 
@@ -17,6 +18,8 @@ export interface ProfileFallbackProviderOptions {
   profiles: ProfileChainEntry[];
   audit?: Auditor;
   run?: string;
+  /** Gate de aprovação (F-19): obrigatório no runtime; ausente = sem gate (componente interno). */
+  approveSwap?: SwapApprover;
 }
 
 const EXHAUSTED_ATTEMPT = Math.max(DEFAULT_LIMITS.maxRateLimitRetries, DEFAULT_LIMITS.maxOutageRetries) + 1;
@@ -26,12 +29,14 @@ export class ProfileFallbackProvider implements Provider {
   readonly #profiles: Map<string, ProfileChainEntry>;
   readonly #audit?: Auditor;
   readonly #run?: string;
+  readonly #approveSwap?: SwapApprover;
 
   constructor(opts: ProfileFallbackProviderOptions) {
     this.#base = opts.base;
     this.#profiles = new Map(opts.profiles.map((entry) => [entry.name, entry]));
     this.#audit = opts.audit;
     this.#run = opts.run;
+    this.#approveSwap = opts.approveSwap;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
@@ -45,14 +50,26 @@ export class ProfileFallbackProvider implements Provider {
     const chain = this.#flatten(start);
     const fallbacks: FallbackRecord[] = [];
     let lastError: unknown;
+    let lastReason: ErrorClass = "invalid_request";
     for (let i = 0; i < chain.length; i++) {
       const entry = chain[i]!;
+      if (i > 0 && this.#approveSwap !== undefined) {
+        const fromEntry = chain[i - 1]!;
+        const request: SwapRequest = {
+          run: this.#run ?? "",
+          from: { provider: fromEntry.provider, model: fromEntry.model, profile: fromEntry.name },
+          to: { provider: entry.provider, model: entry.model, profile: entry.name },
+          reason: lastReason,
+        };
+        if (!(await this.#approveSwap(request))) throw new SwapDeniedError(request, "denied");
+      }
       let provider: Provider;
       try {
         provider = entry.create();
       } catch (error) {
         // Fábrica quebrada (ex.: credencial ausente) segue o padrão do C6: tenta o próximo.
         lastError = error;
+        lastReason = "invalid_request";
         this.#log("profile.failure", { profile: entry.name, provider: entry.provider, errorClass: "invalid_request" });
         this.#hop(fallbacks, chain, i, "invalid_request");
         continue;
@@ -62,8 +79,11 @@ export class ProfileFallbackProvider implements Provider {
         return { ...response, provider: response.provider ?? entry.provider, model: response.model ?? entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
         if (isAbortError(error, signal)) throw error;
+        // Negação de troca é terminal (I-08): não vira hop para o próximo profile
+        if (error instanceof SwapDeniedError) throw error;
         lastError = error;
         const errorClass: ErrorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
+        lastReason = errorClass;
         this.#log("profile.failure", { profile: entry.name, provider: entry.provider, errorClass });
         // Erro não classificado vem da fábrica/config (C6); a política abortaria
         // `invalid_request`, mas aqui ele é pulado como no C6.

@@ -6,6 +6,7 @@
  * argumento; o diff é sobre métricas e resposta final.
  */
 import { Auditor } from "./audit";
+import type { SwapApprover } from "./approval";
 import { runTask } from "./app";
 
 /** Métricas do run original, extraídas do evento run.completed. */
@@ -64,6 +65,8 @@ export interface ReplayOptions {
   task: string;
   cwd?: string;
   env?: Record<string, string | undefined>;
+  /** Gate de aprovação de troca (F-19); sem ele o runtime nega. */
+  approveSwap?: SwapApprover;
 }
 
 /** Re-executa a tarefa do run e compara com as métricas originais. */
@@ -78,6 +81,7 @@ export async function replayRun(opts: ReplayOptions): Promise<ReplayResult> {
     task: opts.task,
     ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
     ...(opts.env === undefined ? {} : { env: opts.env }),
+    ...(opts.approveSwap === undefined ? {} : { approveSwap: opts.approveSwap }),
   });
 
   const costMatches =
