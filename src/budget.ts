@@ -48,15 +48,19 @@ function inScope(ts: string, scope: BudgetConfig["scope"], now: Date): boolean {
   return scope === "day" ? sameMonth && at.getUTCDate() === now.getUTCDate() : sameMonth;
 }
 
-/** Reservas ainda sem `released` (B9), liberadas em FIFO; filtro opcional pela janela do escopo. */
+/** Reservas ainda sem `released` (B9), casadas por run em FIFO; filtro opcional pela janela do escopo. */
 export function outstandingReservations(ledger: Ledger, inWindow: (ts: string) => boolean = () => true): number {
-  const pending: number[] = [];
+  const pending: Array<{ run: string; amount: number }> = [];
   for (const entry of ledger.readAllEntries()) {
     if (entry.kind !== "budget" || !inWindow(entry.ts)) continue;
-    if (entry.event === "reserved" && typeof entry.reserved === "number") pending.push(entry.reserved);
-    else if (entry.event === "released") pending.shift();
+    if (entry.event === "reserved" && typeof entry.reserved === "number") {
+      pending.push({ run: entry.run, amount: entry.reserved });
+    } else if (entry.event === "released") {
+      const index = pending.findIndex((item) => item.run === entry.run);
+      if (index >= 0) pending.splice(index, 1);
+    }
   }
-  return pending.reduce((total, value) => total + value, 0);
+  return pending.reduce((total, item) => total + item.amount, 0);
 }
 
 /** Calcula o status do budget a partir do ledger (fonte única de custo). */

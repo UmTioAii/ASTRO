@@ -58,7 +58,7 @@ export interface SessionOptions {
   /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
   budgetDecide?: BudgetDecider;
   /** Custo máximo da cadeia por chamada (B9); ausente = sem reserva. */
-  budgetReserve?: (model: ModelEntry) => number;
+  budgetReserve?: (model: ModelEntry, profile?: string) => number;
   /** Ambiente do run; vai ao ToolContext do shell (default: `process.env` no run_command). */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -240,7 +240,7 @@ export async function runSession(
       // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(opts.agent);
       // Budget (B4/B9): reserva a cadeia e checa o teto antes da chamada
-      const reserveUsd = opts.budget === undefined ? 0 : (opts.budgetReserve?.(opts.model) ?? 0);
+      const reserveUsd = opts.budget === undefined ? 0 : (opts.budgetReserve?.(opts.model, opts.agentProfile) ?? 0);
       if (opts.budget !== undefined) {
         const choice = await enforceBudget({
           budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: opts.agent, audit: opts.audit,
@@ -251,9 +251,6 @@ export async function runSession(
         if (choice === "lower_effort") {
           effectiveMaxSteps = Math.min(effectiveMaxSteps, step + Math.max(1, Math.floor((effectiveMaxSteps - step) / 2)));
         }
-        if (reserveUsd > 0) {
-          opts.ledger.recordBudgetReserved({ run: opts.run, agent: opts.agent, reserved: reserveUsd, detail: "call" });
-        }
       }
       // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
@@ -261,6 +258,9 @@ export async function runSession(
       }
       if (opts.teamLimits?.agentQuotas !== undefined) {
         assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, opts.agent);
+      }
+      if (opts.budget !== undefined && reserveUsd > 0) {
+        opts.ledger.recordBudgetReserved({ run: opts.run, agent: opts.agent, reserved: reserveUsd, detail: "call" });
       }
       const stepSpan = tracer?.start("step", { step, agent: redactSecrets(opts.agent) }, rootSpan);
       const providerSpan = tracer?.start(
@@ -474,7 +474,7 @@ export interface MultiAgentSessionOptions {
   /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
   budgetDecide?: BudgetDecider;
   /** Custo máximo da cadeia por chamada (B9); ausente = sem reserva. */
-  budgetReserve?: (model: ModelEntry) => number;
+  budgetReserve?: (model: ModelEntry, profile?: string) => number;
   /** Ambiente do run; vai ao ToolContext do shell. */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -649,7 +649,7 @@ export async function runMultiAgentSession(
       // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(currentAgentName);
       // Budget (B4/B9): reserva a cadeia e checa o teto antes da chamada
-      const reserveUsd = opts.budget === undefined ? 0 : (opts.budgetReserve?.(currentModel) ?? 0);
+      const reserveUsd = opts.budget === undefined ? 0 : (opts.budgetReserve?.(currentModel, currentAgent.profile) ?? 0);
       if (opts.budget !== undefined) {
         const choice = await enforceBudget({
           budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: currentAgentName, audit: opts.audit,
@@ -659,9 +659,6 @@ export async function runMultiAgentSession(
         if (choice === "lower_effort") {
           effectiveBaseMaxSteps = Math.min(effectiveBaseMaxSteps, step + Math.max(1, Math.floor((effectiveBaseMaxSteps - step) / 2)));
         }
-        if (reserveUsd > 0) {
-          opts.ledger.recordBudgetReserved({ run: opts.run, agent: currentAgentName, reserved: reserveUsd, detail: "call" });
-        }
       }
       // Team (F7-5): budget do projeto e quota do agent corrente
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
@@ -669,6 +666,9 @@ export async function runMultiAgentSession(
       }
       if (opts.teamLimits?.agentQuotas !== undefined) {
         assertAgentQuota(opts.ledger, opts.teamLimits.agentQuotas, currentAgentName);
+      }
+      if (opts.budget !== undefined && reserveUsd > 0) {
+        opts.ledger.recordBudgetReserved({ run: opts.run, agent: currentAgentName, reserved: reserveUsd, detail: "call" });
       }
 
       // Atualizar executor com tools do agent atual

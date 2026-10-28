@@ -307,17 +307,9 @@ function assertProviderKind(
   );
 }
 
-/**
- * Cadeia C6 de um modelo (F-31c), com providers criados sob demanda. Com
- * `profile`, a cadeia é sempre montada (mesmo sem fallback de provider) para
- * aplicar o retry da F-01 e atribuir `provider.*` ao profile.
- */
-/**
- * Custo máximo de uma chamada (B9): contexto do modelo × maior preço, somando
- * o provider primário e os fallbacks declarados (cadeia C6).
- */
-function reserveForCall(config: AstroConfig, registry: Registry, model: ModelEntry): number {
-  const chain = [model.provider, ...(config.providers[model.provider]?.fallback ?? [])];
+/** Custo máximo de um provider + seus fallbacks para o modelo (B9). */
+function chainCost(config: AstroConfig, registry: Registry, model: ModelEntry, provider = model.provider): number {
+  const chain = [provider, ...(config.providers[provider]?.fallback ?? [])];
   return chain.reduce((total, name) => {
     const price = registry.get(`${name}/${model.id}`)?.price ?? model.price;
     if (price === undefined) return total;
@@ -325,6 +317,26 @@ function reserveForCall(config: AstroConfig, registry: Registry, model: ModelEnt
   }, 0);
 }
 
+/**
+ * Custo máximo de uma chamada (B9): soma o provider primário e fallbacks; com
+ * profile, soma a cadeia do profile e a dos fallbacks de profile (F-31).
+ */
+function reserveForCall(config: AstroConfig, registry: Registry, model: ModelEntry, profile?: string): number {
+  if (profile !== undefined && config.modelPool?.[profile] !== undefined) {
+    const names = [profile, ...(config.modelPool[profile].fallback ?? [])];
+    return names.reduce((total, name) => {
+      const profileModel = registry.resolveProfile(name);
+      return total + chainCost(config, registry, profileModel, profileModel.provider);
+    }, 0);
+  }
+  return chainCost(config, registry, model);
+}
+
+/**
+ * Cadeia C6 de um modelo (F-31c), com providers criados sob demanda. Com
+ * `profile`, a cadeia é sempre montada (mesmo sem fallback de provider) para
+ * aplicar o retry da F-01 e atribuir `provider.*` ao profile.
+ */
 function providerChain(
   config: AstroConfig,
   model: ModelEntry,
@@ -661,7 +673,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ...(tracer === undefined ? {} : { tracer }),
         resolveIdentity,
         ...(budget === undefined ? {} : { budget }),
-        ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry) => reserveForCall(config, registry, m) }),
+        ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry, profile?: string) => reserveForCall(config, registry, m, profile) }),
         ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
         ...(config.team === undefined
           ? {}
@@ -704,7 +716,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ...(tracer === undefined ? {} : { tracer }),
           resolveIdentity,
           ...(budget === undefined ? {} : { budget }),
-          ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry) => reserveForCall(config, registry, m) }),
+          ...(budget === undefined ? {} : { budgetReserve: (m: ModelEntry, profile?: string) => reserveForCall(config, registry, m, profile) }),
           ...(opts.onBudgetExceeded === undefined ? {} : { budgetDecide: opts.onBudgetExceeded }),
           ...(config.team === undefined
             ? {}

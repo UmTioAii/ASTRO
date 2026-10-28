@@ -19,7 +19,7 @@ I-17 exige corte físico de custo; quota (`src/quota.ts`, por `quotaDomain`) e o
 
 **Corte físico (B10, I-17).** `hardCeilingUsd` atingido → para independente de `onExceed` e registra `budget.ceiling_hit`. Com preço desconhecido e ceiling configurado, o run para com `unknown_price` (não dá para provar que está abaixo do teto).
 
-**Reserva da cadeia (B9).** Antes de cada chamada, `budget.reserved` = Σ custo máximo do primário + fallbacks declarados; após, `budget.released` com `actual_cost`. No `--resume`, `reserved` sem `released` conta como custo real (crash recovery).
+**Reserva da cadeia (B9).** Antes de cada chamada, `budget.reserved` = Σ custo máximo do primário + fallbacks declarados; após, `budget.released` com `actual_cost`. A reserva casa por run (FIFO) e inclui fallbacks de profile; reserva maior que o limite/teto para antes da chamada. No `--resume`, `reserved` sem `released` conta como custo real (crash recovery). Sem preço na cadeia a reserva é 0 e o teto decide via `unknown_price`.
 
 **Q-01 (L2).** `run.maxTurns: "unlimited"` exige `hardCeilingUsd` OU `limitUsd`; senão `loadConfig` falha com `unlimited_without_ceiling`.
 
