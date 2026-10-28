@@ -1,7 +1,7 @@
 import type { Auditor } from "./audit";
 import { isAbortError, throwIfAborted } from "./abort";
 import { CallJournal } from "./call-id";
-import { hashToolCalls, type HandoffEventKind, type Ledger } from "./ledger";
+import { hashToolCalls, type HandoffEventKind, type Ledger, type LedgerAgentEntry } from "./ledger";
 import { buildHandoffArtifact, HandoffError, handoffId, sanitizeHandoffArtifact, taskHash, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
 import { ackHandoff, scanHandoffs, readSourceRefs, type HandoffStatus } from "./handoff/lifecycle";
 import { verifyHandoffIdentity } from "./handoff/verifier";
@@ -311,6 +311,8 @@ export async function runSession(
     tracer?.end(rootSpan, { status: "max_steps" });
     throw new MaxStepsError(opts.maxSteps);
   } catch (error) {
+    // HandoffSignal transfere o controle ao caller e não grava run_state:
+    // single+handoff não é retomável por planResume (multi-agent tem loop próprio).
     if (!errorHasHandoffName(error)) {
       opts.ledger.recordState(opts.run, "interrupted", {
         agent: opts.agent,
@@ -343,11 +345,9 @@ function interruptReason(error: unknown, signal?: AbortSignal): string {
 
 /** Está ativo? O último evento `agent` do id no run é `created`. */
 function agentActive(ledger: Ledger, run: string, agentId: string): boolean {
-  let active = false;
-  for (const e of ledger.readAllEntries()) {
-    if (e.kind === "agent" && e.run === run && e.agent_id === agentId) active = e.event === "created";
-  }
-  return active;
+  return ledger.readAllEntries()
+    .filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === run && e.agent_id === agentId)
+    .at(-1)?.event === "created";
 }
 
 /** Garante um `agent.created` (idempotente; reabre agente já destruído — F-22). */
