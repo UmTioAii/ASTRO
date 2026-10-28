@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runMcpCommand } from "../src/mcp/cli";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Servidor MCP stdio mínimo: initialize/tools/list/tools/call com eco. */
 const STUB = `
@@ -43,7 +46,7 @@ function setup(mcpServers: (dir: string) => Record<string, unknown>, configName 
   };
   writeFileSync(join(dir, configName), JSON.stringify(config));
   const captured: string[] = [];
-  return { dir, out: (line: string) => { captured.push(line); }, lines: () => captured.join("\n") };
+  return { dir, configPath: join(dir, configName), out: (line: string) => { captured.push(line); }, lines: () => captured.join("\n") };
 }
 
 const stdio = (dir: string, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -75,6 +78,7 @@ test("mcp list mostra servidor, estado e tools descobertas; close mata o process
   expect(text).toContain("mcp__mock__echo");
   expect(text).toContain("Ecoa o texto");
   expect(await waitDead(pidOf(dir)!)).toBe(true);
+  expect(existsSync(join(dir, "audit.jsonl"))).toBe(false); // list não executa tool: nada a auditar
 });
 
 test("mcp list sem servidores (com --config) avisa e sai 0", async () => {
@@ -140,4 +144,44 @@ test("mcp sem subcomando válido sai 1 com uso", async () => {
   const text = lines();
   expect(text).toContain("uso: mcp");
   expect(text).toContain("subcomando desconhecido: \"bla\"");
+});
+
+test("mcp valida ramos órfãos antes de conectar: duplicado, argumentos demais e flag repetida", async () => {
+  const { dir, out, lines } = setup((d) => ({ mock: stdio(d) }));
+
+  expect(await runMcpCommand(["list", "list"], { cwd: dir, out })).toBe(1);
+  expect(lines()).toContain('subcomando duplicado: "list"');
+  expect(await runMcpCommand(["list", "extra"], { cwd: dir, out })).toBe(1);
+  expect(lines()).toContain('argumentos demais para list: "extra"');
+  expect(await runMcpCommand(["test", "mock", "echo", "extra"], { cwd: dir, out })).toBe(1);
+  expect(lines()).toContain('argumentos demais para test: "extra"');
+  expect(await runMcpCommand(["list", "--config"], { cwd: dir, out })).toBe(1);
+  expect(lines()).toContain("falta o valor de --config");
+  expect(await runMcpCommand(["list", "--config", "a.json", "--config", "b.json"], { cwd: dir, out })).toBe(1);
+  expect(lines()).toContain("erro: --config duplicado");
+  expect(existsSync(join(dir, "pids"))).toBe(false); // tudo rejeitado antes de spawnar
+});
+
+test("mcp list rejeita --args, que só é válido em test", async () => {
+  const { dir, out, lines } = setup((d) => ({ mock: stdio(d) }));
+
+  expect(await runMcpCommand(["list", "--args", "{}"], { cwd: dir, out })).toBe(1);
+  expect(lines()).toContain("erro: --args só é válido com test");
+  expect(existsSync(join(dir, "pids"))).toBe(false);
+});
+
+test("bun src/cli.ts mcp list executa o wiring real do comando", async () => {
+  const { dir, configPath } = setup((d) => ({ mock: stdio(d) }));
+
+  const proc = Bun.spawn(["bun", "src/cli.ts", "mcp", "list", "--config", configPath], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const exit = await proc.exited;
+  const stdout = await new Response(proc.stdout).text();
+  expect(exit).toBe(0);
+  expect(stdout).toContain("Servidor: mock");
+  expect(stdout).toContain("mcp__mock__echo");
+  expect(await waitDead(pidOf(dir)!)).toBe(true);
 });

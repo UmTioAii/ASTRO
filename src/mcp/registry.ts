@@ -15,12 +15,23 @@ export interface MCPDiscoveredTool {
 export interface MCPRegistryOptions {
   servers: Record<string, MCPServerConfig>;
   warn?: (message: string) => void;
+  /** Relógio injetável (teste determinístico do backoff); default `Date.now`. */
+  now?: () => number;
 }
+
+/** Base do backoff quando o servidor não declara `retryBackoffMs`. */
+const DEFAULT_RETRY_BACKOFF_MS = 1_000;
+/** Teto do backoff exponencial entre reconexões. */
+const MAX_RETRY_BACKOFF_MS = 30_000;
 
 interface ServerState {
   client: MCPClient | undefined;
   tools: MCPToolDescriptor[];
   failed: string | undefined;
+  /** Falhas consecutivas de CONEXÃO (expoente do backoff). */
+  failures: number;
+  /** Instante (epoch ms) a partir do qual nova reconexão é permitida. */
+  nextRetryAt: number;
 }
 
 /**
@@ -30,6 +41,7 @@ interface ServerState {
 export class MCPRegistry {
   readonly #servers: Record<string, MCPServerConfig>;
   readonly #warn: (message: string) => void;
+  readonly #now: () => number;
   readonly #states = new Map<string, ServerState>();
   readonly #reconnecting = new Map<string, Promise<void>>();
   #closed = false;
@@ -37,8 +49,9 @@ export class MCPRegistry {
   constructor(opts: MCPRegistryOptions) {
     this.#servers = opts.servers;
     this.#warn = opts.warn ?? ((message: string) => console.warn(`mcp: ${message}`));
+    this.#now = opts.now ?? Date.now;
     for (const [name, server] of Object.entries(opts.servers)) {
-      if (server.enabled) this.#states.set(name, { client: undefined, tools: [], failed: undefined });
+      if (server.enabled) this.#states.set(name, { client: undefined, tools: [], failed: undefined, failures: 0, nextRetryAt: 0 });
     }
   }
 
@@ -56,6 +69,7 @@ export class MCPRegistry {
       } catch (error) {
         if (this.#closed) throw new MCPError("registro MCP fechado");
         this.#fail(name, state, error);
+        this.#cooldown(name, state);
         failed.push({ server: name, error: state.failed! });
       }
     }
@@ -69,6 +83,13 @@ export class MCPRegistry {
     state.tools = [];
     state.failed = error instanceof Error ? error.message : String(error);
     this.#warn(`servidor MCP "${name}" indisponível: ${state.failed}`);
+  }
+
+  /** Backoff só para falha de CONEXÃO: o próximo `call` espera o intervalo exponencial. */
+  #cooldown(name: string, state: ServerState): void {
+    state.failures += 1;
+    const base = this.#servers[name]?.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+    state.nextRetryAt = this.#now() + Math.min(base * 2 ** (state.failures - 1), MAX_RETRY_BACKOFF_MS);
   }
 
   listTools(): MCPDiscoveredTool[] {
@@ -89,6 +110,8 @@ export class MCPRegistry {
       state.client = client;
       state.tools = await client.listTools();
       state.failed = undefined;
+      state.failures = 0;
+      state.nextRetryAt = 0;
     })();
     this.#reconnecting.set(server, attempt);
     return attempt.finally(() => this.#reconnecting.delete(server));
@@ -100,10 +123,16 @@ export class MCPRegistry {
     const state = this.#states.get(server);
     if (state === undefined) throw new MCPError(`servidor MCP "${server}" não configurado ou desabilitado`);
     if (state.client === undefined) {
+      // Backoff: falha recente de conexão bloqueia nova tentativa até o instante calculado (sem spawnar).
+      const waitMs = state.nextRetryAt - this.#now();
+      if (waitMs > 0) {
+        throw new MCPError(`servidor MCP "${server}" indisponível: ${state.failed ?? "falha anterior"} (nova tentativa em ${waitMs}ms)`);
+      }
       try { await this.#reconnect(server, state); }
       catch (error) {
         if (this.#closed) throw new MCPError("registro MCP fechado");
         this.#fail(server, state, error);
+        this.#cooldown(server, state);
         throw new MCPError(`servidor MCP "${server}" indisponível: ${state.failed}`);
       }
     }
@@ -122,6 +151,7 @@ export class MCPRegistry {
       } catch (retry) {
         if (this.#closed) throw new MCPError("registro MCP fechado");
         if (state.client !== undefined && state.client.closed) this.#fail(server, state, retry);
+        else if (state.client === undefined) this.#cooldown(server, state); // reconexão falhou: backoff
         throw new MCPError(`servidor MCP "${server}" indisponível: ${detail}`);
       }
     }
