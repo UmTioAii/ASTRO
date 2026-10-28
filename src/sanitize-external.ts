@@ -39,10 +39,11 @@ const REDACT_PREFIX = new RegExp(
   `(?:${GHP_PREFIX}|${XOX_PREFIX}[bp]-|${AIZA_PREFIX}|${AKIA_PREFIX}|${GL_PREFIX})[A-Za-z0-9_-]{8,}`,
   "g",
 );
-// JSON `"apiKey":"..."`, env `TOKEN=...`/`x-api-key: ...` (com ou sem aspas)
+// JSON `"apiKey":"..."`, env `TOKEN=...`/`x-api-key: ...` (aspas normais ou escapadas)
 const SECRET_KEY = "(?:api[-_]?key|access[-_]?key|token|secret|password)";
+const QUOTE = `(?:\\\\"|")`;
 const REDACT_ENV = new RegExp(
-  `\\b([A-Za-z0-9_-]*${SECRET_KEY}[A-Za-z0-9_-]*)("?\\s*[=:]\\s*"?)([^\\s,;"'\\\\]*)((?:\\\\")|")?`,
+  `\\b([A-Za-z0-9_-]*${SECRET_KEY}[A-Za-z0-9_-]*)((?:${QUOTE})?\\s*[=:]\\s*(?:${QUOTE})?)([^\\s,;"'\\\\]*)((?:${QUOTE}))?`,
   "gi",
 );
 
