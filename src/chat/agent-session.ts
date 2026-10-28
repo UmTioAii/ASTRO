@@ -2,10 +2,12 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { runTask, shortTaskHash, type RunReport } from "../app";
+import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
+import type { BudgetDecider } from "../budget";
 import { loadConfig, type AstroConfig } from "../config";
 import type { ChatMessage } from "../provider/types";
-import { Registry } from "../registry";
+import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
 import { DEFAULT_SYSTEM_PROMPT } from "../session";
 import { guardContext } from "./context-guard";
@@ -18,6 +20,17 @@ export interface AgentSessionOptions {
   /** Modelo inicial `provider/id`; default `agent.model` da config. */
   model?: string;
   systemPrompt?: string;
+  /** Decisores interativos (TTY); ausentes mantêm pending/non-interactive. */
+  approveSwap?: SwapApprover;
+  onBudgetExceeded?: BudgetDecider;
+}
+
+export interface ProviderInfo {
+  name: string;
+  kind: string;
+  credentialRef?: string;
+  quotaDomain: string;
+  models: string[];
 }
 
 export interface TurnResult {
@@ -64,6 +77,8 @@ export class AgentSession {
   readonly #auditPath: string;
   readonly #ledger: Ledger;
   readonly #systemPrompt: string;
+  readonly #approveSwap: SwapApprover | undefined;
+  readonly #budgetDecider: BudgetDecider | undefined;
   #modelRef: string;
   #messages: ChatMessage[];
   #turns = 0;
@@ -85,6 +100,8 @@ export class AgentSession {
     this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
     this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
     this.#systemPrompt = opts.systemPrompt ?? this.#config.agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.#approveSwap = opts.approveSwap;
+    this.#budgetDecider = opts.onBudgetExceeded;
     this.#modelRef = opts.model ?? this.#config.agent.model;
     this.#registry.require(this.#modelRef); // falha cedo com modelo inexistente
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
@@ -112,6 +129,37 @@ export class AgentSession {
 
   listModels(): string[] {
     return this.#registry.list().map((model) => `${model.provider}/${model.id}`);
+  }
+
+  listProviders(): ProviderInfo[] {
+    return Object.entries(this.#config.providers).map(([name, provider]) => ({
+      name,
+      kind: provider.kind,
+      ...("credentialRef" in provider && typeof provider.credentialRef === "string"
+        ? { credentialRef: provider.credentialRef }
+        : {}),
+      quotaDomain: provider.quotaDomain ?? "default",
+      models: this.#config.models
+        .filter((model) => model.provider === name && this.#registry.get(`${name}/${model.id}`)?.status === "active")
+        .map((model) => model.id),
+    }));
+  }
+
+  providerName(): string {
+    return this.#registry.require(this.#modelRef).provider;
+  }
+
+  /** Troca de provider mantendo o id do modelo quando existir; senão o primeiro ativo. */
+  setProvider(name: string): string {
+    const candidates = this.#config.models
+      .filter((model) => model.provider === name)
+      .map((model) => this.#registry.get(`${name}/${model.id}`))
+      .filter((model): model is ModelEntry => model !== undefined && model.status === "active");
+    if (candidates.length === 0) throw new Error(`provider "${name}" não tem modelo ativo`);
+    const currentId = this.#registry.require(this.#modelRef).id;
+    const chosen = candidates.find((model) => model.id === currentId) ?? candidates[0]!;
+    this.#modelRef = `${name}/${chosen.id}`;
+    return this.#modelRef;
   }
 
   /** Troca o modelo do próximo turno (sem reiniciar); valida contra o registry. */
@@ -150,6 +198,8 @@ export class AgentSession {
           model: this.#modelRef,
           suppressRunEvents: true,
           history,
+          ...(this.#approveSwap === undefined ? {} : { approveSwap: this.#approveSwap }),
+          ...(this.#budgetDecider === undefined ? {} : { onBudgetExceeded: this.#budgetDecider }),
         });
       } catch (error) {
         // Uso gasto antes da falha fica no ledger: contabiliza no acumulado da sessão
