@@ -2,6 +2,7 @@
 import { HELP_TEXT, parseCommand } from "./commands";
 import type { ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
 import type { SessionStore } from "./store";
+import { sessionSummaryLine } from "./store";
 import { isFatalSessionError } from "./session-errors";
 import { redactSecrets } from "../sanitize-external";
 
@@ -16,6 +17,7 @@ export interface ChatSession {
   readonly model: string;
   send(prompt: string, signal?: AbortSignal): Promise<TurnResult>;
   clear(): void;
+  resume(snapshot: SessionSnapshot): void;
   setModel(ref: string): string;
   listModels(): string[];
   listProviders(): ProviderInfo[];
@@ -71,6 +73,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
   const style = opts.style === true;
   let lastFile: string | undefined;
   let lastPersistError: string | undefined;
+  let storeList: ReturnType<SessionStore["list"]> = [];
   const persist = (report = false): string | undefined => {
     if (opts.store === undefined) return undefined;
     try {
@@ -130,6 +133,47 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         }
         const saved = persist(true);
         if (saved !== undefined) io.write(`sessão salva em ${saved}`);
+        continue;
+      }
+      if (command.kind === "sessions") {
+        if (opts.store === undefined) {
+          io.write("sem persistência configurada");
+          continue;
+        }
+        storeList = opts.store.list();
+        io.write(storeList.length === 0
+          ? "nenhuma sessão salva"
+          : storeList.map((item, index) => sessionSummaryLine(item, index)).join("\n"));
+        continue;
+      }
+      if (command.kind === "resume") {
+        if (opts.store === undefined) {
+          io.write("sem persistência configurada");
+          continue;
+        }
+        if (command.ref === undefined) {
+          io.write("uso: /resume <número|id> (veja /sessions)");
+          continue;
+        }
+        try {
+          let chosen: (typeof storeList)[number] | undefined;
+          if (/^\d+$/.test(command.ref)) {
+            if (storeList.length === 0) storeList = opts.store.list();
+            chosen = storeList[Number(command.ref) - 1];
+            if (chosen === undefined) {
+              io.write("índice fora da lista; use /sessions");
+              continue;
+            }
+          } else {
+            chosen = storeList.find((item) => item.id === command.ref);
+          }
+          const loaded = chosen === undefined ? opts.store.load(command.ref) : opts.store.load(chosen.id);
+          session.resume(loaded.record);
+          lastFile = loaded.path;
+          io.write(`sessão retomada: ${loaded.record.id} (${loaded.record.turns} turnos)`);
+        } catch (error) {
+          io.write(`erro: ${messageOf(error)}`);
+        }
         continue;
       }
       if (command.kind === "clear") {

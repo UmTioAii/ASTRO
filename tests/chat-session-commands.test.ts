@@ -45,6 +45,7 @@ class FakeSession implements ChatSession {
   setProvider(name: string): string {
     return `${name}/m1`;
   }
+  resume(): void {}
   snapshot(): SessionSnapshot {
     return {
       id: "s1", startedAt: "2026-10-28T12:00:00.000Z", model: this.model,

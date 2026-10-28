@@ -24,4 +24,10 @@ describe("comandos do chat (T1, #62)", () => {
   test("ajuda lista os quatro comandos", () => {
     for (const command of ["/help", "/model", "/clear", "/exit"]) expect(HELP_TEXT).toContain(command);
   });
-});
+
+
+  test("/sessions e /resume", () => {
+    expect(parseCommand("/sessions")).toEqual({ kind: "sessions" });
+    expect(parseCommand("/resume")).toEqual({ kind: "resume" });
+    expect(parseCommand("/resume 2")).toEqual({ kind: "resume", ref: "2" });
+  });});

@@ -1,7 +1,7 @@
 /** Comandos de barra compartilhados pelo REPL e pela TUI: puro, sem React. */
 import { HELP_TEXT, type ReplCommand } from "../chat/commands";
 import { providerLine, sessionLines, type ChatSession } from "../chat/repl";
-import type { SessionStore } from "../chat/store";
+import { sessionSummaryLine, type SessionStore, type SessionSummary } from "../chat/store";
 import { redactSecrets } from "../sanitize-external";
 
 export type EntryKind = "user" | "assistant" | "info" | "error";
@@ -13,6 +13,7 @@ export interface Entry {
 
 export interface CommandState {
   lastFile?: string;
+  sessions?: SessionSummary[];
 }
 
 export interface CommandOutcome {
@@ -67,6 +68,50 @@ export function runCommand(
         return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
       }
     }
+    case "sessions": {
+      if (store === undefined) {
+        return { entries: [{ kind: "info", text: "sem persistência configurada" }] };
+      }
+      const sessions = store.list();
+      state.sessions = sessions;
+      return {
+        entries: [{
+          kind: "info",
+          text: sessions.length === 0
+            ? "nenhuma sessão salva"
+            : sessions.map((item, index) => sessionSummaryLine(item, index)).join("\n"),
+        }],
+      };
+    }
+    case "resume": {
+      if (store === undefined) {
+        return { entries: [{ kind: "info", text: "sem persistência configurada" }] };
+      }
+      if (command.ref === undefined) {
+        return { entries: [{ kind: "info", text: "uso: /resume <número|id> (veja /sessions)" }] };
+      }
+      try {
+        let chosen: SessionSummary | undefined;
+        if (/^\d+$/.test(command.ref)) {
+          if (state.sessions === undefined || state.sessions.length === 0) state.sessions = store.list();
+          chosen = state.sessions[Number(command.ref) - 1];
+          if (chosen === undefined) {
+            return { entries: [{ kind: "info", text: "índice fora da lista; use /sessions" }] };
+          }
+        } else {
+          chosen = state.sessions?.find((item) => item.id === command.ref);
+        }
+        const loaded = chosen === undefined ? store.load(command.ref) : store.load(chosen.id);
+        session.resume(loaded.record);
+        state.lastFile = loaded.path;
+        return {
+          entries: [{ kind: "info", text: `sessão retomada: ${loaded.record.id} (${loaded.record.turns} turnos)` }],
+          lastFile: loaded.path,
+        };
+      } catch (error) {
+        return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
+      }
+    }
     case "session": {
       const lines = sessionLines(session.snapshot(), state.lastFile);
       if (store === undefined) lines[1] = "arquivo: sem persistência";
@@ -91,3 +136,4 @@ function providerLines(session: ChatSession): string {
   if (providers.length === 0) return "nenhum provider configurado";
   return providers.map(providerLine).join("\n");
 }
+

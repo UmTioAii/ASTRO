@@ -176,6 +176,24 @@ export class AgentSession {
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
   }
 
+  /** Retoma uma sessão gravada: troca o system, mantém mensagens e acumulados. */
+  resume(snapshot: SessionSnapshot): void {
+    if (this.#busy) throw new Error("turno em andamento");
+    if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
+    this.#messages = [
+      { role: "system", content: this.#systemPrompt },
+      ...snapshot.messages.filter((message) => message.role !== "system").map((message) => ({ ...message })),
+    ];
+    if (this.#registry.get(snapshot.model)?.status === "active") this.#modelRef = snapshot.model;
+    this.#turns = snapshot.turns;
+    this.#tokensIn = snapshot.tokensIn;
+    this.#tokensOut = snapshot.tokensOut;
+    this.#steps = 0;
+    this.#costKnown = snapshot.costUsd !== null;
+    this.#costUsd = snapshot.costUsd ?? 0;
+    this.#append("session.resumed", { turns: snapshot.turns, model: this.#modelRef });
+  }
+
   async send(prompt: string, signal?: AbortSignal): Promise<TurnResult> {
     if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
     if (this.#busy) throw new Error("turno já em andamento");
