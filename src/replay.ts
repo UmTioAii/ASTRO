@@ -7,6 +7,7 @@
  */
 import { Auditor } from "./audit";
 import type { SwapApprover } from "./approval";
+import type { BudgetDecider } from "./budget";
 import { runTask } from "./app";
 
 /** Métricas do run original, extraídas do evento run.completed. */
@@ -67,6 +68,8 @@ export interface ReplayOptions {
   env?: Record<string, string | undefined>;
   /** Gate de aprovação de troca (F-19); sem ele o runtime nega. */
   approveSwap?: SwapApprover;
+  /** Decisor de budget (B4); ausente = não interativo. */
+  onBudgetExceeded?: BudgetDecider;
 }
 
 /** Re-executa a tarefa do run e compara com as métricas originais. */
@@ -82,6 +85,7 @@ export async function replayRun(opts: ReplayOptions): Promise<ReplayResult> {
     ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
     ...(opts.env === undefined ? {} : { env: opts.env }),
     ...(opts.approveSwap === undefined ? {} : { approveSwap: opts.approveSwap }),
+    ...(opts.onBudgetExceeded === undefined ? {} : { onBudgetExceeded: opts.onBudgetExceeded }),
   });
 
   const costMatches =

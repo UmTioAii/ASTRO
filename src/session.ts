@@ -9,7 +9,7 @@ import { verifyHandoffIdentity } from "./handoff/verifier";
 import { compactDraft, digestArtifacts } from "./handoff/compact";
 import { DEFAULT_ACK_TIMEOUT_MS } from "./config";
 import type { BudgetConfig, PriceConfig } from "./config";
-import { budgetStatus, budgetWarningPayload } from "./budget";
+import { budgetStatus, budgetWarningPayload, enforceBudget, BudgetExceededError, type BudgetDecider } from "./budget";
 import type { ChatMessage, CompletionResponse, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
@@ -55,6 +55,8 @@ export interface SessionOptions {
   };
   /** Budget (F-05): aviso/limite derivados do ledger (enforcement nas partes 3–4). */
   budget?: BudgetConfig;
+  /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
+  budgetDecide?: BudgetDecider;
   /** Ambiente do run; vai ao ToolContext do shell (default: `process.env` no run_command). */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -209,12 +211,23 @@ export async function runSession(
   ensureAgentCreated(opts.ledger, opts.audit, opts.run, opts.agent, opts.model.id, opts.agentProfile);
 
   try {
-    for (let step = 1; step <= opts.maxSteps; step++) {
+    let effectiveMaxSteps = opts.maxSteps;
+    for (let step = 1; step <= effectiveMaxSteps; step++) {
       throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
-      // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
+      // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(opts.agent);
+      // Budget (B4/B10, I-17): teto físico/esgotamento antes da chamada
+      if (opts.budget !== undefined) {
+        const choice = await enforceBudget({
+          budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: opts.agent, audit: opts.audit,
+          interactive: opts.budgetDecide !== undefined,
+          ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
+        });
+        // "baixar esforço" (B4): metade dos passos restantes
+        if (choice === "lower_effort") effectiveMaxSteps = Math.max(step, Math.floor(effectiveMaxSteps / 2));
+      }
       // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
@@ -327,7 +340,7 @@ export async function runSession(
       tracer?.end(stepSpan);
     }
     tracer?.end(rootSpan, { status: "max_steps" });
-    throw new MaxStepsError(opts.maxSteps);
+    throw new MaxStepsError(effectiveMaxSteps);
   } catch (error) {
     // HandoffSignal transfere o controle ao caller e não grava run_state:
     // single+handoff não é retomável por planResume (multi-agent tem loop próprio).
@@ -359,6 +372,7 @@ function errorHasHandoffName(error: unknown): boolean {
 function interruptReason(error: unknown, signal?: AbortSignal): string {
   if (isAbortError(error, signal)) return "cancelled";
   if (error instanceof SwapDeniedError) return "swap_denied";
+  if (error instanceof BudgetExceededError) return "budget_exceeded";
   return error instanceof Error ? error.name : String(error);
 }
 
@@ -425,6 +439,8 @@ export interface MultiAgentSessionOptions {
   };
   /** Budget (F-05): aviso/limite derivados do ledger (enforcement nas partes 3–4). */
   budget?: BudgetConfig;
+  /** Decisor TTY do esgotamento (B4); ausente = não interativo (grava checkpoint e para). */
+  budgetDecide?: BudgetDecider;
   /** Ambiente do run; vai ao ToolContext do shell. */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -560,7 +576,8 @@ export async function runMultiAgentSession(
     ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, currentAgent.profile);
     agentsUsed.push(currentAgentName);
 
-    while (step < opts.baseMaxSteps) {
+    let effectiveBaseMaxSteps = opts.baseMaxSteps;
+    while (step < effectiveBaseMaxSteps) {
       throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
       // Verificar limite do agent atual
       if (agentSteps >= currentMaxSteps) {
@@ -576,8 +593,17 @@ export async function runMultiAgentSession(
 
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
-      // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
+      // Budget (B3): avisa uma vez ao cruzar warnAt
       maybeWarnBudget(currentAgentName);
+      // Budget (B4/B10, I-17): teto físico/esgotamento antes da chamada
+      if (opts.budget !== undefined) {
+        const choice = await enforceBudget({
+          budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: currentAgentName, audit: opts.audit,
+          interactive: opts.budgetDecide !== undefined,
+          ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
+        });
+        if (choice === "lower_effort") effectiveBaseMaxSteps = Math.max(step, Math.floor(effectiveBaseMaxSteps / 2));
+      }
       // Team (F7-5): budget do projeto e quota do agent corrente
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
@@ -741,7 +767,7 @@ export async function runMultiAgentSession(
     }
 
     tracer?.end(rootSpan, { status: "max_steps" });
-    throw new MaxStepsError(opts.baseMaxSteps);
+    throw new MaxStepsError(effectiveBaseMaxSteps);
   } catch (error) {
     // Falha pós-ack é terminal para o handoff: grava handoff.failed (F-24, I-19).
     // Cancelamento (F-06) NÃO grava failed: o artefato permanece no ledger para auditoria;
