@@ -2,11 +2,5 @@
 # https://github.com/gitleaks/gitleaks#configuration
 
 [allowlist]
-description = "Test files and constants with fake secrets for testing redactSecrets"
-paths = [
-  "tests/**/*",
-]
-regexes = [
-  'Bearer testtoken123456789012',
-  'gitleaks-ignore',
-]
+paths = ["tests/**/*"]
+regexes = ["Bearer testtoken123456789012", "gitleaks-ignore"]
