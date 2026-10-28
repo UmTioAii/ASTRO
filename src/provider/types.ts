@@ -50,7 +50,7 @@ export interface CompletionResponse {
 
 /** Contrato de um provider de chat completion. */
 export interface Provider {
-  complete(req: CompletionRequest): Promise<CompletionResponse>;
+  complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse>;
 }
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;

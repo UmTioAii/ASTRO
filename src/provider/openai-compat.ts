@@ -1,3 +1,4 @@
+import { isAbortError } from "../abort";
 import type {
   ChatMessage,
   CompletionRequest,
@@ -222,12 +223,12 @@ export class OpenAICompatProvider implements Provider {
     this.windowMs = Number.isFinite(windowMs) ? Math.max(0, windowMs) : DEFAULT_WINDOW_MS;
   }
 
-  async complete(req: CompletionRequest): Promise<CompletionResponse> {
+  async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     const startedAt = Date.now();
 
     for (let attempt = 1; ; attempt++) {
       try {
-        return await this.request(req);
+        return await this.request(req, signal);
       } catch (error) {
         if (!(error instanceof ProviderError)) throw error;
         if (!RETRYABLE.has(error.errClass) || attempt >= this.maxAttempts) {
@@ -243,15 +244,17 @@ export class OpenAICompatProvider implements Provider {
     }
   }
 
-  private async request(req: CompletionRequest): Promise<CompletionResponse> {
+  private async request(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     let response: Response;
     try {
       response = await this.fetchFn(this.url, {
         method: "POST",
         headers: this.headers,
         body: JSON.stringify(this.bodyFor(req)),
+        signal,
       });
     } catch (error) {
+      if (isAbortError(error, signal)) throw error;
       throw new ProviderError(
         "outage",
         `falha de rede ao chamar o provider: ${this.describe(error)}`,
@@ -262,6 +265,7 @@ export class OpenAICompatProvider implements Provider {
     try {
       text = await response.text();
     } catch (error) {
+      if (isAbortError(error, signal)) throw error;
       throw new ProviderError(
         "outage",
         `falha ao ler a resposta do provider: ${this.describe(error)}`,
