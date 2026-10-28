@@ -26,13 +26,21 @@ describe("store de sessão do chat (T1, #62)", () => {
     expect(readdirSync(dir).some((name) => name.endsWith(".tmp"))).toBe(false);
   });
 
-  test("sanitiza segredo na escrita", () => {
+  test("sanitiza segredo na escrita (env-like e dentro de toolCalls)", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-chat-store-"));
     const path = new SessionStore(dir).write(snapshot({
-      messages: [{ role: "user", content: "Authorization: Bearer sk-abc123segredo" }],
+      messages: [{ role: "assistant", content: "", toolCalls: [{ id: "1", name: "run_command",
+        arguments: "GITHUB_TOKEN=ghp_abc12345678 OPENAI_API_KEY=xyz789 x-api-key: abcd1234efgh5678" }] }],
     }));
     const text = readFileSync(path, "utf8");
-    expect(text).not.toContain("sk-abc123segredo");
+    for (const secret of ["ghp_abc12345678", "xyz789", "abcd1234efgh5678"]) expect(text).not.toContain(secret);
     expect(text).toContain("REDACTED");
+  });
+
+  test("recusa id/startedAt que escapariam do diretório", () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-chat-store-"));
+    const store = new SessionStore(dir);
+    expect(() => store.write(snapshot({ id: "..\\..\\escape" }))).toThrow(/inválido/);
+    expect(() => store.write(snapshot({ startedAt: "../../x" }))).toThrow(/inválido/);
   });
 });

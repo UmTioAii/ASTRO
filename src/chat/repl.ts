@@ -5,6 +5,8 @@
 import { HELP_TEXT, parseCommand } from "./commands";
 import type { SessionSnapshot, TurnResult } from "./agent-session";
 import type { SessionStore } from "./store";
+import { isFatalSessionError } from "./session-errors";
+import { redactSecrets } from "../sanitize-external";
 
 export interface ReplIO {
   read(prompt: string): Promise<string | null>;
@@ -26,10 +28,8 @@ export interface ReplOptions {
   signal?: AbortSignal;
 }
 
-const FATAL = new Set(["BudgetExceededError", "SwapDeniedError"]);
-
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return redactSecrets(error instanceof Error ? error.message : String(error));
 }
 
 function fmtCost(value: number | null): string {
@@ -87,7 +87,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         io.write(statusLine(result));
       } catch (error) {
         io.write(`erro: ${messageOf(error)}`);
-        if (error instanceof Error && FATAL.has(error.name)) break;
+        if (isFatalSessionError(error)) break;
       } finally {
         opts.store?.write(session.snapshot());
       }

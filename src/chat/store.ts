@@ -23,10 +23,13 @@ export class SessionStore {
   write(snapshot: Omit<SessionRecord, "schemaVersion">): string {
     mkdirSync(this.root, { recursive: true });
     const stamp = snapshot.startedAt.replace(/[:.]/g, "-");
+    if (!/^[A-Za-z0-9-]+$/.test(snapshot.id) || !/^[A-Za-z0-9-]+$/.test(stamp)) {
+      throw new Error("sessão com id/startedAt inválido para o nome do arquivo");
+    }
     const path = join(this.root, `${stamp}-${snapshot.id}.json`);
     const tmp = `${path}.tmp`;
     const record: SessionRecord = { schemaVersion: 1, ...snapshot };
-    writeFileSync(tmp, redactSecrets(JSON.stringify(record, null, 2)), "utf8");
+    writeFileSync(tmp, redactSecrets(JSON.stringify(record, null, 2)), { encoding: "utf8", mode: 0o600 });
     renameSync(tmp, path);
     return path;
   }

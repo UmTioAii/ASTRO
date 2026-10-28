@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runRepl, type ChatSession, type ReplIO } from "../src/chat/repl";
 import type { SessionSnapshot, TurnResult } from "../src/chat/agent-session";
+import { BudgetExceededError } from "../src/budget";
 import { SessionStore } from "../src/chat/store";
 
 class ScriptedIO implements ReplIO {
@@ -23,18 +24,15 @@ class FakeSession implements ChatSession {
   cleared = 0;
   closed = 0;
   fail = 0;
-  fatal: string | undefined;
+  fatal: Error | undefined;
+  clearedFlag = false;
   async send(prompt: string): Promise<TurnResult> {
     this.sent.push(prompt);
     if (this.fail > 0) {
       this.fail--;
       throw new Error("boom");
     }
-    if (this.fatal !== undefined) {
-      const error = new Error("fatal");
-      error.name = this.fatal;
-      throw error;
-    }
+    if (this.fatal !== undefined) throw this.fatal;
     return {
       final: `eco:${prompt}`, model: this.model, steps: 1, tokensIn: 10, tokensOut: 5, costUsd: 0.001,
       totalTokensIn: 10 * this.sent.length, totalTokensOut: 5 * this.sent.length, totalCostUsd: 0.001,
@@ -43,6 +41,7 @@ class FakeSession implements ChatSession {
   }
   clear(): void {
     this.cleared++;
+    this.clearedFlag = true;
   }
   setModel(ref: string): string {
     this.model = ref;
@@ -54,8 +53,8 @@ class FakeSession implements ChatSession {
   snapshot(): SessionSnapshot {
     return {
       id: "s1", startedAt: "2026-10-28T12:00:00.000Z", model: this.model,
-      messages: [{ role: "user", content: "x" }], turns: this.sent.length,
-      tokensIn: 10, tokensOut: 5, costUsd: 0.001,
+      messages: this.clearedFlag ? [{ role: "system", content: "sys" }] : [{ role: "user", content: "x" }],
+      turns: this.sent.length, tokensIn: 10, tokensOut: 5, costUsd: 0.001,
     };
   }
   close(): void {
@@ -91,11 +90,20 @@ describe("REPL do chat (T1, #62)", () => {
     expect(io.outputs).toContain("erro: boom");
 
     const fatal = new FakeSession();
-    fatal.fatal = "BudgetExceededError";
+    fatal.fatal = new Error("wrapped", { cause: new BudgetExceededError("limit", {} as never) });
     const io2 = new ScriptedIO(["a", "nunca"]);
     await runRepl(fatal, io2);
     expect(fatal.sent).toEqual(["a"]);
     expect(fatal.closed).toBe(1);
+  });
+
+  test("persiste o estado final após /clear sem novo turno", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-chat-repl-final-"));
+    const session = new FakeSession();
+    await runRepl(session, new ScriptedIO(["olá", "/clear"]), { store: new SessionStore(dir) });
+    const file = readdirSync(dir).find((name) => name.endsWith(".json"))!;
+    const record = JSON.parse(readFileSync(join(dir, file), "utf8")) as { messages: unknown[] };
+    expect(record.messages).toEqual([{ role: "system", content: "sys" }]);
   });
 
   test("EOF encerra e fecha a sessão", async () => {
