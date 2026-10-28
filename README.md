@@ -99,7 +99,7 @@ All commands run as `bun src/cli.ts <command>`.
 
 ## Chat
 
-`bun src/cli.ts chat` opens a REPL; turns share history and each turn persists a sanitized record in `.astro/sessions/`.
+`bun src/cli.ts chat` opens a REPL; turns share history and each turn persists a sanitized record in `.astro/sessions/` (capped at 5 MB, sanitized again on load).
 
 | Command | Effect |
 |---|---|

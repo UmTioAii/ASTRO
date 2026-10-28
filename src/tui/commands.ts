@@ -114,7 +114,7 @@ export function runCommand(
     }
     case "session": {
       const lines = sessionLines(session.snapshot(), state.lastFile);
-      if (store === undefined) lines[1] = "arquivo: sem persistência";
+      if (store === undefined) lines[lines.length - 1] = "arquivo: sem persistência";
       return { entries: [{ kind: "info", text: lines.join("\n") }] };
     }
     case "save": {

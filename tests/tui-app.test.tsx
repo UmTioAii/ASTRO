@@ -45,12 +45,18 @@ class FakeSession implements ChatSession {
   setProvider(name: string): string {
     return `${name}/m1`;
   }
-  resume(): void {}
+  resumed: string[] = [];
+  resumedFrom: { id: string; startedAt: string } | undefined;
+  resume(snapshot: SessionSnapshot): void {
+    this.resumed.push(snapshot.id);
+    this.resumedFrom = { id: snapshot.id, startedAt: snapshot.startedAt };
+  }
   snapshot(): SessionSnapshot {
     return {
       id: "s1", startedAt: "2026-10-28T12:00:00.000Z", model: this.model,
       messages: [{ role: "user", content: "x" }], turns: this.sent.length,
       tokensIn: 10 * this.sent.length, tokensOut: 5 * this.sent.length, costUsd: 0.001,
+      ...(this.resumedFrom === undefined ? {} : { resumedFrom: this.resumedFrom }),
     };
   }
   close(): void {}
@@ -283,6 +289,38 @@ test("segundo ctrl+c força a saída mesmo com o provider travado", async () => 
     expect(exits).toBe(0);
     instance.stdin.write("\u0003");
     await waitFor(() => exits === 1);
+  } finally {
+    instance.unmount();
+  }
+});
+test("/sessions e /resume no painel compartilham a lista", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-tui-panel-sessions-"));
+  const store = new SessionStore(dir);
+  store.write({
+    id: "xyz", startedAt: "2026-10-02T10:00:00.000Z", model: "p/m1",
+    messages: [{ role: "user", content: "guardado" }], turns: 2, tokensIn: 20, tokensOut: 10, costUsd: 0.002,
+  });
+  const session = new FakeSession();
+  const instance = render(<TuiApp session={session} cwd="/tmp/astro" store={store} />);
+  try {
+    instance.stdin.write("/sessions");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("xyz") === true);
+
+    // arquivo novo aparece depois da lista exibida: /resume 1 deve usar a lista vista
+    store.write({
+      id: "zzz", startedAt: "2026-10-03T10:00:00.000Z", model: "p/m1",
+      messages: [{ role: "user", content: "novo" }], turns: 1, tokensIn: 1, tokensOut: 1, costUsd: null,
+    });
+
+    instance.stdin.write("/resume 1");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("sessão retomada: xyz") === true);
+    expect(session.resumed).toEqual(["xyz"]);
+
+    instance.stdin.write("/session");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("retomada de xyz") === true);
   } finally {
     instance.unmount();
   }

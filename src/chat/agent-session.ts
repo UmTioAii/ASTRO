@@ -60,6 +60,8 @@ export interface SessionSnapshot {
   tokensIn: number;
   tokensOut: number;
   costUsd: number | null;
+  /** Sessão de origem quando o histórico foi retomado de um arquivo. */
+  resumedFrom?: { id: string; startedAt: string };
 }
 
 function resolvePath(cwd: string, path: string): string {
@@ -90,6 +92,7 @@ export class AgentSession {
   #closed = false;
   #fatal = false;
   #busy = false;
+  #resumedFrom: { id: string; startedAt: string } | undefined;
 
   constructor(opts: AgentSessionOptions) {
     this.#configPath = opts.configPath;
@@ -174,6 +177,7 @@ export class AgentSession {
   clear(): void {
     if (this.#busy) throw new Error("turno em andamento");
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
+    this.#resumedFrom = undefined;
   }
 
   /** Retoma uma sessão gravada: troca o system, mantém mensagens e acumulados. */
@@ -191,6 +195,7 @@ export class AgentSession {
     this.#steps = 0;
     this.#costKnown = snapshot.costUsd !== null;
     this.#costUsd = snapshot.costUsd ?? 0;
+    this.#resumedFrom = { id: snapshot.id, startedAt: snapshot.startedAt };
     this.#append("session.resumed", { turns: snapshot.turns, model: this.#modelRef });
   }
 
@@ -276,6 +281,7 @@ export class AgentSession {
       tokensIn: this.#tokensIn,
       tokensOut: this.#tokensOut,
       costUsd: this.#costKnown ? this.#costUsd : null,
+      ...(this.#resumedFrom === undefined ? {} : { resumedFrom: this.#resumedFrom }),
     };
   }
 

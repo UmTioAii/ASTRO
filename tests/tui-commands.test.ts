@@ -15,6 +15,7 @@ class FakeSession implements ChatSession {
   }
   clear(): void {
     this.cleared++;
+    this.resumedFrom = undefined;
   }
   setModel(ref: string): string {
     if (ref === "ghost") throw new Error("modelo desconhecido");
@@ -31,11 +32,17 @@ class FakeSession implements ChatSession {
     if (name === "ghost") throw new Error('provider "ghost" não está configurado');
     return `${name}/m1`;
   }
-  resume(): void {}
+  resumed: SessionSnapshot[] = [];
+  resumedFrom: { id: string; startedAt: string } | undefined;
+  resume(snapshot: SessionSnapshot): void {
+    this.resumed.push(snapshot);
+    this.resumedFrom = { id: snapshot.id, startedAt: snapshot.startedAt };
+  }
   snapshot(): SessionSnapshot {
     return {
       id: "s1", startedAt: "2026-10-28T12:00:00.000Z", model: this.model,
       messages: [{ role: "user", content: "x" }], turns: 2, tokensIn: 20, tokensOut: 10, costUsd: 0.5,
+      ...(this.resumedFrom === undefined ? {} : { resumedFrom: this.resumedFrom }),
     };
   }
   close(): void {}
@@ -99,5 +106,49 @@ describe("comandos da TUI (T2, #63)", () => {
     const session = new FakeSession();
     expect(runCommand({ kind: "unknown", raw: "nope" }, session, {}).entries[0]!.text).toBe("comando desconhecido: /nope");
     expect(runCommand({ kind: "exit" }, session, {}).exit).toBe(true);
+  });
+
+  test("sessions lista e resume carrega a sessão pelo número", () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-tui-resume-"));
+    const store = new SessionStore(dir);
+    store.write({
+      id: "abc", startedAt: "2026-10-01T10:00:00.000Z", model: "p/m1",
+      messages: [{ role: "user", content: "velho" }], turns: 1, tokensIn: 10, tokensOut: 5, costUsd: 0.001,
+    });
+    const session = new FakeSession();
+    const state: { sessions?: unknown; lastFile?: string } = {};
+    const list = runCommand({ kind: "sessions" }, session, state as never, store);
+    expect(list.entries[0]!.text).toContain("abc");
+    const resumed = runCommand({ kind: "resume", ref: "1" }, session, state as never, store);
+    expect(resumed.entries[0]!.text).toBe("sessão retomada: abc (1 turnos)");
+    expect(resumed.lastFile).toMatch(/\.json$/);
+    expect(session.resumed[0]!.id).toBe("abc");
+    const sessionInfo = runCommand({ kind: "session" }, session, state as never, store);
+    expect(sessionInfo.entries[0]!.text).toContain("retomada de abc");
+
+    runCommand({ kind: "clear" }, session, state as never, store);
+    const afterClear = runCommand({ kind: "session" }, session, state as never, store);
+    expect(afterClear.entries[0]!.text).not.toContain("retomada de");
+  });
+  test("sem store, /session mantém a origem e avisa sobre a persistência", () => {
+    const session = new FakeSession();
+    session.resumedFrom = { id: "abc", startedAt: "2026-10-01T10:00:00.000Z" };
+    const out = runCommand({ kind: "session" }, session, {});
+    expect(out.entries[0]!.text).toContain("retomada de abc");
+    expect(out.entries[0]!.text).toContain("arquivo: sem persistência");
+  });
+  test("resume sem /sessions recarrega a lista e valida o índice", () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-tui-resume2-"));
+    const store = new SessionStore(dir);
+    store.write({
+      id: "xyz", startedAt: "2026-10-02T10:00:00.000Z", model: "p/m1",
+      messages: [{ role: "user", content: "guardado" }], turns: 2, tokensIn: 20, tokensOut: 10, costUsd: 0.002,
+    });
+    const session = new FakeSession();
+    const ok = runCommand({ kind: "resume", ref: "1" }, session, {}, store);
+    expect(ok.entries[0]!.text).toBe("sessão retomada: xyz (2 turnos)");
+    const bad = runCommand({ kind: "resume", ref: "9" }, session, {}, store);
+    expect(bad.entries[0]!.text).toBe("índice fora da lista; use /sessions");
+    expect(session.resumed).toHaveLength(1);
   });
 });
