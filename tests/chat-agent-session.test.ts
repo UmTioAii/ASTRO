@@ -74,6 +74,7 @@ describe("AgentSession (T1, #62)", () => {
       const events = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll();
       expect(events.filter((e) => e.tipo === "run.started")).toHaveLength(1);
       expect(events.filter((e) => e.tipo === "run.completed")).toHaveLength(1);
+      expect(events.find((e) => e.tipo === "run.completed")?.payload).toMatchObject({ steps: 1, turns: 1, session: true });
       const prompts = events.filter((e) => e.tipo === "chat.prompt");
       expect(prompts).toHaveLength(1);
       expect((prompts[0]!.payload as { taskHash?: string }).taskHash).toMatch(/^[0-9a-f]{16}$/);

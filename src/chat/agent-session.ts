@@ -68,6 +68,7 @@ export class AgentSession {
   #modelRef: string;
   #messages: ChatMessage[];
   #turns = 0;
+  #steps = 0;
   #tokensIn = 0;
   #tokensOut = 0;
   #costUsd = 0;
@@ -156,6 +157,7 @@ export class AgentSession {
 
     this.#messages = [...(report.messages ?? guard.messages), { role: "assistant", content: report.final }];
     this.#turns++;
+    this.#steps += report.steps;
     this.#tokensIn += report.tokensIn;
     this.#tokensOut += report.tokensOut;
     if (report.costUsd === null) this.#costKnown = false;
@@ -206,7 +208,7 @@ export class AgentSession {
       tipo: "run.completed",
       payload: {
         session: true,
-        steps: 0,
+        steps: this.#steps,
         turns: this.#turns,
         tokensIn: this.#tokensIn,
         tokensOut: this.#tokensOut,
