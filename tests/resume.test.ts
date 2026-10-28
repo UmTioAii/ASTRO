@@ -103,7 +103,6 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(rebuildAgentTree(ledger, "r-abort").active).toMatchObject({ agent_id: "default" });
     expect(planResume(ledger, "r-abort").agent.agent_id).toBe("default");
   });
-
   test("single-agent concluído: created + destroyed(completed) no ledger e audit", async () => {
     const provider: Provider = { complete: async () => resp({ content: "pronto" }) };
     const { opts, audit, ledger } = single("r-ok", provider);
@@ -116,14 +115,12 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(tipos).toContain("agent.created");
     expect(tipos).toContain("agent.destroyed");
   });
-
   test("MaxSteps deixa o agente ativo (interrompível/retomável)", async () => {
     const provider: Provider = { complete: async () => resp({ toolCalls: [{ id: "c1", name: "ghost", arguments: "{}" }] }) };
     const { opts, ledger } = single("r-max", provider, { maxSteps: 1 });
     await expect(runSession(opts, "tarefa")).rejects.toBeDefined();
     expect(rebuildAgentTree(ledger, "r-max").active?.agent_id).toBe("default");
   });
-
   test("reabertura: handoff de volta a agente já usado o deixa ativo (sem duplicar nó)", () => {
     const ledger = newLedger();
     ledger.recordAgentCreated({ run: "r1", agent_id: "planner", session_id: "r1", model: "m1" });
@@ -171,16 +168,19 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
       coder: { model: "openai/gpt-4o", maxSteps: 2, tools: [] },
     };
     const { opts, ledger } = multi("r-pend", { complete: async () => resp({ content: "ok" }) }, agents);
+    // Janela de crash: o emissor já foi destruído antes do retry (destroy idempotente)
     ledger.recordAgentCreated({ run: "r-pend", agent_id: "planner", session_id: "r-pend", model: "gpt-4o-mini" });
+    ledger.recordAgentDestroyed({ run: "r-pend", agent_id: "planner", session_id: "r-pend", reason: "handoff" });
     const artifact = buildHandoffArtifact({ run: "r-pend", from: "planner", to: "coder", sourceStep: 1,
       budgetSpent: { tokens: 0, usd: 0 }, sourceRefs: { ledger_id: ledger.id(), seq_start: 1, seq_end: 1 },
       draft: { task: "t", objective: "o", decisions: [], constraints: [], next_steps: [] } });
     ledger.recordHandoff("handoff.created", "r-pend", artifact, { agent: "planner" });
 
-    expect((await runMultiAgentSession(opts, "delegue")).agentsUsed).toEqual(["coder"]);
+    await runMultiAgentSession(opts, "delegue");
     const tree = rebuildAgentTree(ledger, "r-pend");
     expect(tree.nodes).toHaveLength(2);
     expect(tree.nodes.filter((n) => n.agent_id === "coder")).toHaveLength(1);
+    expect(tree.nodes.filter((n) => n.agent_id === "planner" && n.reason === "handoff")).toHaveLength(1);
     expect(tree.active).toBeUndefined();
     expect(tree.nodes[1]!.reason).toBe("completed");
   });
