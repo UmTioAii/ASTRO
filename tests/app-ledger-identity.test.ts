@@ -42,7 +42,9 @@ function readJsonl<T>(path: string): T[] {
   return readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as T);
 }
 const readAudit = (dir: string) => readJsonl<AuditRow>(join(dir, ".astro", "audit.jsonl"));
-const readUsage = (dir: string) => readJsonl<UsageRow>(join(dir, ".astro", "ledger.jsonl"));
+function readUsage(dir: string): UsageRow[] {
+  return readJsonl<UsageRow>(join(dir, ".astro", "ledger.jsonl")).filter((e) => e.kind === undefined || e.kind === "usage");
+}
 
 /** Pré-carrega uso de hoje no ledger para exercitar quota. */
 function seedUsage(dir: string, quotaDomain: string, tokensIn: number): void {
