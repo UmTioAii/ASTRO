@@ -80,6 +80,7 @@ const USAGE = `Uso:
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts chat [--config <path>] [--cwd <dir>]
+  bun src/cli.ts tui [--config <path>] [--cwd <dir>]
   bun src/cli.ts resume <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
   bun src/cli.ts providers <health|list|test> [--config <path>]
@@ -155,6 +156,11 @@ interface ChatCommand {
   cwd?: string;
 }
 
+interface TuiCommand {
+  configPath: string;
+  cwd?: string;
+}
+
 interface HealthCommand {
   configPath: string;
 }
@@ -201,6 +207,7 @@ type ParsedCommand =
   | { kind: "replay"; options: ReplayCommand }
   | { kind: "resume"; options: ResumeCommand }
   | { kind: "chat"; options: ChatCommand }
+  | { kind: "tui"; options: TuiCommand }
   | { kind: "health"; options: HealthCommand }
   | { kind: "providers"; options: ProvidersCommand }
   | { kind: "pool"; options: PoolCommand }
@@ -249,7 +256,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   }
 
   const [command, ...rest] = argv;
-  const commands = ["run", "eval", "bench", "serve", "replay", "resume", "chat", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills", "mcp"];
+  const commands = ["run", "eval", "bench", "serve", "replay", "resume", "chat", "tui", "health", "providers", "handoff", "cost", "pool", "agents", "config", "skills", "mcp"];
   if (command !== undefined && !commands.includes(command)) {
     throw new UsageError(`comando desconhecido: "${command}"`);
   }
@@ -478,7 +485,7 @@ function parseArgs(argv: string[]): ParsedCommand {
     return command === "replay" ? { kind: "replay", options } : { kind: "resume", options };
   }
 
-  if (command === "chat") {
+  if (command === "chat" || command === "tui") {
     let configPath = "astro.config.json";
     let cwd: string | undefined;
     for (let i = 0; i < rest.length; i++) {
@@ -493,7 +500,8 @@ function parseArgs(argv: string[]): ParsedCommand {
       }
       throw new UsageError(`opção desconhecida: "${arg}"`);
     }
-    return { kind: "chat", options: { configPath, ...(cwd === undefined ? {} : { cwd }) } };
+    const options = { configPath, ...(cwd === undefined ? {} : { cwd }) };
+    return command === "chat" ? { kind: "chat", options } : { kind: "tui", options };
   }
 
   if (command === "serve") {
@@ -788,6 +796,12 @@ async function main(argv: string[]): Promise<number> {
       console.error(`erro: ${message}`);
       return 1;
     }
+  }
+
+  if (parsed.kind === "tui") {
+    const o = parsed.options;
+    const { runTui } = await import("./tui/run");
+    return await runTui({ configPath: resolve(o.configPath), cwd: o.cwd ?? process.cwd() });
   }
 
   if (parsed.kind === "chat") {

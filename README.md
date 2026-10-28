@@ -87,6 +87,7 @@ All commands run as `bun src/cli.ts <command>`.
 | `replay <run-id>` | re-runs the task and compares metrics with the original run | `--task`, `--config`, `--cwd` |
 | `resume <run-id>` | resumes an interrupted run from the recorded active agent (ledger is the source) | `--task`, `--config`, `--cwd` |
 | `chat` | interactive REPL: shared history, provider/model switch, session save/inspect, inline swap and budget prompts | `--config`, `--cwd` |
+| `tui` | terminal UI (Ink, lazy): conversation panel, input and live status bar | `--config`, `--cwd` |
 | `eval` | golden dataset in mock mode; regression gate | `--threshold`, `--golden`, `--report`, `--baseline`, `--write-baseline` |
 | `bench` | latency, tokens/s and cost per model | `--config`, `--models`, `--runs`, `--out` |
 | `health` | validates config, credentials and provider connectivity | `--config` |
@@ -110,6 +111,12 @@ All commands run as `bun src/cli.ts <command>`.
 | `/help`, `/exit` | help, quit |
 
 On a terminal, swap approval (`s/N`) and budget overrun (`c`/`l`/`p`) are asked inline, input history (arrows) is kept and status colors are enabled. Piped stdin keeps the non-interactive `pending` behavior.
+
+## TUI
+
+`bun src/cli.ts tui` opens the Ink interface (ADR-0001): conversation panel, single-line input and a status bar with cwd/branch, model, turns, tokens and cost. Swap approval and budget prompts are answered in the panel with the same rules as `chat` (empty or EOF denies, exact budget tokens). It needs a real terminal; `chat` remains the piped option.
+
+It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/save`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Autocomplete, markdown, keybindings and session picker land in the next T2 slice (#63).
 
 ## Environment variables
 

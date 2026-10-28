@@ -1,6 +1,6 @@
 /** TUI (T2): conversa, entrada e status bar. Consome apenas a ChatSession. */
 import { Box, Static, Text, useInput } from "ink";
-import { useRef, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { parseCommand } from "../chat/commands";
 import { statusLine, type ChatSession } from "../chat/repl";
 import type { SessionStore } from "../chat/store";
@@ -8,12 +8,14 @@ import type { SessionSnapshot } from "../chat/agent-session";
 import { isFatalSessionError } from "../chat/session-errors";
 import { redactSecrets } from "../sanitize-external";
 import { runCommand, type Entry } from "./commands";
+import type { ApprovalBridge } from "./approvals";
 
 export interface TuiAppProps {
   session: ChatSession;
   cwd: string;
   branch?: string;
   store?: SessionStore;
+  approvals?: ApprovalBridge;
   onExit?: () => void;
 }
 
@@ -52,8 +54,9 @@ function EntryLine({ entry }: { entry: Entry }): ReactElement {
   return <Text dimColor>{entry.text}</Text>;
 }
 
-export function TuiApp({ session, cwd, branch, store, onExit }: TuiAppProps): ReactElement {
+export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAppProps): ReactElement {
   const [entries, setEntries] = useState<Entry[]>([{ kind: "info", text: WELCOME }]);
+  const [question, setQuestion] = useState<string | undefined>(() => approvals?.current()?.text);
   const [input, setInputState] = useState("");
   const inputRef = useRef("");
   const setInput = (update: (current: string) => string): void => {
@@ -68,19 +71,30 @@ export function TuiApp({ session, cwd, branch, store, onExit }: TuiAppProps): Re
   const lastFile = useRef<string | undefined>(undefined);
   const exited = useRef(false);
 
-  const persist = (report: boolean): string | undefined => {
-    if (store === undefined) return undefined;
+  useEffect(() => {
+    approvals?.subscribe((pendingQuestion) => setQuestion(pendingQuestion?.text));
+  }, [approvals]);
+
+  const persist = (report: boolean): { path?: string; failed: boolean } => {
+    if (store === undefined) return { failed: false };
     try {
-      return store.write(session.snapshot());
+      return { path: store.write(session.snapshot()), failed: false };
     } catch (error) {
       if (report) setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
-      return undefined;
+      return { failed: true };
     }
   };
 
   const finish = (): void => {
     if (exited.current) return;
     if (busyRef.current) {
+      if (exitRequested.current) {
+        // segundo pedido: desmonta mesmo sem o provider responder
+        exited.current = true;
+        persist(false);
+        onExit?.();
+        return;
+      }
       exitRequested.current = true;
       turn.current?.abort();
       return;
@@ -124,8 +138,9 @@ export function TuiApp({ session, cwd, branch, store, onExit }: TuiAppProps): Re
       setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
       if (isFatalSessionError(error)) exitRequested.current = true;
     } finally {
-      const path = persist(true);
-      if (path !== undefined) lastFile.current = path;
+      const saved = persist(true);
+      if (saved.failed) lastFile.current = undefined;
+      else if (saved.path !== undefined) lastFile.current = saved.path;
       setStatus(statusOf(session.snapshot()));
       busyRef.current = false;
       turn.current = undefined;
@@ -135,8 +150,27 @@ export function TuiApp({ session, cwd, branch, store, onExit }: TuiAppProps): Re
   };
 
   useInput((value, key) => {
-    if (key.ctrl && value === "c") {
+    const ctrl = key.ctrl === true;
+    if (ctrl && (value === "c" || value === "d")) {
+      approvals?.answer("");
       finish();
+      return;
+    }
+    if (question !== undefined) {
+      if (key.return) {
+        const answer = inputRef.current;
+        setInput(() => "");
+        approvals?.answer(answer);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setInput((current) => current.slice(0, -1));
+        return;
+      }
+      if (!key.ctrl && !key.meta && !key.escape) {
+        const clean = value.replace(/[\r\n]/g, "");
+        if (clean !== "") setInput((current) => current + clean);
+      }
       return;
     }
     if (busy) return;
@@ -161,6 +195,7 @@ export function TuiApp({ session, cwd, branch, store, onExit }: TuiAppProps): Re
         {(entry, index) => <EntryLine key={index} entry={entry} />}
       </Static>
       {busy ? <Text color="yellow">pensando…</Text> : null}
+      {question === undefined ? null : <Text color="yellow">{question}</Text>}
       <Box marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
         <Text color="cyan">{"> "}</Text>
         <Text>{input}</Text>

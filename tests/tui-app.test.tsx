@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
 import { render } from "ink-testing-library";
+import { mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TuiApp } from "../src/tui/app";
+import { SessionStore } from "../src/chat/store";
 import type { ChatSession } from "../src/chat/repl";
 import type { SessionSnapshot, TurnResult } from "../src/chat/agent-session";
 import { BudgetExceededError } from "../src/budget";
+import { createApprovalBridge } from "../src/tui/approvals";
 
 class FakeSession implements ChatSession {
   model = "p/m1";
@@ -176,7 +181,36 @@ test("ignora Enter durante o turno e atualiza o status após /model", async () =
   }
 });
 
-test("/exit encerra e erro de turno não fecha a TUI", async () => {  const session = new FakeSession();
+test("falha de gravação limpa o caminho mostrado por /session", async () => {
+  class Flaky extends SessionStore {
+    calls = 0;
+    override write(snapshot: Parameters<SessionStore["write"]>[0]): string {
+      this.calls++;
+      if (this.calls > 1) throw new Error("disco cheio");
+      return super.write(snapshot);
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), "astro-tui-store-"));
+  const instance = render(<TuiApp session={new FakeSession()} cwd="/tmp/astro" store={new Flaky(dir)} />);
+  try {
+    instance.stdin.write("/save");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("sessão salva em") === true);
+
+    instance.stdin.write("olá");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("erro: disco cheio") === true);
+
+    instance.stdin.write("/session");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("ainda não salvo") === true);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("/exit encerra e erro de turno não fecha a TUI", async () => {
+  const session = new FakeSession();
   let exits = 0;
   const instance = render(<TuiApp session={session} cwd="/tmp/astro" onExit={() => { exits++; }} />);
   try {
@@ -192,6 +226,61 @@ test("/exit encerra e erro de turno não fecha a TUI", async () => {  const sess
 
     instance.stdin.write("/exit");
     instance.stdin.write("\r");
+    await waitFor(() => exits === 1);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("pergunta de aprovação aparece no painel e libera o turno", async () => {
+  const bridge = createApprovalBridge();
+  const instance = render(<TuiApp session={new FakeSession()} cwd="/tmp/astro" approvals={bridge} />);
+  try {
+    const decision = bridge.approveSwap({
+      run: "r", from: { provider: "a", model: "m1" }, to: { provider: "b", model: "m2" }, reason: "fallback",
+    });
+    await waitFor(() => instance.lastFrame()?.includes("aprovar? [s/N]") === true);
+    instance.stdin.write("s");
+    instance.stdin.write("\r");
+    expect(await decision).toBe(true);
+    expect(instance.lastFrame()?.includes("aprovar? [s/N]")).toBe(false);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("/exit grava a sessão sanitizada antes de fechar", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-tui-exit-"));
+  let exits = 0;
+  const instance = render(
+    <TuiApp session={new FakeSession()} cwd="/tmp/astro" store={new SessionStore(dir)} onExit={() => { exits++; }} />,
+  );
+  try {
+    instance.stdin.write("/exit");
+    instance.stdin.write("\r");
+    await waitFor(() => exits === 1);
+    expect(readdirSync(dir).some((name) => name.endsWith(".json"))).toBe(true);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("segundo ctrl+c força a saída mesmo com o provider travado", async () => {
+  class Stuck extends FakeSession {
+    override send(): Promise<TurnResult> {
+      return new Promise(() => {});
+    }
+  }
+  let exits = 0;
+  const instance = render(<TuiApp session={new Stuck()} cwd="/tmp/astro" onExit={() => { exits++; }} />);
+  try {
+    instance.stdin.write("trava");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("pensando…") === true);
+    instance.stdin.write("\u0003");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(exits).toBe(0);
+    instance.stdin.write("\u0003");
     await waitFor(() => exits === 1);
   } finally {
     instance.unmount();
