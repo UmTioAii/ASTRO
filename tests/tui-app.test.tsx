@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TuiApp } from "../src/tui/app";
@@ -321,6 +321,40 @@ test("/sessions e /resume no painel compartilham a lista", async () => {
     instance.stdin.write("/session");
     instance.stdin.write("\r");
     await waitFor(() => instance.lastFrame()?.includes("retomada de xyz") === true);
+  } finally {
+    instance.unmount();
+  }
+});
+test("Tab completa comando e @arquivo no painel", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-complete-"));
+  writeFileSync(join(cwd, "notas.md"), "# notas", "utf8");
+  const session = new FakeSession();
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    instance.stdin.write("/re");
+    await waitFor(() => instance.lastFrame()?.includes("/resume") === true);
+    instance.stdin.write("\t");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("sem persistência configurada") === true);
+
+    instance.stdin.write("leia @not");
+    await waitFor(() => instance.lastFrame()?.includes("@notas.md") === true);
+    instance.stdin.write("\t");
+    await waitFor(() => instance.lastFrame()?.includes("leia @notas.md") === true);
+    instance.stdin.write("\r");
+    await waitFor(() => session.sent.includes("leia @notas.md") === true);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("reindexa ao digitar @ e vê arquivo criado depois do mount", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-reindex-"));
+  const instance = render(<TuiApp session={new FakeSession()} cwd={cwd} />);
+  try {
+    writeFileSync(join(cwd, "novo.md"), "x", "utf8");
+    instance.stdin.write("leia @nov");
+    await waitFor(() => instance.lastFrame()?.includes("@novo.md") === true);
   } finally {
     instance.unmount();
   }
