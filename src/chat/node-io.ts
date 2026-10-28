@@ -7,11 +7,25 @@ export interface NodeReplIO extends ReplIO {
   signal: AbortSignal;
 }
 
+/** Opções do readline: histórico (setas) só faz sentido em terminal. */
+export function nodeReplOptions(terminal: boolean): {
+  terminal: boolean;
+  historySize: number;
+  removeHistoryDuplicates: boolean;
+} {
+  return {
+    terminal,
+    historySize: terminal ? 200 : 0,
+    removeHistoryDuplicates: true,
+  };
+}
+
 export function nodeReplIO(): NodeReplIO {
+  const terminal = process.stdin.isTTY === true;
   const rl = createInterface({
+    ...nodeReplOptions(terminal),
     input: process.stdin,
     output: process.stdout,
-    terminal: process.stdin.isTTY === true,
   });
   const controller = new AbortController();
   const pending: string[] = [];

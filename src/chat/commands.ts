@@ -8,6 +8,8 @@ export type ReplCommand =
   | { kind: "model"; model?: string }
   | { kind: "providers" }
   | { kind: "provider"; provider?: string }
+  | { kind: "session" }
+  | { kind: "save" }
   | { kind: "unknown"; raw: string };
 
 export const HELP_TEXT = [
@@ -16,6 +18,8 @@ export const HELP_TEXT = [
   "  /model [alvo]   lista modelos ou troca (provider/id)",
   "  /providers      lista providers (kind, credencial, quota, modelos)",
   "  /provider [nome]  lista ou troca de provider",
+  "  /session        id, início, modelo, turnos, tokens, custo e arquivo",
+  "  /save           grava a sessão sanitizada e mostra o caminho",
   "  /clear          limpa o histórico (mantém o system)",
   "  /exit | /quit | /q  encerra a sessão",
 ].join("\n");
@@ -41,6 +45,10 @@ export function parseCommand(line: string): ReplCommand {
       return { kind: "providers" };
     case "provider":
       return { kind: "provider", ...(arg === "" ? {} : { provider: arg }) };
+    case "session":
+      return { kind: "session" };
+    case "save":
+      return { kind: "save" };
     default:
       return { kind: "unknown", raw: name ?? "" };
   }

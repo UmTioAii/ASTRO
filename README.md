@@ -86,7 +86,7 @@ All commands run as `bun src/cli.ts <command>`.
 | `run "<prompt>"` | runs a task end to end; prints answer and summary | `--config`, `--cwd` |
 | `replay <run-id>` | re-runs the task and compares metrics with the original run | `--task`, `--config`, `--cwd` |
 | `resume <run-id>` | resumes an interrupted run from the recorded active agent (ledger is the source) | `--task`, `--config`, `--cwd` |
-| `chat` | interactive REPL (T1): turns share history, `/help`, `/model`, `/clear`, `/exit`; session saved sanitized in `.astro/sessions/` | `--config`, `--cwd` |
+| `chat` | interactive REPL: shared history, provider/model switch, session save/inspect, inline swap and budget prompts | `--config`, `--cwd` |
 | `eval` | golden dataset in mock mode; regression gate | `--threshold`, `--golden`, `--report`, `--baseline`, `--write-baseline` |
 | `bench` | latency, tokens/s and cost per model | `--config`, `--models`, `--runs`, `--out` |
 | `health` | validates config, credentials and provider connectivity | `--config` |
@@ -95,6 +95,21 @@ All commands run as `bun src/cli.ts <command>`.
 | `pool <list\|health>` / `agents list` | lists model-pool profiles with per-profile health / lists named agents | `--config` |
 | `config <push\|pull> <name>` | publishes/retrieves a config in a GitHub registry | `--registry`, `--config`, `--token` |
 | `serve` | exposes `/metrics` in Prometheus format | `--port` |
+
+## Chat
+
+`bun src/cli.ts chat` opens a REPL; turns share history and each turn persists a sanitized record in `.astro/sessions/`.
+
+| Command | Effect |
+|---|---|
+| `/model [provider/id]` | lists models or switches model |
+| `/providers` / `/provider [name]` | lists providers or switches provider (keeps the model id when available) |
+| `/session` | id, start, model, turns, tokens, cost and last session file |
+| `/save` | forces a sanitized write and prints the path |
+| `/clear` | drops history (keeps the system prompt) |
+| `/help`, `/exit` | help, quit |
+
+On a terminal, swap approval (`s/N`) and budget overrun (`c`/`l`/`p`) are asked inline, input history (arrows) is kept and status colors are enabled. Piped stdin keeps the non-interactive `pending` behavior.
 
 ## Environment variables
 

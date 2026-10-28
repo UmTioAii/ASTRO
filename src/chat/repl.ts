@@ -27,6 +27,8 @@ export interface ChatSession {
 export interface ReplOptions {
   store?: SessionStore;
   signal?: AbortSignal;
+  /** Cores ANSI apenas quando o I/O é um terminal. */
+  style?: boolean;
 }
 
 function messageOf(error: unknown): string {
@@ -35,6 +37,21 @@ function messageOf(error: unknown): string {
 
 function fmtCost(value: number | null): string {
   return value === null ? "n/d" : `US$ ${value.toFixed(6)}`;
+}
+
+const DIM = "\u001b[2m";
+const RED = "\u001b[31m";
+const RESET = "\u001b[0m";
+
+function paint(text: string, code: string, style: boolean): string {
+  return style ? `${code}${text}${RESET}` : text;
+}
+
+function sessionLines(snapshot: SessionSnapshot, lastFile: string | undefined): string[] {
+  const line = `sessão ${snapshot.id} · início ${snapshot.startedAt} · modelo ${snapshot.model}`
+    + ` · turnos ${snapshot.turns} · tokens ${snapshot.tokensIn}/${snapshot.tokensOut}`
+    + ` · custo ${fmtCost(snapshot.costUsd)}`;
+  return [line, `arquivo: ${lastFile ?? "ainda não salvo"}`];
 }
 
 function providerLine(provider: ProviderInfo): string {
@@ -51,7 +68,13 @@ function statusLine(result: TurnResult): string {
 
 /** Executa o REPL até `/exit`, EOF ou erro fatal; sempre fecha a sessão. */
 export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOptions = {}): Promise<void> {
-  io.write("astro chat — /help para comandos, /exit para sair");
+  const style = opts.style === true;
+  let lastFile: string | undefined;
+  const persist = (): void => {
+    if (opts.store === undefined) return;
+    lastFile = opts.store.write(session.snapshot());
+  };
+  io.write(paint("astro chat - /help para comandos, /exit para sair", DIM, style));
   try {
     for (;;) {
       const line = await io.read("astro> ");
@@ -83,6 +106,21 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         }
         continue;
       }
+      if (command.kind === "session") {
+        const lines = sessionLines(session.snapshot(), lastFile);
+        if (opts.store === undefined) lines[1] = "arquivo: sem persistência";
+        io.write(lines.join("\n"));
+        continue;
+      }
+      if (command.kind === "save") {
+        if (opts.store === undefined) {
+          io.write("sem persistência configurada");
+          continue;
+        }
+        persist();
+        io.write(`sessão salva em ${lastFile ?? opts.store.root}`);
+        continue;
+      }
       if (command.kind === "clear") {
         session.clear();
         io.write("contexto limpo");
@@ -103,16 +141,16 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
       try {
         const result = await session.send(command.text, opts.signal);
         io.write(result.final);
-        io.write(statusLine(result));
+        io.write(paint(statusLine(result), DIM, style));
       } catch (error) {
-        io.write(`erro: ${messageOf(error)}`);
+        io.write(paint(`erro: ${messageOf(error)}`, RED, style));
         if (isFatalSessionError(error)) break;
       } finally {
-        opts.store?.write(session.snapshot());
+        persist();
       }
     }
   } finally {
     session.close();
-    opts.store?.write(session.snapshot());
+    persist();
   }
 }

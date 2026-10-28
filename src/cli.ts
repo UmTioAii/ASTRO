@@ -801,7 +801,7 @@ async function main(argv: string[]): Promise<number> {
         ...chatApprovers(io, interactive),
       });
       const store = new SessionStore(resolve(base, ".astro", "sessions"));
-      await runRepl(session, io, { store, signal: io.signal });
+      await runRepl(session, io, { store, signal: io.signal, style: interactive });
       return 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
