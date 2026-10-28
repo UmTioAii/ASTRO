@@ -30,7 +30,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 | I-16 | Toda escrita de arquivo é diff revisável e reversível; nenhuma escrita direta sem registro | Parcial: `edit` com backup e rollback (`src/tools/edit.ts:218`); `write_file` direto, deprecação em ADR (ver `F-04`/`F-16`) |
 | I-17 | Orçamento tem corte físico, não só aviso | Coberto: quota/team + `src/budget.ts` (`enforceBudget`: onExceed, hardCeiling, não-interativo com checkpoint); reserva da cadeia na parte 4 (`#132`) |
 | I-18 | Comunicação entre agentes passa pelo orquestrador; não há canal peer-to-peer | Parcial: handoff via orquestrador (`src/session.ts:54`); blackboard pendente (C4/#58) |
-| I-19 | Negação de aprovação ou esgotamento de opções termina em parada graciosa com checkpoint | Parcial: cancelamento em ponto seguro e retomada determinística por agente via ledger (`src/resume.ts`, `astro resume`); breaker de compactação pendente (S-17/#134) |
+| I-19 | Negação de aprovação ou esgotamento de opções termina em parada graciosa com checkpoint | Parcial: cancelamento, troca negada e budget esgotado param em ponto seguro com `interrupted`/retomada (`src/resume.ts`, `astro resume`, `src/budget.ts`); breaker de compactação pendente (S-17/#134) |
 | I-20 | Modelo 1 para modelo 2 sem mudar os contratos de orquestrador, placement, pool e aprovação | Parcial: `Provider` abstrato (`src/provider/types.ts:36`) |
 | I-21 | Tags de modelo são vocabulário fechado, curadas na origem, com `fonte` e `verificado` | Parcial: vocabulário fechado (`src/tags.ts:8`); `fonte`/`verificado` só em `price` |
 | I-22 | Substituição cross-provider só ocorre dentro de uma classe de equivalência declarada e com aprovação | Pendente (#60, `F-19`) |

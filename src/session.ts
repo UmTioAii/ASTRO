@@ -207,6 +207,18 @@ export async function runSession(
     budgetWarned = true;
     opts.audit.append({ run: opts.run, agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
   };
+  let ceilingRecorded = false;
+  /** Teto físico também é reavaliado após o uso (último step não escapa, B10). */
+  const checkCeiling = (agent: string): void => {
+    if (opts.budget?.hardCeilingUsd === undefined || ceilingRecorded) return;
+    const status = budgetStatus(opts.budget, opts.ledger);
+    if (!status.ceilingHit) return;
+    ceilingRecorded = true;
+    opts.audit.append({ run: opts.run, agent, tipo: "budget.ceiling_hit",
+      payload: { scope: status.scope, spentUsd: status.spentUsd, hardCeilingUsd: opts.budget.hardCeilingUsd } });
+    opts.ledger.recordCeilingHit({ run: opts.run, agent, ceiling_hit: true });
+    throw new BudgetExceededError("ceiling", status);
+  };
 
   ensureAgentCreated(opts.ledger, opts.audit, opts.run, opts.agent, opts.model.id, opts.agentProfile);
 
@@ -222,11 +234,12 @@ export async function runSession(
       if (opts.budget !== undefined) {
         const choice = await enforceBudget({
           budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: opts.agent, audit: opts.audit,
-          interactive: opts.budgetDecide !== undefined,
           ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
         });
-        // "baixar esforço" (B4): metade dos passos restantes
-        if (choice === "lower_effort") effectiveMaxSteps = Math.max(step, Math.floor(effectiveMaxSteps / 2));
+        // "baixar esforço" (B4): metade dos passos **restantes**, ao menos um
+        if (choice === "lower_effort") {
+          effectiveMaxSteps = Math.min(effectiveMaxSteps, step + Math.max(1, Math.floor((effectiveMaxSteps - step) / 2)));
+        }
       }
       // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
@@ -274,6 +287,7 @@ export async function runSession(
         identity.price,
       );
       maybeWarnBudget(opts.agent);
+      checkCeiling(opts.agent);
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: opts.agent });
@@ -519,6 +533,18 @@ export async function runMultiAgentSession(
     budgetWarned = true;
     opts.audit.append({ run: opts.run, agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
   };
+  let ceilingRecorded = false;
+  /** Teto físico também é reavaliado após o uso (último step não escapa, B10). */
+  const checkCeiling = (agent: string): void => {
+    if (opts.budget?.hardCeilingUsd === undefined || ceilingRecorded) return;
+    const status = budgetStatus(opts.budget, opts.ledger);
+    if (!status.ceilingHit) return;
+    ceilingRecorded = true;
+    opts.audit.append({ run: opts.run, agent, tipo: "budget.ceiling_hit",
+      payload: { scope: status.scope, spentUsd: status.spentUsd, hardCeilingUsd: opts.budget.hardCeilingUsd } });
+    opts.ledger.recordCeilingHit({ run: opts.run, agent, ceiling_hit: true });
+    throw new BudgetExceededError("ceiling", status);
+  };
   const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run, cwd: opts.cwd };
   /** Ack do receptor com timeout (F-24): hook de teste ou o ciclo padrão do ledger. */
   const ackWithTimeout = (h: { handoff_id: string; artifact: HandoffArtifactV1 }, receiver: string) =>
@@ -599,10 +625,11 @@ export async function runMultiAgentSession(
       if (opts.budget !== undefined) {
         const choice = await enforceBudget({
           budget: opts.budget, ledger: opts.ledger, run: opts.run, agent: currentAgentName, audit: opts.audit,
-          interactive: opts.budgetDecide !== undefined,
           ...(opts.budgetDecide === undefined ? {} : { decide: opts.budgetDecide }),
         });
-        if (choice === "lower_effort") effectiveBaseMaxSteps = Math.max(step, Math.floor(effectiveBaseMaxSteps / 2));
+        if (choice === "lower_effort") {
+          effectiveBaseMaxSteps = Math.min(effectiveBaseMaxSteps, step + Math.max(1, Math.floor((effectiveBaseMaxSteps - step) / 2)));
+        }
       }
       // Team (F7-5): budget do projeto e quota do agent corrente
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
@@ -661,6 +688,7 @@ export async function runMultiAgentSession(
         identity.price,
       );
       maybeWarnBudget(currentAgentName);
+      checkCeiling(currentAgentName);
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });
@@ -775,9 +803,10 @@ export async function runMultiAgentSession(
     if (
       activeHandoff !== undefined &&
       !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&
-      // Negação de troca não é falha do handoff já recebido: o estado interrupted
-      // permite retomar e re-perguntar (I-08 + I-19).
+      // Negação de troca ou corte de budget não é falha do handoff já recebido:
+      // o estado interrupted permite retomar e re-perguntar (I-08/I-17 + I-19).
       !(error instanceof SwapDeniedError) &&
+      !(error instanceof BudgetExceededError) &&
       !isAbortError(error, opts.signal)
     ) {
       recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {

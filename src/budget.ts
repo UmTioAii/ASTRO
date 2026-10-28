@@ -76,7 +76,7 @@ export type BudgetDecider = (status: BudgetStatus) => Promise<BudgetChoice> | Bu
 
 /** Parada por budget (I-17/I-19): esgotado, teto físico ou modo não interativo. */
 export class BudgetExceededError extends Error {
-  readonly reason: "limit" | "ceiling" | "non_interactive";
+  readonly reason: "limit" | "ceiling" | "non_interactive" | "unknown_price";
   readonly status: BudgetStatus;
   constructor(reason: BudgetExceededError["reason"], status: BudgetStatus) {
     super(`budget esgotado (${reason}): ${status.estimate}${status.limitUsd === null ? "" : ` / US$ ${status.limitUsd}`}`);
@@ -93,7 +93,6 @@ export interface EnforceBudgetOptions {
   agent: string;
   audit: Auditor;
   /** Só com decisor (TTY) o `ask` pergunta; caso contrário grava checkpoint e para (L5). */
-  interactive: boolean;
   decide?: BudgetDecider;
 }
 
@@ -114,9 +113,16 @@ export async function enforceBudget(opts: EnforceBudgetOptions): Promise<BudgetC
     opts.ledger.recordCeilingHit({ run: opts.run, agent: opts.agent, ceiling_hit: true });
     throw new BudgetExceededError("ceiling", status);
   }
+  // Teto físico com preço desconhecido: não dá para provar que está abaixo (B6)
+  if (opts.budget.hardCeilingUsd !== undefined && status.spentUsd === null) {
+    opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.exceeded",
+      payload: { ...payload, reason: "unknown_price" } });
+    opts.ledger.recordBudgetExceeded({ run: opts.run, agent: opts.agent, exceeded_choice: "stop" });
+    throw new BudgetExceededError("unknown_price", status);
+  }
   if (!status.exhausted) return "continue_same";
 
-  if (opts.budget.onExceed === "stop" || !opts.interactive || opts.decide === undefined) {
+  if (opts.budget.onExceed === "stop" || opts.decide === undefined) {
     const nonInteractive = opts.budget.onExceed !== "stop";
     opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.exceeded",
       payload: { ...payload, ...(nonInteractive ? { reason: "non_interactive" } : { choice: "stop" }) } });
