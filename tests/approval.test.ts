@@ -107,8 +107,7 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
     }
   });
 
-  test("runTask com aprovação explícita negada: audit denied e sem fallback", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "astro-approval-"));
+  test("runTask com aprovação explícita negada: audit denied e sem fallback", async () => {    const cwd = mkdtempSync(join(tmpdir(), "astro-approval-"));
     let fallbackCalls = 0;
     const server = Bun.serve({ port: 0, async fetch(req) {
       const url = new URL(req.url);
@@ -132,6 +131,42 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
         .rejects.toThrow(/troca não aprovada \(denied\)/);
       expect(fallbackCalls).toBe(0);
       expect(new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll().some((e) => e.tipo === "swap.denied")).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("runTask com aprovação explícita: recebe deltas, audita approved e executa", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-approval-"));
+    let fallbackCalls = 0;
+    const server = Bun.serve({ port: 0, async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname.startsWith("/bad")) return new Response("x", { status: 400 });
+      fallbackCalls++;
+      return Response.json({ choices: [{ message: { content: "b" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    } });
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      writeFileSync(configPath, JSON.stringify({
+        providers: {
+          a: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/bad/v1`, credentialRef: "KEY_A", fallback: ["b"] },
+          b: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/ok/v1`, credentialRef: "KEY_B" },
+        },
+        models: [{ provider: "a", id: "m1", tags: ["writing-code"], context: 8192 }],
+        agent: { model: "a/m1", maxSteps: 1, tools: [] },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      }));
+
+      let seen: SwapRequest | undefined;
+      const report = await runTask({ configPath, task: "x", cwd, env: { KEY_A: "a", KEY_B: "b" },
+        approveSwap: (request) => { seen = request; return true; } });
+      expect(report.final).toBe("b");
+      expect(fallbackCalls).toBe(1);
+      expect(seen).toMatchObject({ from: { provider: "a", model: "m1" }, to: { provider: "b", model: "m1" } });
+      expect(seen?.costDeltaUsd).toBeNull(); // sem preço curado
+      const audit = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll();
+      expect(audit.some((e) => e.tipo === "swap.approved")).toBe(true);
+      expect(audit.some((e) => e.tipo === "swap.denied" || e.tipo === "swap.pending")).toBe(false);
     } finally {
       server.stop(true);
     }
