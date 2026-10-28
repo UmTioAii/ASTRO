@@ -71,7 +71,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
   const style = opts.style === true;
   let lastFile: string | undefined;
   let lastPersistError: string | undefined;
-  const persist = (): string | undefined => {
+  const persist = (report = false): string | undefined => {
     if (opts.store === undefined) return undefined;
     try {
       lastFile = opts.store.write(session.snapshot());
@@ -79,7 +79,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
       return lastFile;
     } catch (error) {
       const message = messageOf(error);
-      if (message !== lastPersistError) io.write(paint(`erro: ${message}`, RED, style));
+      if (report || message !== lastPersistError) io.write(paint(`erro: ${message}`, RED, style));
       lastPersistError = message;
       lastFile = undefined;
       return undefined;
@@ -128,7 +128,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
           io.write("sem persistência configurada");
           continue;
         }
-        const saved = persist();
+        const saved = persist(true);
         if (saved !== undefined) io.write(`sessão salva em ${saved}`);
         continue;
       }

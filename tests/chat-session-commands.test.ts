@@ -149,4 +149,13 @@ describe("comandos de sessão e estilo do chat (T1.5, #173)", () => {
     const sessionLine = io.outputs.find((item) => item.startsWith("sessão s1"))!;
     expect(sessionLine).toContain("arquivo: ainda não salvo");
   });
+
+  test("/save explícito responde mesmo repetindo a falha do turno", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-chat-saveecho-"));
+    const blocked = join(dir, "sessions");
+    writeFileSync(blocked, "não é diretório");
+    const io = new ScriptedIO(["olá", "/save", "/exit"]);
+    await runRepl(new FakeSession(), io, { store: new SessionStore(blocked) });
+    expect(io.outputs.filter((item) => item.startsWith("erro:"))).toHaveLength(2);
+  });
 });
