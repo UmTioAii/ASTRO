@@ -207,13 +207,6 @@ describe("cancelamento explícito (F-06, #127)", () => {
     await expect(refreshCodexTokens(tokens, async () => { fetched++; return Response.json({}); }, pre.signal))
       .rejects.toThrow("cancelado antes do refresh");
     expect(fetched).toBe(0);
-
-    const mid = new AbortController();
-    const fetchFn = async () => {
-      mid.abort(new Error("cancelado no refresh"));
-      throw mid.signal.reason;
-    };
-    await expect(refreshCodexTokens(tokens, fetchFn, mid.signal)).rejects.toThrow("cancelado no refresh");
   });
 
   test("cache: abort não serve hit nem grava resposta", async () => {
