@@ -1,4 +1,5 @@
 import { isAbortError } from "../abort";
+import { redactSecrets } from "../sanitize-external";
 import type {
   ChatMessage,
   CompletionRequest,
@@ -8,7 +9,7 @@ import type {
   Provider,
   ToolCall,
 } from "./types";
-import { ProviderError } from "./types";
+import { ProviderError, streamStarted } from "./types";
 
 interface RetryOptions {
   maxAttempts?: number;
@@ -56,6 +57,8 @@ interface WireRequestBody {
     type: "function";
     function: { name: string; description: string; parameters: object };
   }>;
+  stream?: boolean;
+  stream_options?: { include_usage: boolean };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -231,6 +234,8 @@ export class OpenAICompatProvider implements Provider {
         return await this.request(req, signal);
       } catch (error) {
         if (!(error instanceof ProviderError)) throw error;
+        // Já emitimos token: repetir duplicaria o texto no painel.
+        if (streamStarted.has(req)) throw error;
         if (!RETRYABLE.has(error.errClass) || attempt >= this.maxAttempts) {
           throw error;
         }
@@ -261,6 +266,21 @@ export class OpenAICompatProvider implements Provider {
       );
     }
 
+    if (!response.ok) {
+      let text = "";
+      try {
+        text = await response.text();
+      } catch {
+        // corpo de erro ilegível: mensagem usa só o status
+      }
+      throw this.errorFromResponse(response, text);
+    }
+
+    const sse = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
+    if (req.onToken !== undefined && sse) {
+      return await this.streamResponse(req, response, req.onToken);
+    }
+
     let text: string;
     try {
       text = await response.text();
@@ -273,11 +293,121 @@ export class OpenAICompatProvider implements Provider {
       );
     }
 
-    if (!response.ok) {
-      throw this.errorFromResponse(response, text);
-    }
-
     return parseCompletion(text);
+  }
+
+  /** Lê SSE (`data: {...}`) e entrega cada delta; devolve a resposta consolidada. */
+  private async streamResponse(
+    req: CompletionRequest,
+    response: Response,
+    onToken: (text: string) => void,
+  ): Promise<CompletionResponse> {
+    if (response.body === null) {
+      throw new ProviderError("outage", "resposta sem corpo para streaming", response.status);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const calls = new Map<number, { id: string; name: string; arguments: string }>();
+    let buffer = "";
+    let content = "";
+    let frames = 0;
+    let anonymousToolCalls = 0;
+    let usage = { inputTokens: 0, outputTokens: 0 };
+
+    const consume = (chunk: string): void => {
+      for (const line of chunk.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "" || data === "[DONE]") continue;
+        let payload: {
+          choices?: Array<{
+            delta?: {
+              content?: string | null;
+              tool_calls?: Array<{
+                index?: number;
+                id?: string;
+                function?: { name?: string; arguments?: string };
+              }>;
+            };
+          }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
+          error?: unknown;
+        };
+        try {
+          payload = JSON.parse(data) as typeof payload;
+        } catch {
+          throw new ProviderError("outage", "stream do provider inválido");
+        }
+        frames += 1;
+        if (payload.error !== undefined) {
+          const raw =
+            typeof payload.error === "object" && payload.error !== null && "message" in payload.error
+              ? String((payload.error as { message?: unknown }).message ?? "")
+              : "erro reportado";
+          const detail = truncate(redactSecrets(this.redact(raw)), MAX_ERROR_DETAIL_LENGTH);
+          throw new ProviderError("outage", `stream do provider: ${detail}`);
+        }
+        const delta = payload.choices?.[0]?.delta;
+        if (typeof delta?.content === "string" && delta.content !== "") {
+          content += delta.content;
+          streamStarted.add(req);
+          onToken(delta.content);
+        }
+        for (const call of delta?.tool_calls ?? []) {
+          // Prioriza o id; sem id, index; sem ambos, ordem de chegada (ou a única call aberta).
+          const byId = call.id !== undefined && call.id !== ""
+            ? [...calls.entries()].find(([, value]) => value.id === call.id)?.[0]
+            : undefined;
+          let key: number;
+          if (byId !== undefined) {
+            key = byId;
+          } else if (call.index !== undefined) {
+            key = call.index;
+          } else if (calls.size === 1 && (call.id === undefined || [...calls.values()][0]!.id === "")) {
+            key = [...calls.keys()][0]!;
+          } else {
+            while (calls.has(anonymousToolCalls)) anonymousToolCalls++;
+            key = anonymousToolCalls;
+          }
+          const current = calls.get(key) ?? { id: "", name: "", arguments: "" };
+          if (call.id !== undefined && call.id !== "") current.id = call.id;
+          if (call.function?.name !== undefined) current.name += call.function.name;
+          if (call.function?.arguments !== undefined) current.arguments += call.function.arguments;
+          calls.set(key, current);
+        }
+        if (payload.usage !== undefined) {
+          usage = {
+            inputTokens: payload.usage.prompt_tokens ?? usage.inputTokens,
+            outputTokens: payload.usage.completion_tokens ?? usage.outputTokens,
+          };
+        }
+      }
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      for (;;) {
+        const end = buffer.indexOf("\n\n");
+        if (end < 0) break;
+        consume(buffer.slice(0, end));
+        buffer = buffer.slice(end + 2);
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim() !== "") consume(buffer);
+    if (frames === 0) throw new ProviderError("outage", "resposta de streaming vazia");
+
+    const toolCalls = [...calls.entries()].map(([key, call]) => ({
+      ...call,
+      id: call.id === "" ? `call_${String(key)}` : call.id,
+    }));
+    return {
+      content,
+      toolCalls: toolCalls.filter((call) => call.name !== ""),
+      usage,
+    };
   }
 
   private bodyFor(req: CompletionRequest): WireRequestBody {
@@ -294,6 +424,10 @@ export class OpenAICompatProvider implements Provider {
           parameters: tool.parameters,
         },
       }));
+    }
+    if (req.onToken !== undefined) {
+      body.stream = true;
+      body.stream_options = { include_usage: true };
     }
     return body;
   }
