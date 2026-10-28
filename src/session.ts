@@ -191,6 +191,8 @@ export async function runSession(
   const journal = new CallJournal();
   const knownAgents = opts.knownAgents ?? [];
 
+  ensureAgentCreated(opts.ledger, opts.run, opts.agent, opts.model.id, opts.agentProfile);
+
   try {
     for (let step = 1; step <= opts.maxSteps; step++) {
       throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
@@ -244,6 +246,7 @@ export async function runSession(
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: opts.agent });
+        ensureAgentDestroyed(opts.ledger, opts.run, opts.agent, "completed");
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
         return { final: response.content, steps: step };
@@ -336,6 +339,38 @@ function errorHasHandoffName(error: unknown): boolean {
 function interruptReason(error: unknown, signal?: AbortSignal): string {
   if (isAbortError(error, signal)) return "cancelled";
   return error instanceof Error ? error.name : String(error);
+}
+
+/** Garante um `agent.created` no ledger (idempotente para retomada, F-22). */
+function ensureAgentCreated(
+  ledger: Ledger,
+  run: string,
+  agentId: string,
+  model: string,
+  profile?: string,
+  parentAgentId?: string,
+): void {
+  const exists = ledger.readAllEntries().some(
+    (e) => e.kind === "agent" && e.run === run && e.event === "created" && e.agent_id === agentId,
+  );
+  if (exists) return;
+  ledger.recordAgentCreated({
+    run,
+    agent_id: agentId,
+    session_id: run,
+    model,
+    ...(profile === undefined ? {} : { profile }),
+    ...(parentAgentId === undefined ? {} : { parent_agent_id: parentAgentId }),
+  });
+}
+
+/** Garante um `agent.destroyed` no ledger (idempotente, F-22). */
+function ensureAgentDestroyed(ledger: Ledger, run: string, agentId: string, reason: string): void {
+  const exists = ledger.readAllEntries().some(
+    (e) => e.kind === "agent" && e.run === run && e.event === "destroyed" && e.agent_id === agentId,
+  );
+  if (exists) return;
+  ledger.recordAgentDestroyed({ run, agent_id: agentId, session_id: run, reason });
 }
 
 /** Opções para sessão multi-agent. */
@@ -461,7 +496,10 @@ export async function runMultiAgentSession(
       activeHandoff = pending;
       const resumo = resumeDetail(opts.ledger, pending.artifact);
       messages.push({ role: "system", content: `[Sistema: handoff ${pending.handoff_id} para "${pending.artifact.to}": ${JSON.stringify(pending.artifact)}]${resumo}` });
+      ensureAgentDestroyed(opts.ledger, opts.run, pending.artifact.from, "handoff");
+      ensureAgentCreated(opts.ledger, opts.run, currentAgentName, currentModel.id, currentAgent.profile, pending.artifact.from);
     }
+    ensureAgentCreated(opts.ledger, opts.run, currentAgentName, currentModel.id, currentAgent.profile);
     agentsUsed.push(currentAgentName);
 
     while (step < opts.baseMaxSteps) {
@@ -537,6 +575,7 @@ export async function runMultiAgentSession(
 
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });
+        ensureAgentDestroyed(opts.ledger, opts.run, currentAgentName, "completed");
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
         return { final: response.content, steps: step, agentsUsed: agentsUsed.map(redactSecrets) };
@@ -605,6 +644,8 @@ export async function runMultiAgentSession(
           currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
           currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
           currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+          ensureAgentDestroyed(opts.ledger, opts.run, emitterName, "handoff");
+          ensureAgentCreated(opts.ledger, opts.run, currentAgentName, currentModel.id, currentAgent.profile, emitterName);
           agentsUsed.push(currentAgentName);
           opts.audit.append({ run: opts.run, agent: entry.artifact.from, tipo: "agent.switch",
             payload: { from: entry.artifact.from, to: entry.artifact.to, handoff_id: entry.handoff_id } });
