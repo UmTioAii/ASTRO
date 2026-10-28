@@ -49,7 +49,7 @@ test("agent nomeado sem profile mantém o model próprio (sem defaultProfile)", 
       agents: { planner: { model: "mock/m1", maxSteps: 2, tools: [] } },
       agent: { profile: "pro", maxSteps: 2, tools: [] },
     });
-    const report = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { TEST_KEY: "test-key" } });
+    const report = await runTask({ approveSwap: () => true, configPath: cfgPath, task: "x", cwd: dir, env: { TEST_KEY: "test-key" } });
     expect(report.final).toBe("ok");
     expect(seen).toEqual(["m1"]); // worker não herda o profile do agent principal
   } finally {
@@ -71,7 +71,7 @@ test("credencial do primário ausente não impede o fallback de profile", async 
       modelPool: { p1: { model: "a/m1", fallback: ["p2"] }, p2: { model: "b/m2" } },
       agent: { profile: "p1", maxSteps: 2, tools: [] },
     });
-    const report = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { KEY_B: "test-key" } });
+    const report = await runTask({ approveSwap: () => true, configPath: cfgPath, task: "x", cwd: dir, env: { KEY_B: "test-key" } });
     expect(report.final).toBe("do-b");
     expect(seen).toEqual(["m2"]); // criação preguiçosa: só o provider do profile destino foi instanciado
   } finally {
@@ -93,7 +93,7 @@ test("fallback de provider dentro do profile carrega o profile no audit", async 
       modelPool: { p1: { model: "a/m1" } },
       agent: { profile: "p1", maxSteps: 2, tools: [] },
     });
-    const report = await runTask({
+    const report = await runTask({ approveSwap: () => true,
       configPath: cfgPath,
       task: "x",
       cwd: dir,
@@ -128,7 +128,7 @@ test("profile sem fallback de provider herda o retry da F-01 e o audit por profi
       modelPool: { p1: { model: "a/m1", fallback: ["p2"] }, p2: { model: "b/m2" } },
       agent: { profile: "p1", maxSteps: 2, tools: [] },
     });
-    const report = await runTask({
+    const report = await runTask({ approveSwap: () => true,
       configPath: cfgPath,
       task: "x",
       cwd: dir,
@@ -173,7 +173,7 @@ export function definePlugin() {
   });
   (globalThis as { __astroCreates?: number; __astroCompletes?: number }).__astroCreates = 0;
   (globalThis as { __astroCreates?: number; __astroCompletes?: number }).__astroCompletes = 0;
-  const report = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { KEY_B: "k" } });
+  const report = await runTask({ approveSwap: () => true, configPath: cfgPath, task: "x", cwd: dir, env: { KEY_B: "k" } });
   expect(report.final).toBe("ok");
   expect((globalThis as { __astroCreates?: number }).__astroCreates).toBe(1); // 2 steps, 1 provider
 });

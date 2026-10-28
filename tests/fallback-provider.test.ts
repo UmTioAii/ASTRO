@@ -167,7 +167,7 @@ describe("FallbackProvider (C6)", () => {
         agent: { model: "mocka/m1", maxSteps: 2, tools: [] },
         paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
       }));
-      const report = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { KEY_A: "test-key", KEY_B: "test-key" } });
+      const report = await runTask({ approveSwap: () => true, configPath: cfgPath, task: "x", cwd: dir, env: { KEY_A: "test-key", KEY_B: "test-key" } });
       expect(report.final).toBe("veio do B");
       const usage = readFileSync(join(dir, ".astro", "ledger.jsonl"), "utf8").trim().split("\n")
         .map((line) => JSON.parse(line) as { kind?: string; provider?: string })
@@ -193,7 +193,7 @@ describe("FallbackProvider (C6)", () => {
         agent: { model: "mocka/m1", maxSteps: 2, tools: [] },
         paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
       }));
-      const err = await runTask({ configPath: cfgPath, task: "x", cwd: dir, env: { KEY_A: "test-key" } }).then(() => null, (e) => e as Error);
+      const err = await runTask({ approveSwap: () => true, configPath: cfgPath, task: "x", cwd: dir, env: { KEY_A: "test-key" } }).then(() => null, (e) => e as Error);
       expect(String(err?.message)).toContain("500");
       expect(readFileSync(join(dir, ".astro", "audit.jsonl"), "utf8")).not.toContain("provider.success");
     } finally {
