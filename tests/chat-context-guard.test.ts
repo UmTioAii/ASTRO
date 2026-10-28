@@ -54,11 +54,16 @@ describe("context guard do chat (T1, #62)", () => {
   });
 
   test("fronteiras exatas: 80% avisa, 100% não descarta, acima descarta", () => {
-    const at80 = [sys, { role: "user" as const, content: "a".repeat(20) }, { role: "assistant" as const, content: "b".repeat(8) }];
-    expect(guardContext(at80, 10).warning).toBe(true); // 8/10
-    const at100 = [sys, { role: "user" as const, content: "a".repeat(20) }, { role: "assistant" as const, content: "b".repeat(16) }];
-    expect(guardContext(at100, 10).trimmed).toBe(false); // exatamente 10
-    const over = [sys, ...turn("a".repeat(20), "b".repeat(20)), ...turn("atual", "r")];
+    const mini: ChatMessage = { role: "system", content: "x" }; // 1 token
+    const at80 = [mini, { role: "user" as const, content: "a".repeat(20) }, { role: "assistant" as const, content: "b".repeat(8) }];
+    expect(estimateMessagesTokens(at80)).toBe(8); // 8/10 exatos
+    expect(guardContext(at80, 10).warning).toBe(true);
+    const at100 = [mini, ...turn("u".repeat(8), "a".repeat(8)), { role: "user" as const, content: "c".repeat(20) }];
+    expect(estimateMessagesTokens(at100)).toBe(10); // 10/10 exatos, com turno descartável
+    const exact = guardContext(at100, 10);
+    expect(exact.trimmed).toBe(false);
+    expect(exact.messages.map((m) => m.content)).toContain("u".repeat(8));
+    const over = [...at100.slice(0, -1), { role: "user" as const, content: "d".repeat(24) }];
     expect(guardContext(over, 10).trimmed).toBe(true);
   });
 

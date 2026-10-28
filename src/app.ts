@@ -453,6 +453,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   if (opts.runId !== undefined && opts.resume !== undefined) {
     throw new ConfigError("runId e resume são mutuamente exclusivos");
   }
+  if (opts.model !== undefined && opts.resume !== undefined) {
+    throw new ConfigError("model e resume são mutuamente exclusivos");
+  }
   const run = opts.runId ?? opts.resume ?? randomUUID();
   /** Gate auditado (F-19): sem approver do caller a decisão é "pending" (não bloqueia TTY). */
   const approveSwap: SwapApprover = async (request) => {

@@ -67,6 +67,17 @@ describe("hooks de chat no runTask (T1, #62)", () => {
     }
   });
 
+  test("history vazio usa o prompt padrão e só o user do turno", async () => {
+    const { cwd, configPath, bodies, stop } = setup();
+    try {
+      await runTask({ configPath, task: "novo", cwd, env: { KEY: "k" }, history: [] });
+      expect(bodies[0]!.messages?.map((m) => m.role)).toEqual(["system", "user"]);
+      expect(bodies[0]!.messages?.[1]?.content).toBe("novo");
+    } finally {
+      stop();
+    }
+  });
+
   test("history sem system ganha o prompt padrão antes do primeiro turno", async () => {
     const { cwd, configPath, bodies, stop } = setup();
     try {
@@ -115,6 +126,8 @@ describe("hooks de chat no runTask (T1, #62)", () => {
     try {
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" }, model: "p/ghost" })).rejects.toBeDefined();
       await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" }, runId: "a", resume: "b" }))
+        .rejects.toThrow(/mutuamente exclusivos/);
+      await expect(runTask({ configPath, task: "x", cwd, env: { KEY: "k" }, model: "p/m2", resume: "b" }))
         .rejects.toThrow(/mutuamente exclusivos/);
       expect(bodies).toHaveLength(0);
     } finally {
