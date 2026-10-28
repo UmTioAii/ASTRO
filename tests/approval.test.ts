@@ -143,7 +143,6 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
       server.stop(true);
     }
   });
-
   test("runTask com aprovação explícita negada: audit denied e sem fallback", async () => {
     const { cwd, configPath, state, server, audit, env } = e2e();
     try {
@@ -155,7 +154,6 @@ describe("gate de aprovação de troca (F-19, #129)", () => {
       server.stop(true);
     }
   });
-
   test("runTask com aprovação explícita: recebe deltas, audita approved e executa", async () => {
     const { cwd, configPath, state, server, audit, env } = e2e();
     try {
