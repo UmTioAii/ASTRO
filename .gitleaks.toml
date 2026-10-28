@@ -1,6 +1,0 @@
-# gitleaks configuration
-# https://github.com/gitleaks/gitleaks#configuration
-
-[allowlist]
-paths = ["tests/**/*"]
-regexes = ["Bearer testtoken123456789012", "gitleaks-ignore"]
