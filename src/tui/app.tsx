@@ -9,6 +9,8 @@ import { isFatalSessionError } from "../chat/session-errors";
 import { redactSecrets } from "../sanitize-external";
 import { runCommand, type CommandState, type Entry } from "./commands";
 import type { ApprovalBridge } from "./approvals";
+import { COMMANDS, applyCompletion, completionItems } from "./editor";
+import { indexFiles } from "./files";
 
 export interface TuiAppProps {
   session: ChatSession;
@@ -57,6 +59,8 @@ function EntryLine({ entry }: { entry: Entry }): ReactElement {
 export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAppProps): ReactElement {
   const [entries, setEntries] = useState<Entry[]>([{ kind: "info", text: WELCOME }]);
   const [question, setQuestion] = useState<string | undefined>(() => approvals?.current()?.text);
+  const [files, setFiles] = useState<string[]>([]);
+  const [selected, setSelected] = useState(0);
   const [input, setInputState] = useState("");
   const inputRef = useRef("");
   const setInput = (update: (current: string) => string): void => {
@@ -74,6 +78,10 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
   useEffect(() => {
     approvals?.subscribe((pendingQuestion) => setQuestion(pendingQuestion?.text));
   }, [approvals]);
+
+  useEffect(() => {
+    setFiles(indexFiles(cwd));
+  }, [cwd]);
 
   const persist = (report: boolean): { path?: string; failed: boolean } => {
     if (store === undefined) return { failed: false };
@@ -149,8 +157,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
     }
   };
 
-  useInput((value, key) => {
-    const ctrl = key.ctrl === true;
+  useInput((value, key) => {    const ctrl = key.ctrl === true;
     if (ctrl && (value === "c" || value === "d")) {
       approvals?.answer("");
       finish();
@@ -174,21 +181,44 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
       return;
     }
     if (busy) return;
+    if (suggestions.length > 0) {
+      if (key.tab) {
+        setInput(() => applyCompletion(inputRef.current, suggestions[selectedIndex]!));
+        setSelected(0);
+        return;
+      }
+      if (key.upArrow) {
+        setSelected((selectedIndex - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (key.downArrow) {
+        setSelected((selectedIndex + 1) % suggestions.length);
+        return;
+      }
+    }
     if (key.return) {
       void submit();
       return;
     }
     if (key.backspace || key.delete) {
       setInput((current) => current.slice(0, -1));
+      setSelected(0);
       return;
     }
     if (!key.ctrl && !key.meta && !key.escape) {
       const clean = value.replace(/[\r\n]/g, "");
-      if (clean !== "") setInput((current) => current + clean);
+      if (clean !== "") {
+        const before = inputRef.current;
+        setInput((current) => current + clean);
+        setSelected(0);
+        if (!before.includes("@") && `${before}${clean}`.includes("@")) setFiles(indexFiles(cwd));
+      }
     }
   });
 
   const place = branch === undefined ? cwd : `${cwd} (${branch})`;
+  const suggestions = question === undefined ? completionItems(input, COMMANDS, files) : [];
+  const selectedIndex = suggestions.length === 0 ? 0 : Math.min(selected, suggestions.length - 1);
   return (
     <Box flexDirection="column">
       <Static items={entries}>
@@ -201,6 +231,11 @@ export function TuiApp({ session, cwd, branch, store, approvals, onExit }: TuiAp
         <Text>{input}</Text>
         <Text inverse> </Text>
       </Box>
+      {suggestions.map((item, index) => (
+        <Text key={item} {...(index === selectedIndex ? { color: "cyan" } : { dimColor: true })}>
+          {index === selectedIndex ? "> " : "  "}{item}
+        </Text>
+      ))}
       <Text dimColor>
         {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)}
       </Text>
