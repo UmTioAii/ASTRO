@@ -39,6 +39,12 @@ export function nodeReplIO(): NodeReplIO {
       if (closed) return null;
       return await new Promise<string | null>((resolve) => waiters.push(resolve));
     },
+    /** Ignora linhas já enfileiradas: decisor no meio do turno espera resposta nova. */
+    readFresh: async (prompt) => {
+      process.stdout.write(prompt);
+      if (closed) return null;
+      return await new Promise<string | null>((resolve) => waiters.push(resolve));
+    },
     write: (text) => console.log(text),
     close: () => {
       if (!closed) rl.close();

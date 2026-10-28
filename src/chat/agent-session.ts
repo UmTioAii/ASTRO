@@ -151,6 +151,7 @@ export class AgentSession {
 
   /** Troca de provider mantendo o id do modelo quando existir; senão o primeiro ativo. */
   setProvider(name: string): string {
+    if (!(name in this.#config.providers)) throw new Error(`provider "${name}" não está configurado`);
     const candidates = this.#config.models
       .filter((model) => model.provider === name)
       .map((model) => this.#registry.get(`${name}/${model.id}`))
