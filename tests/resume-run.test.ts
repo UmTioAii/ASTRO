@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Auditor } from "../src/audit";
 import { runTask } from "../src/app";
 import { Ledger } from "../src/ledger";
 import { rebuildAgentTree } from "../src/resume";
@@ -24,7 +25,7 @@ function setup(coderModel = "m2") {
   const config = {
     providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "TEST_KEY" } },
     models: [
-      { provider: "mock", id: "m1", tags: ["writing-code"], context: 8192 },
+      { provider: "mock", id: "m1", tags: ["writing-code"], context: 8192, price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } },
       { provider: "mock", id: coderModel, tags: ["writing-code"], context: 8192 },
     ],
     agent: { model: "mock/m1", maxSteps: 2, tools: [] },
@@ -63,6 +64,10 @@ describe("execução de resume (F-22, #131)", () => {
       const tree = rebuildAgentTree(ledger, "r1");
       expect(tree.nodes.at(-1)).toMatchObject({ agent_id: "coder", model: "m2", reason: "completed" });
       expect(tree.active).toBeUndefined();
+      expect(report.model).toBe("mock/m2");
+      expect(report.costUsd).toBeNull(); // m2 não tem preço; m1 (base) tem
+      const started = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll().find((e) => e.tipo === "run.started");
+      expect((started!.payload as { model?: string }).model).toBe("mock/m2");
       expect(ledger.readAll().filter((e) => e.run === "r1")).toHaveLength(1); // uma chamada, sem reexecutar planner
       expect(ledger.byAgent().coder?.tokensIn).toBe(10);
     } finally {
