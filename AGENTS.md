@@ -4,7 +4,7 @@ Leia só este arquivo no início. Os demais documentos são carregados sob deman
 
 ## Projeto
 
-ASTRO é um harness CLI local, em Bun + TypeScript strict, multi-provider, com foco em governança: escopo por agente, custo e quota por conta, aprovação e auditoria. Zero dependências de runtime.
+ASTRO é um harness CLI local, em Bun + TypeScript strict, multi-provider, com foco em governança: escopo por agente, custo e quota por conta, aprovação e auditoria. Zero dependências de runtime (exceção única: Ink/React sob demanda só em `astro tui`, ADR-0001).
 
 ## Comandos
 
