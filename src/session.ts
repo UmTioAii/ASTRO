@@ -8,7 +8,8 @@ import { ackHandoff, scanHandoffs, readSourceRefs, type HandoffStatus } from "./
 import { verifyHandoffIdentity } from "./handoff/verifier";
 import { compactDraft, digestArtifacts } from "./handoff/compact";
 import { DEFAULT_ACK_TIMEOUT_MS } from "./config";
-import type { PriceConfig } from "./config";
+import type { BudgetConfig, PriceConfig } from "./config";
+import { budgetStatus, budgetWarningPayload } from "./budget";
 import type { ChatMessage, CompletionResponse, Provider } from "./provider/types";
 import type { ModelEntry } from "./registry";
 import { ToolExecutor } from "./tools/executor";
@@ -52,6 +53,8 @@ export interface SessionOptions {
     projectBudgetUsd?: number;
     agentQuotas?: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }>;
   };
+  /** Budget (F-05): aviso/limite derivados do ledger (enforcement nas partes 3–4). */
+  budget?: BudgetConfig;
   /** Ambiente do run; vai ao ToolContext do shell (default: `process.env` no run_command). */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -193,6 +196,7 @@ export async function runSession(
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step. */
   const journal = new CallJournal();
   const knownAgents = opts.knownAgents ?? [];
+  let budgetWarned = false;
 
   ensureAgentCreated(opts.ledger, opts.audit, opts.run, opts.agent, opts.model.id, opts.agentProfile);
 
@@ -201,6 +205,14 @@ export async function runSession(
       throwIfAborted(opts.signal); // ponto seguro: não inicia step após cancelamento (F-06)
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
+      // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
+      if (opts.budget !== undefined && !budgetWarned) {
+        const status = budgetStatus(opts.budget, opts.ledger);
+        if (status.warning) {
+          budgetWarned = true;
+          opts.audit.append({ run: opts.run, agent: opts.agent, tipo: "budget.warning", payload: budgetWarningPayload(status) });
+        }
+      }
       // Team (F7-5): budget do projeto e quota do agent, somando o ledger inteiro
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);
@@ -408,6 +420,8 @@ export interface MultiAgentSessionOptions {
     projectBudgetUsd?: number;
     agentQuotas?: Record<string, { dailyTokens?: number; monthlyCostUsd?: number }>;
   };
+  /** Budget (F-05): aviso/limite derivados do ledger (enforcement nas partes 3–4). */
+  budget?: BudgetConfig;
   /** Ambiente do run; vai ao ToolContext do shell. */
   env?: Record<string, string | undefined>;
   /** Caminhos que tools de escrita não podem alterar (ledger/auditoria). */
@@ -477,6 +491,7 @@ export async function runMultiAgentSession(
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
   const journal = new CallJournal();
   const knownAgents = opts.registry.listAgentNames?.();
+  let budgetWarned = false;
   const handoffDeps = { ledger: opts.ledger, audit: opts.audit, run: opts.run, cwd: opts.cwd };
   /** Ack do receptor com timeout (F-24): hook de teste ou o ciclo padrão do ledger. */
   const ackWithTimeout = (h: { handoff_id: string; artifact: HandoffArtifactV1 }, receiver: string) =>
@@ -550,6 +565,14 @@ export async function runMultiAgentSession(
 
       // Quota (F6-3): bloqueia a chamada antes de gastar
       assertWithinQuota(opts.ledger, opts.quotaLimits ?? {}, opts.quotaDomain);
+      // Budget (B3): avisa uma vez ao cruzar warnAt; enforcement nas partes 3–4
+      if (opts.budget !== undefined && !budgetWarned) {
+        const status = budgetStatus(opts.budget, opts.ledger);
+        if (status.warning) {
+          budgetWarned = true;
+          opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "budget.warning", payload: budgetWarningPayload(status) });
+        }
+      }
       // Team (F7-5): budget do projeto e quota do agent corrente
       if (opts.teamLimits?.projectBudgetUsd !== undefined) {
         assertProjectBudget(opts.ledger, opts.teamLimits.projectBudgetUsd);

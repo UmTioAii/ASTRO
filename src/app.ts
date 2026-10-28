@@ -21,6 +21,7 @@ import { loadPlugins, type PluginProviderFactory } from "./plugins";
 import { sendAuditWebhook } from "./team";
 import { resolveTaskSkill } from "./skills/executor";
 import type { AuditEvent } from "./audit";
+import { budgetStatus, restrictBudget, type BudgetStatus } from "./budget";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { planResume, ReplayIncompleteError } from "./resume";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
@@ -69,6 +70,8 @@ export interface RunReport {
   ledgerPath: string;
   auditPath: string;
   agentsUsed?: string[];
+  /** Status do budget no fim do run (F-05); ausente sem `budget` na config. */
+  budget?: BudgetStatus;
   /** Agente de onde o run foi retomado (`resume`); ausente em run novo. */
   resumedFrom?: string;
 }
@@ -480,6 +483,11 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   assertProviderKind(config, model, loaded.providerFactories);
   const resolveIdentity = identityResolver(config, registry);
   const quotaLimits = config.quota;
+  /** Budget efetivo (B1): o limite mais restritivo entre budget, quota e team. */
+  const budget = config.budget === undefined ? undefined : restrictBudget(config.budget, [
+    config.budget.scope === "project" ? config.team?.projectBudgetUsd : undefined,
+    config.budget.scope === "month" ? quotaLimits?.[quotaDomain]?.monthlyCostUsd : undefined,
+  ]);
 
   // Fallback entre providers (C6, D-14) + roteamento por profile (F-31).
   // F-31c: providers preguiçosos; sem profile, o caminho é o anterior (C6 só
@@ -638,6 +646,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         entryAgent,
         ...(tracer === undefined ? {} : { tracer }),
         resolveIdentity,
+        ...(budget === undefined ? {} : { budget }),
         ...(config.team === undefined
           ? {}
           : {
@@ -678,6 +687,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
             : { systemPrompt: config.agent.systemPrompt }),
           ...(tracer === undefined ? {} : { tracer }),
           resolveIdentity,
+          ...(budget === undefined ? {} : { budget }),
           ...(config.team === undefined
             ? {}
             : {
@@ -784,5 +794,6 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     auditPath,
     agentsUsed: result.agentsUsed,
     ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
+    ...(budget === undefined ? {} : { budget: budgetStatus(budget, ledger) }),
   };
 }
