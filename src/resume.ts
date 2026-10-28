@@ -1,11 +1,10 @@
 /**
  * Reconstrução da árvore de agentes (F-22, I-19): o ledger é a única fonte —
- * audit nunca é lido. Eventos `agent` (`created`/`destroyed`) definem os nós;
- * qualquer lacuna vira `replay_incomplete` (nunca resume parcial silencioso).
+ * audit nunca é lido. Lacuna ou árvore quebrada vira `replay_incomplete`.
  */
 import type { Ledger, LedgerAgentEntry, RunState } from "./ledger";
 
-/** Erro de replay incompleto: árvore quebrada ou evento ausente (F-22). */
+/** Replay incompleto: árvore quebrada ou evento ausente (nunca resume parcial). */
 export class ReplayIncompleteError extends Error {
   readonly code = "replay_incomplete";
   constructor(message: string) {
@@ -21,20 +20,15 @@ export interface AgentNode {
   need?: string;
   model?: string;
   profile?: string;
-  /** `seq` do evento `created` (ordem determinística). */
   createdSeq: number;
-  /** `seq` do evento `destroyed`, quando houve. */
   destroyedSeq?: number;
-  /** Motivo da destruição (completed, handoff, cancelled, MaxStepsError...). */
   reason?: string;
 }
 
 export interface AgentTree {
   run: string;
   nodes: AgentNode[];
-  /** Nós sem pai (na v1 serial, exatamente um). */
   roots: string[];
-  /** Nó criado e não destruído; undefined quando todos foram encerrados. */
   active: AgentNode | undefined;
 }
 
@@ -42,39 +36,37 @@ export interface ResumePlan {
   run: string;
   state: RunState;
   tree: AgentTree;
-  /** Agente ativo de onde a execução retoma. */
   agent: AgentNode;
 }
 
 function eventsOfRun(ledger: Ledger, run: string): LedgerAgentEntry[] {
-  return ledger
-    .readAllEntries()
-    .filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === run && typeof e.seq === "number")
-    .sort((a, b) => a.seq - b.seq);
+  const events = ledger.readAllEntries().filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === run);
+  if (events.some((e) => typeof e.seq !== "number")) {
+    throw new ReplayIncompleteError(`run "${run}" com evento "agent" sem seq; replay incompleto`);
+  }
+  return events.sort((a, b) => a.seq - b.seq);
 }
-
-/** Reconstrói a árvore de agentes de um run a partir dos eventos `agent` do ledger. */
+/** Reconstrói a árvore de agentes de um run a partir dos eventos `agent`. */
 export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
   const events = eventsOfRun(ledger, run);
-  if (events.length === 0) {
-    throw new ReplayIncompleteError(`run "${run}" sem eventos "agent"; replay incompleto`);
-  }
+  if (events.length === 0) throw new ReplayIncompleteError(`run "${run}" sem eventos "agent"; replay incompleto`);
 
   const nodes = new Map<string, AgentNode>();
   for (const event of events) {
     if (event.session_id !== run) {
-      throw new ReplayIncompleteError(
-        `evento "agent" do run "${run}" com session_id "${event.session_id}"; replay incompleto`,
-      );
+      throw new ReplayIncompleteError(`evento "agent" do run "${run}" com session_id "${event.session_id}"; replay incompleto`);
     }
     if (event.event === "created") {
-      if (nodes.has(event.agent_id)) {
-        throw new ReplayIncompleteError(`agente "${event.agent_id}" criado duas vezes; replay incompleto`);
+      const existing = nodes.get(event.agent_id);
+      if (existing !== undefined) {
+        if (existing.destroyedSeq === undefined) throw new ReplayIncompleteError(`agente "${event.agent_id}" criado duas vezes; replay incompleto`);
+        // Reabertura (handoff de volta): mantém raiz/pai original.
+        delete existing.destroyedSeq;
+        delete existing.reason;
+        continue;
       }
       if (event.parent_agent_id !== undefined && !nodes.has(event.parent_agent_id)) {
-        throw new ReplayIncompleteError(
-          `agente "${event.agent_id}" referencia pai "${event.parent_agent_id}" inexistente; replay incompleto`,
-        );
+        throw new ReplayIncompleteError(`agente "${event.agent_id}" referencia pai "${event.parent_agent_id}" inexistente; replay incompleto`);
       }
       nodes.set(event.agent_id, {
         agent_id: event.agent_id,
@@ -88,44 +80,26 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
       continue;
     }
     const node = nodes.get(event.agent_id);
-    if (node === undefined) {
-      throw new ReplayIncompleteError(`agente "${event.agent_id}" destruído sem created; replay incompleto`);
-    }
-    if (node.destroyedSeq !== undefined) {
-      throw new ReplayIncompleteError(`agente "${event.agent_id}" destruído duas vezes; replay incompleto`);
-    }
+    if (node === undefined) throw new ReplayIncompleteError(`agente "${event.agent_id}" destruído sem created; replay incompleto`);
+    if (node.destroyedSeq !== undefined) throw new ReplayIncompleteError(`agente "${event.agent_id}" destruído duas vezes; replay incompleto`);
     node.destroyedSeq = event.seq;
     if (event.reason !== undefined) node.reason = event.reason;
   }
 
   const ordered = [...nodes.values()].sort((a, b) => a.createdSeq - b.createdSeq);
   const roots = ordered.filter((n) => n.parent_agent_id === undefined).map((n) => n.agent_id);
-  if (roots.length !== 1) {
-    throw new ReplayIncompleteError(`run "${run}" com ${roots.length} raízes; replay incompleto`);
-  }
+  if (roots.length !== 1) throw new ReplayIncompleteError(`run "${run}" com ${roots.length} raízes; replay incompleto`);
   const active = ordered.filter((n) => n.destroyedSeq === undefined);
-  if (active.length > 1) {
-    throw new ReplayIncompleteError(`run "${run}" com ${active.length} agentes ativos; replay incompleto`);
-  }
-
+  if (active.length > 1) throw new ReplayIncompleteError(`run "${run}" com ${active.length} agentes ativos; replay incompleto`);
   return { run, nodes: ordered, roots, active: active[0] };
 }
 
-/**
- * Plano de retomada determinístico: lê o último `run_state` e o agente ativo.
- * Não recalcula escolhas (model/profile vêm dos eventos gravados).
- */
+/** Plano determinístico de retomada: último `run_state` + agente ativo, sem recalcular escolhas. */
 export function planResume(ledger: Ledger, run: string): ResumePlan {
   const state = ledger.lastState(run);
-  if (state === undefined) {
-    throw new ReplayIncompleteError(`run "${run}" sem run_state; replay incompleto`);
-  }
-  if (state.state === "completed") {
-    throw new ReplayIncompleteError(`run "${run}" já concluído; nada a retomar`);
-  }
+  if (state === undefined) throw new ReplayIncompleteError(`run "${run}" sem run_state; replay incompleto`);
+  if (state.state === "completed") throw new ReplayIncompleteError(`run "${run}" já concluído; nada a retomar`);
   const tree = rebuildAgentTree(ledger, run);
-  if (tree.active === undefined) {
-    throw new ReplayIncompleteError(`run "${run}" sem agente ativo; replay incompleto`);
-  }
+  if (tree.active === undefined) throw new ReplayIncompleteError(`run "${run}" sem agente ativo; replay incompleto`);
   return { run, state: state.state, tree, agent: tree.active };
 }
