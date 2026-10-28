@@ -1,0 +1,159 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Auditor } from "../src/audit";
+import { Ledger } from "../src/ledger";
+import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
+import type { ModelEntry } from "../src/registry";
+import { runTask } from "../src/app";
+import { runSession, type SessionOptions } from "../src/session";
+import { ToolExecutor } from "../src/tools/executor";
+
+const model: ModelEntry = {
+  provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000, status: "active",
+  price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false },
+};
+
+const resp = (p: Partial<CompletionResponse>): CompletionResponse => ({
+  content: "", toolCalls: [], usage: { inputTokens: 10, outputTokens: 5 }, ...p,
+});
+
+function makeProvider(script: (() => Promise<CompletionResponse>)[]) {
+  let i = 0;
+  return {
+    complete: async (req: CompletionRequest, signal?: AbortSignal) => {
+      if (signal?.aborted) throw new DOMException("Abortado", "AbortError");
+      return new Promise<CompletionResponse>((resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("Abortado", "AbortError")));
+        const fn = script[i++];
+        if (!fn) return reject(new Error("script esgotado"));
+        const r = fn();
+        if (r instanceof Promise) r.then(resolve).catch(reject);
+        else resolve(r);
+      });
+    },
+  };
+}
+
+function setup(script: (() => Promise<CompletionResponse>)[]) {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-session-"));
+  const audit = new Auditor(join(cwd, "audit.jsonl"));
+  const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+  const provider = makeProvider(script);
+  const opts: SessionOptions = {
+    run: "r1", agent: "default", credentialRef: "OPENAI_API_KEY", quotaDomain: "default",
+    cwd, provider, model, executor: new ToolExecutor({ tools: [], allow: [], audit }),
+    ledger, audit, maxSteps: 5,
+  };
+  return { cwd, opts, ledger };
+}
+
+describe("cancelamento explícito (F-06, #127)", () => {
+  test("cancelamento via AbortSignal interrompe o run e registra estado interrupted", async () => {
+    const { opts, ledger } = setup([
+      () => new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new DOMException("Abortado", "AbortError")), 500);
+      }),
+    ]);
+
+    const abortController = new AbortController();
+    setTimeout(() => abortController.abort(), 20);
+
+    opts.signal = abortController.signal;
+
+    try {
+      await runSession(opts, "tarefa longa");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(DOMException);
+      expect((error as DOMException).name).toBe("AbortError");
+    }
+
+    // Verifica estado no ledger - session.ts mapeia abort para "cancelled" (F-06)
+    const states = opts.ledger.readStates();
+    const interrupted = states.find((s) => s.state === "interrupted");
+    expect(interrupted).toBeDefined();
+    expect(interrupted!.reason).toBe("cancelled");
+  });
+
+  test("runTask com signal abortado durante a chamada: erro claro, audit cancelled e um único estado interrupted", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-cancel-app-"));
+    // Servidor que aceita a conexão mas nunca responde: o abort interrompe a chamada em voo.
+    const server = Bun.serve({
+      port: 0,
+      async fetch() {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        return Response.json({});
+      },
+    });
+    try {
+      writeFileSync(
+        join(cwd, "astro.config.json"),
+        JSON.stringify({
+          providers: {
+            mock: {
+              kind: "openai-compat",
+              baseUrl: `http://127.0.0.1:${server.port}/v1`,
+              credentialRef: "TEST_KEY",
+            },
+          },
+          models: [{ provider: "mock", id: "m", tags: ["writing-code"], context: 8192 }],
+          agent: { model: "mock/m", maxSteps: 3, tools: [] },
+          paths: { ledger: "ledger.jsonl", audit: "audit.jsonl" },
+        }),
+      );
+
+      const abortController = new AbortController();
+      setTimeout(() => abortController.abort(), 50);
+
+      let caught: unknown;
+      try {
+        await runTask({
+          configPath: join(cwd, "astro.config.json"),
+          task: "tarefa",
+          cwd,
+          env: { TEST_KEY: "test" },
+          signal: abortController.signal,
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain("cancelado");
+
+      // Um único estado interrupted, com reason cancelled (sem duplicação de camadas)
+      const ledger = new Ledger(join(cwd, "ledger.jsonl"));
+      const interruptedStates = ledger.readStates().filter((s) => s.state === "interrupted");
+      expect(interruptedStates).toHaveLength(1);
+      expect(interruptedStates[0]!.reason).toBe("cancelled");
+
+      // Audit registra o stop por cancelamento
+      const audit = new Auditor(join(cwd, "audit.jsonl"));
+      const stopped = audit.readAll().find((e) => e.tipo === "run.stopped");
+      expect(stopped).toBeDefined();
+      expect(stopped!.payload.reason).toBe("cancelled");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("run normal (sem cancelamento) completa normalmente", async () => {
+    const { opts, ledger } = setup([
+      async () => resp({ content: "pronto" }),
+    ]);
+
+    const r = await runSession(opts, "diga oi");
+
+    expect(r.steps).toBe(1);
+    expect(r.final).toBe("pronto");
+
+    // Verifica que NÃO há estado interrupted
+    const states = opts.ledger.readStates();
+    const interrupted = states.find((s) => s.state === "interrupted");
+    expect(interrupted).toBeUndefined();
+
+    const completed = states.find((s) => s.state === "completed");
+    expect(completed).toBeDefined();
+  });
+});
