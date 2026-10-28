@@ -24,23 +24,36 @@ export async function runMcpCommand(argv: string[], opts: McpCliOptions = {}): P
   let server: string | undefined;
   let tool: string | undefined;
   let args: unknown = {};
+  let argsProvided = false;
+  let configProvided = false;
   let configPath = "astro.config.json";
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
     if (arg === "--config" || arg === "--args") {
+      if (arg === "--config" && configProvided) {
+        out("erro: --config duplicado");
+        return 1;
+      }
+      if (arg === "--args" && argsProvided) {
+        out("erro: --args duplicado");
+        return 1;
+      }
       const value = argv.at(i + 1);
       if (value === undefined || value.startsWith("-")) {
         out(`erro: falta o valor de ${arg}`);
         return 1;
       }
       i++;
-      if (arg === "--config") configPath = value;
-      else {
+      if (arg === "--config") {
+        configPath = value;
+        configProvided = true;
+      } else {
         try {
           const parsed: unknown = JSON.parse(value);
           if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("não-objeto");
           args = parsed;
+          argsProvided = true;
         } catch {
           out("erro: --args deve ser um objeto JSON válido");
           return 1;
@@ -65,6 +78,10 @@ export async function runMcpCommand(argv: string[], opts: McpCliOptions = {}): P
       }
       continue;
     }
+    if (sub === "list") {
+      out(`erro: argumentos demais para list: "${arg}"`);
+      return 1;
+    }
     out(`subcomando desconhecido: "${arg}"`);
     out(USAGE_MCP);
     return 1;
@@ -72,6 +89,10 @@ export async function runMcpCommand(argv: string[], opts: McpCliOptions = {}): P
 
   if (sub === undefined) {
     out(USAGE_MCP);
+    return 1;
+  }
+  if (sub === "list" && argsProvided) {
+    out("erro: --args só é válido com test");
     return 1;
   }
   if (sub === "test" && (server === undefined || tool === undefined)) {
