@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { redactSecrets } from "../sanitize-external";
 import { createApprovalBridge } from "./approvals";
+import { createShellRunner } from "./shell";
 
 export interface RunTuiOptions {
   configPath: string;
@@ -39,6 +40,7 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
     ]);
     const cwd = resolve(opts.cwd);
     const approvals = createApprovalBridge();
+    const shell = createShellRunner({ configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env });
     const session = new AgentSession({
       configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
       approveSwap: approvals.approveSwap,
@@ -55,6 +57,7 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
           {...(branch === undefined ? {} : { branch })}
           store={store}
           approvals={approvals}
+          shell={shell}
           onExit={() => instance?.unmount()}
         />,
         TUI_RENDER_OPTIONS,

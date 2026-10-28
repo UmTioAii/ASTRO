@@ -38,6 +38,8 @@ export interface ToolContext {
   secretEnvNames?: readonly string[];
   /** Executor da sessão; presente apenas quando chamado via ToolExecutor. */
   executor?: ToolExecutorLike;
+  /** Cancelamento cooperativo (TUI/`!cmd`): a tool deve encerrar o trabalho. */
+  signal?: AbortSignal;
   /** Step corrente da sessão; presente quando a sessão habilita dedup (F-03). */
   step?: number;
   /** Journal de resultados por call_id; presente quando a sessão habilita dedup (F-03). */

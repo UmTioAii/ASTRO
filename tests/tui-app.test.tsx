@@ -359,3 +359,31 @@ test("reindexa ao digitar @ e vê arquivo criado depois do mount", async () => {
     instance.unmount();
   }
 });
+
+test("!cmd roda pelo shell runner e não vira turno", async () => {
+  const calls: string[] = [];
+  const shell = {
+    enabled: true,
+    run: async (command: string) => {
+      calls.push(command);
+      return command === "falha"
+        ? { output: "erro do shell", isError: true }
+        : { output: `saida:${command}`, isError: false };
+    },
+  };
+  const session = new FakeSession();
+  const instance = render(<TuiApp session={session} cwd="/tmp/astro" shell={shell} />);
+  try {
+    instance.stdin.write("!echo oi");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("saida:echo oi") === true);
+    expect(calls).toEqual(["echo oi"]);
+    expect(session.sent).toEqual([]);
+
+    instance.stdin.write("!falha");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("erro do shell") === true);
+  } finally {
+    instance.unmount();
+  }
+});
