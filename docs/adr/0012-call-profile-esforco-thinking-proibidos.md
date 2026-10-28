@@ -17,13 +17,15 @@ Providers divergem em parâmetros de esforço e raciocínio (Anthropic `thinking
 
 **Proibidos e raciocínio (E7, E8, Q-08).** Parâmetro em `forbidden` é removido antes do envio e gravado como `param.stripped`; o `usage` do ledger ganha `lvl`, `effort`, `thinking` validados na escrita. Texto de raciocínio devolvido pelo provider NÃO é persistido (Q-08 default: só a contagem de tokens entra no usage).
 
+**Parâmetro não verificado (E9).** Provider sem parâmetro verificado (ex.: GLM via NIM) não é hardcoded: exige config explícita e limitação documentada.
+
 **E6 na implementação.** A reverificação dos valores oficiais por provider (Anthropic/OpenAI/DeepSeek/Kimi) acontece antes de codar, em S-08 (#125); divergência registrada, valor oficial vigente vence.
 
 ## Consequências
 
 - Ganho: superfície uniforme entre providers; auditoria do que foi enviado e do que foi proibido.
 - Custo: S-08 (#125) implementa; config ganha a seção `call` por modelo.
-- Invariantes afetadas: I-03 (raciocínio não persistido), I-04 (`param.stripped` auditado), I-01 (nada fora do schema é enviado).
+- Invariantes afetadas: I-03 (raciocínio não persistido), I-01 (nada fora do schema é enviado); `param.stripped` e `lvl`/`effort`/`thinking` vivem no `usage` do ledger (#122, E7), não em evento de audit.
 
 ## Alternativas descartadas
 

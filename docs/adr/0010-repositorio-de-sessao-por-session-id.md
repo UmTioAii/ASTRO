@@ -7,7 +7,7 @@
 
 ## Contexto
 
-T1 (#62) persiste a conversa do REPL num JSON plano `.astro/sessions/<ts>.json`. O REPL é o escopo, mas a mesma base precisa acomodar subagentes (ADR-0008) e a migração para SQLite da T4 (#65). Há ainda a colisão D-12: o repo define "sessão single-agent com loop de steps" (`docs/decisions.md:24`) e a trilha de planejamento usa "D-12" para a swap ladder.
+T1 (#62) persiste a conversa do REPL num JSON plano `.astro/sessions/<ts>.json`. O REPL é o escopo, mas a mesma base precisa acomodar subagentes (ADR-0008) e a migração para SQLite da T4 (#65). Há ainda a colisão D-12: a decisão do repo define "sessão single-agent com loop de steps" e a trilha de planejamento usa "D-12" para a swap ladder.
 
 ## Decisão
 
@@ -15,7 +15,7 @@ T1 (#62) persiste a conversa do REPL num JSON plano `.astro/sessions/<ts>.json`.
 
 **Artigo funcional, não fonte de verdade.** O arquivo de sessão é artefato funcional local sanitizado na escrita (I-03); D-11 (só `taskHash`) segue valendo para audit/ledger. A árvore de agentes, placement e escolhas NÃO vivem no store: o ledger é a fonte (`agent` events, M4/#131); árvore quebrada → `replay_incomplete`, nunca resume parcial silencioso.
 
-**Q-13 e a colisão D-12.** O D-12 do repo permanece: a sessão é um loop single-agent determinístico. A swap ladder da trilha mapeia para a cadeia de handoff (ADR-0006, F-23/F-24): troca de agente é handoff para outro agent declarado, com CAS e registro no ledger — nunca mutação do loop em execução. REPL T1 fica single-agent.
+**Q-13 e a colisão D-12.** O D-12 do repo permanece: a sessão é um loop single-agent determinístico. A swap ladder da trilha mapeia para a cadeia de handoff (ADR-0006, F-23..F-26): troca de agente é handoff para outro agent declarado, com CAS e registro no ledger — nunca mutação do loop em execução. REPL T1 fica single-agent. Troca de identidade (credencial, provider, modelo) não é a escada deste ADR: permanece com ADR-0009 e o gate F-19 (S-12, #129).
 
 ## Consequências
 

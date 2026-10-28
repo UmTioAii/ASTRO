@@ -13,7 +13,7 @@ ADR-0008 deu ao orchestrator as tools de escolha (`list_model_candidates`/`spawn
 
 **Filtro duro (M2).** Candidato excluído se: tool não suportada, contexto insuficiente para a entrada estimada, `requires` não satisfeito (`CAPACITY_TAGS`), status não-`active`, quota indisponível no `quotaDomain`, conta não livre (ADR-0009) ou em cooldown, orçamento não cobre a reserva da cadeia (B9, ADR-0013). `need` valida contra `ROLE_TAGS` (`invalid_need`).
 
-**Ranking (M6, M7, Q-07).** Adequação decide dentro do filtro; custo só desempata. Escalada refinada fica em v2 (M5).
+**Ranking (M6, M7, Q-07).** Adequação decide dentro do filtro; custo só desempata. Ordinal 1-based: `default_rank` usa o rank 1 do snapshot (S-09, #126); substitui a redação informal "rank 0" do ADR-0008. Escalada refinada fica em v2 (M5).
 
 **Snapshot e registro (A1).** `list_model_candidates` devolve candidatos + `snapshot_id` (TTL 5 min, invalidado por mudança de health/cooldown); `spawn_agent` grava a escolha no ledger — inclusive `default_rank` — e rejeita modelo fora do snapshot (`invalid_model_choice`, `candidate_set_changed`).
 
@@ -21,7 +21,7 @@ ADR-0008 deu ao orchestrator as tools de escolha (`list_model_candidates`/`spawn
 
 ## Consequências
 
-- Ganho: escolha runtime auditável e reproduzível; mesmas regras para spawn e handoff.
+- Ganho: escolha runtime auditável e reproduzível; as mesmas regras valem para spawn — handoff para agent declarado mantém o modelo escolhido pela config (ADR-0007 intacto).
 - Custo: S-09 (#126) implementa o pipeline; snapshot exige invalidação por health/cooldown.
 - Invariantes afetadas: I-06 (emenda registrada em ADR-0008; aqui é o mecanismo), I-07 (identidade composta é a unidade de placement).
 
