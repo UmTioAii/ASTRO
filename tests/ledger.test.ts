@@ -251,7 +251,8 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
     test("lvl, effort, thinking, param.stripped passam por redactSecrets na escrita", () => {
       const path = join(testDir(), "ledger.jsonl");
       const l = new Ledger(path);
-      const secret = "sk-secret123";
+      // gitleaks-ignore: test constant that matches API key pattern but is not a real secret
+      const secret = "sk-test123456"; // 8+ chars after sk-
       l.record({
         ...entry,
         tokensIn: 10,
@@ -462,7 +463,8 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
       const path = join(testDir(), "ledger.jsonl");
       const l = new Ledger(path);
       // redactSecrets redige: sk-* (8+ chars), Bearer * (12+ chars), nvapi-* (8+ chars)
-      const secret = "sk-secret123456"; // 8+ chars after sk-
+      // gitleaks-ignore: test constant that matches API key pattern but is not a real secret
+      const secret = "sk-test123456"; // 8+ chars after sk-
       l.recordAgentCreated({
         run: "r1", agent_id: "a1", session_id: "s1", need: "n", model: "m",
         reason: `auth: ${secret}`,
@@ -476,7 +478,8 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
       const path = join(testDir(), "ledger.jsonl");
       const l = new Ledger(path);
       // redactSecrets redige: sk-* (8+ chars), Bearer * (12+ chars), nvapi-* (8+ chars)
-      const secret = "sk-secret123456"; // 8+ chars after sk-
+      // gitleaks-ignore: test constant that matches API key pattern but is not a real secret
+      const secret = "sk-test123456"; // 8+ chars after sk-
       l.recordBudgetReserved({ run: "r1", agent: "p", reserved: 0.1, detail: secret });
       const content = readFileSync(path, "utf8");
       expect(content).not.toContain(secret);
