@@ -33,7 +33,8 @@ npm install -g @umtioai/astro-harness@alpha
 astro
 ```
 
-Running `astro` with no arguments opens the TUI. `astro --help` lists the non-interactive commands.
+Running `astro` in an interactive terminal opens the TUI; without a TTY it prints help. `astro --help`
+shows every command, including `chat` and `tui`.
 The CLI reads `astro.config.json` from the directory you run it in; without one, the TUI starts with a
 read-only baseline.
 

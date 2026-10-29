@@ -6,3 +6,11 @@ export function defaultArgs(argv: readonly string[], interactive: boolean): stri
   if (argv.length > 0) return [...argv];
   return interactive ? ["tui"] : ["--help"];
 }
+
+/** TUI só quando stdin e stdout são TTY; meio-TTY (pipe) vira help. */
+export function isInteractive(
+  stdinTTY: boolean | undefined,
+  stdoutTTY: boolean | undefined,
+): boolean {
+  return stdinTTY === true && stdoutTTY === true;
+}
