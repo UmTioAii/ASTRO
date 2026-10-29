@@ -27,17 +27,13 @@ function clearContext(context: KeybindContext): void {
 }
 
 function listSessions(context: KeybindContext): void {
-  if (context.store === undefined) {
+  const sessions = context.store?.list();
+  if (sessions === undefined) {
     context.addEntries([{ kind: "info", text: "sem persistência configurada" }]);
     return;
   }
-  const sessions = context.store.list();
-  context.addEntries([{
-    kind: "info",
-    text: sessions.length === 0
-      ? "nenhuma sessão salva"
-      : sessions.map((item, index) => sessionSummaryLine(item, index)).join("\n"),
-  }]);
+  const text = sessions.length === 0 ? "nenhuma sessão salva" : sessions.map((item, index) => sessionSummaryLine(item, index)).join("\n");
+  context.addEntries([{ kind: "info", text }]);
 }
 
 function toggleTheme(context: KeybindContext): void {
@@ -66,10 +62,8 @@ export function runKeybind(key: string, context: KeybindContext): boolean {
   try {
     action.run(context);
   } catch (error) {
-    context.addEntries([{
-      kind: "error",
-      text: `erro: ${redactSecrets(error instanceof Error ? error.message : String(error))}`,
-    }]);
+    const message = error instanceof Error ? error.message : String(error);
+    context.addEntries([{ kind: "error", text: `erro: ${redactSecrets(message)}` }]);
   }
   return true;
 }

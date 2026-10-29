@@ -77,8 +77,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
   const [theme, setTheme] = useState<Theme>(() => loadTuiConfig(cwd).theme);
   const colors = getThemeColors(theme);
   const persistTheme = (next: Theme): void => {
-    setTheme(next);
     saveTuiConfig(cwd, { theme: next });
+    setTheme(next);
   };
   const leader = useRef(false);
   const busyRef = useRef(false);
@@ -162,18 +162,24 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
     if (command.kind !== "prompt") {
       const outcome = runCommand(command, session, commandState.current, store, cwd);
       if (outcome.lastFile !== undefined) commandState.current.lastFile = outcome.lastFile ?? undefined;
-      setEntries((current) => [...current, ...outcome.entries]);
-      setStatus(statusOf(session.snapshot()));
-      if (
-        (command.kind === "model" && command.model !== undefined)
+      const added = [...outcome.entries];
+      const modelChanged = (command.kind === "model" && command.model !== undefined)
         || (command.kind === "provider" && command.provider !== undefined)
-      ) {
-        saveTuiConfig(cwd, { lastModel: session.snapshot().model });
+        || command.kind === "resume";
+      if (modelChanged) {
+        try {
+          saveTuiConfig(cwd, { lastModel: session.snapshot().model });
+        } catch (error) {
+          added.push({ kind: "error", text: `erro: ${messageOf(error)}` });
+        }
       }
+      setEntries((current) => [...current, ...added]);
+      setStatus(statusOf(session.snapshot()));
       if (outcome.exit) finish();
       return;
     }
     setEntries((current) => [...current, { kind: "user", text }]);
+    leader.current = false;
     busyRef.current = true;
     const controller = new AbortController();
     turn.current = controller;

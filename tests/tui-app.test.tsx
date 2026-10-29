@@ -91,7 +91,8 @@ test("mostra boas-vindas, status e responde um turno", async () => {
 
 test("comandos /help, /model e /clear aparecem no painel", async () => {
   const session = new FakeSession();
-  const instance = render(<TuiApp session={session} cwd="/tmp/astro" />);
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-help-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
   try {
     instance.stdin.write("/help");
     instance.stdin.write("\r");
@@ -108,6 +109,18 @@ test("comandos /help, /model e /clear aparecem no painel", async () => {
   } finally {
     instance.unmount();
   }
+});
+
+test("falha ao gravar a config não derruba a TUI", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-bad-config-"));
+  writeFileSync(join(cwd, ".astro"), "não é diretório", "utf8");
+  const instance = render(<TuiApp session={new FakeSession()} cwd={cwd} />);
+  try {
+    instance.stdin.write("/model p/m2");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("modelo: p/m2") === true);
+    await waitFor(() => instance.lastFrame()?.includes("erro:") === true);
+  } finally { instance.unmount(); }
 });
 
 test("ctrl+c durante o turno aborta e encerra depois", async () => {
