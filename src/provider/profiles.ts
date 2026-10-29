@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { loadConfig, validateConfig, type AstroConfig, type ModelConfig, type ProviderConfig } from "../config";
+import { ConfigError, loadConfig, validateConfig, type AstroConfig, type ModelConfig, type ProviderConfig } from "../config";
 import { isKnownTag } from "../tags";
 
 export interface ProfileModel {
@@ -199,9 +199,6 @@ export function validateProfileStore(raw: unknown): ProviderStore {
   const activeProfileId = root.activeProfileId === undefined
     ? undefined
     : asString(root.activeProfileId, "activeProfileId");
-  if (activeProfileId !== undefined && !ids.has(activeProfileId)) {
-    fail(`"activeProfileId" aponta para perfil inexistente: "${activeProfileId}"`);
-  }
 
   return {
     version: 1,
@@ -259,14 +256,21 @@ export function saveProfileStore(store: ProviderStore, path: string = profilesPa
 
 export type ProviderSource = "project" | "global" | "env";
 
+/** Quem escolheu o provider ativo (a definição pode vir de outro lugar). */
+export type ProviderSelection = "flag" | "env" | "store" | "project";
+
 export interface EffectiveConfig {
   config: AstroConfig;
   activeProvider: string;
+  /** Origem da definição do provider ativo. */
   providerSource: ProviderSource;
+  /** Origem da escolha do provider ativo. */
+  providerSelection: ProviderSelection;
   warnings: string[];
 }
 
-const BASELINE_TOOLS = ["read_file", "write_file", "run_command", "grep", "list_dir", "edit"];
+/** Primeiro run sem config é somente leitura; escrita/shell exigem config explícita. */
+const BASELINE_TOOLS = ["read_file", "list_dir", "grep"];
 const BASELINE_PATHS = { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" };
 const ENV_MODEL_CONTEXT = 128_000;
 
@@ -275,7 +279,7 @@ export function profileFromEnv(env: NodeJS.ProcessEnv): ProviderProfile | undefi
   const apiKey = env.OPENAI_API_KEY;
   const model = env.OPENAI_MODEL ?? env.ASTRO_MODEL;
   if (apiKey === undefined || apiKey === "" || model === undefined || model === "") return undefined;
-  return {
+  const profile: ProviderProfile = {
     id: "env",
     name: "OpenAI (env)",
     kind: "openai-compat",
@@ -283,6 +287,8 @@ export function profileFromEnv(env: NodeJS.ProcessEnv): ProviderProfile | undefi
     credentialRef: "OPENAI_API_KEY",
     models: [{ id: model, tags: [], context: ENV_MODEL_CONTEXT }],
   };
+  // Mesmo validador do store: rejeita URL com credencial embutida, etc.
+  return validateProfileStore({ version: 1, profiles: [profile] }).profiles[0];
 }
 
 function profileToProvider(profile: ProviderProfile): ProviderConfig {
@@ -330,7 +336,12 @@ export function resolveEffectiveConfig(input: {
   const project = input.project;
 
   const profiles = new Map(input.store.profiles.map((profile) => [profile.id, profile]));
-  if (input.envProfile !== undefined) profiles.set(input.envProfile.id, input.envProfile);
+  if (input.envProfile !== undefined) {
+    if (profiles.has(input.envProfile.id)) {
+      warnings.push('perfil salvo "env" foi ignorado nesta sessão; renomeie-o para não colidir');
+    }
+    profiles.set(input.envProfile.id, input.envProfile);
+  }
 
   const globalProviders: Record<string, ProviderConfig> = {};
   const globalModels: ModelConfig[] = [];
@@ -343,34 +354,39 @@ export function resolveEffectiveConfig(input: {
 
   const providers = { ...globalProviders, ...(project?.providers ?? {}) };
   const models = mergeModels(globalModels, project?.models ?? []);
-
-  const pooled = project?.agent.profile !== undefined;
-  if (pooled && (input.providerFlag !== undefined || env.ASTRO_PROVIDER !== undefined || input.store.activeProfileId !== undefined)) {
-    warnings.push("agent.profile tem precedência sobre a troca de provider");
-  }
+  const projectProvider = project === undefined ? undefined : providerOfModel(project.agent.model, providers);
 
   let requested: string | undefined;
-  let requestKind: "flag" | "env" | "store" | undefined;
-  if (!pooled) {
-    if (input.providerFlag !== undefined) { requested = input.providerFlag; requestKind = "flag"; }
-    else if (env.ASTRO_PROVIDER !== undefined && env.ASTRO_PROVIDER !== "") { requested = env.ASTRO_PROVIDER; requestKind = "env"; }
-    else if (input.store.activeProfileId !== undefined) { requested = input.store.activeProfileId; requestKind = "store"; }
+  let requestKind: ProviderSelection | undefined;
+  if (input.providerFlag !== undefined) { requested = input.providerFlag; requestKind = "flag"; }
+  else if (env.ASTRO_PROVIDER !== undefined && env.ASTRO_PROVIDER !== "") { requested = env.ASTRO_PROVIDER; requestKind = "env"; }
+  else if (input.store.activeProfileId !== undefined) { requested = input.store.activeProfileId; requestKind = "store"; }
+
+  const pooled = project?.agent.profile !== undefined;
+  if (pooled) {
+    if (requested !== undefined && requested !== projectProvider) {
+      warnings.push("agent.profile tem precedência sobre a troca de provider");
+    }
+    requested = undefined;
+    requestKind = undefined;
   }
 
   let activeProvider: string | undefined;
+  let selection: ProviderSelection = "project";
   if (requested !== undefined) {
-    if (Object.hasOwn(providers, requested)) activeProvider = requested;
-    else if (requestKind === "store") {
+    if (Object.hasOwn(providers, requested)) {
+      activeProvider = requested;
+      selection = requestKind ?? "project";
+    } else if (requestKind === "store") {
       warnings.push(`activeProfileId "${requested}" não corresponde a nenhum perfil; usando o projeto`);
     } else {
       throw new Error(`provider "${requested}" não está configurado`);
     }
   }
   if (activeProvider === undefined) {
-    const fromProject = project === undefined ? undefined : providerOfModel(project.agent.model, providers);
-    if (fromProject !== undefined) activeProvider = fromProject;
-    else if (input.envProfile !== undefined) activeProvider = input.envProfile.id;
-    else if (input.store.profiles[0] !== undefined) activeProvider = input.store.profiles[0].id;
+    if (projectProvider !== undefined) { activeProvider = projectProvider; selection = "project"; }
+    else if (input.envProfile !== undefined) { activeProvider = input.envProfile.id; selection = "env"; }
+    else if (input.store.profiles[0] !== undefined) { activeProvider = input.store.profiles[0].id; selection = "store"; }
     else {
       throw new Error(
         "nenhum provider configurado: rode /provider add ou defina OPENAI_API_KEY e OPENAI_MODEL",
@@ -378,7 +394,7 @@ export function resolveEffectiveConfig(input: {
     }
   }
 
-  const currentProvider = project === undefined ? undefined : providerOfModel(project.agent.model, providers);
+  const currentProvider = projectProvider;
   let modelRef: string;
   if (project !== undefined && !pooled && currentProvider === activeProvider) {
     modelRef = project.agent.model;
@@ -386,7 +402,9 @@ export function resolveEffectiveConfig(input: {
     modelRef = project.agent.model;
   } else {
     const currentId = currentProvider === undefined ? undefined : project?.agent.model.slice(currentProvider.length + 1);
-    const candidates = models.filter((model) => model.provider === activeProvider);
+    const candidates = models.filter(
+      (model) => model.provider === activeProvider && (model.status ?? "active") === "active",
+    );
     const kept = currentId === undefined ? undefined : candidates.find((model) => model.id === currentId);
     const chosen = kept ?? candidates[0];
     if (chosen === undefined) throw new Error(`provider "${activeProvider}" não tem modelo ativo`);
@@ -397,10 +415,13 @@ export function resolveEffectiveConfig(input: {
     providers,
     models,
     agent: { model: modelRef, maxSteps: 12, tools: [...BASELINE_TOOLS] },
-    tools: { run_command: { sandbox: false } },
     paths: { ...BASELINE_PATHS },
   };
-  if (project === undefined) warnings.push("usando configuração padrão (sem astro.config.json)");
+  if (project === undefined) {
+    warnings.push(
+      "usando configuração padrão somente leitura (sem astro.config.json); crie o arquivo para liberar escrita",
+    );
+  }
 
   const { model: _resolvedModel, ...agentSansModel } = base.agent;
   const config = validateConfig({
@@ -415,16 +436,20 @@ export function resolveEffectiveConfig(input: {
       ? "env"
       : "global";
 
-  return { config, activeProvider, providerSource, warnings };
+  return { config, activeProvider, providerSource, providerSelection: selection, warnings };
 }
 
-/** Carrega o projeto (se existir), o store global e o perfil de env, e resolve. */
+/** Carrega o projeto, o store global e o perfil de env, e resolve. */
 export function loadEffectiveConfig(
   configPath: string,
-  opts: { env?: NodeJS.ProcessEnv; provider?: string; storePath?: string } = {},
+  opts: { env?: NodeJS.ProcessEnv; provider?: string; storePath?: string; allowMissing?: boolean } = {},
 ): EffectiveConfig {
   const env = opts.env ?? process.env;
-  const project = existsSync(configPath) ? loadConfig(configPath) : undefined;
+  const exists = existsSync(configPath);
+  if (!exists && opts.allowMissing !== true) {
+    throw new ConfigError(`configuração não encontrada: "${configPath}"`);
+  }
+  const project = exists ? loadConfig(configPath) : undefined;
   const store = loadProfileStore(opts.storePath ?? profilesPath(env));
   const envProfile = profileFromEnv(env);
   return resolveEffectiveConfig({

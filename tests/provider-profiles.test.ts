@@ -114,12 +114,13 @@ test("aceita openai-compat sem chave (provider local)", () => {
   expect(store.profiles[0]!.credentialRef).toBeUndefined();
 });
 
-test("rejeita activeProfileId que não existe", () => {
-  expect(() => validateProfileStore({
+test("aceita activeProfileId órfão no load; o resolve avisa e cai no projeto", () => {
+  const store = validateProfileStore({
     version: 1,
     activeProfileId: "fantasma",
     profiles: [baseProfile],
-  })).toThrow(/activeProfileId/);
+  });
+  expect(store.activeProfileId).toBe("fantasma");
 });
 
 test("aceita activeProfileId existente", () => {
