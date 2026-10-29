@@ -13,6 +13,8 @@ import type { ShellRunner } from "./shell";
 import { COMMANDS, applyCompletion, completionItems } from "./editor";
 import { indexFiles } from "./files";
 import { Markdown } from "./markdown";
+import { loadTuiConfig, saveTuiConfig, getThemeColors, type Theme, type ThemeColors } from "./theme";
+import { LEADER, runKeybind } from "./keybinds";
 
 export interface TuiAppProps {
   session: ChatSession;
@@ -52,10 +54,10 @@ function messageOf(error: unknown): string {
   return redactSecrets(error instanceof Error ? error.message : String(error));
 }
 
-function EntryLine({ entry }: { entry: Entry }): ReactElement {
-  if (entry.kind === "user") return <Text color="cyan">{"> "}{entry.text}</Text>;
+function EntryLine({ entry, colors }: { entry: Entry; colors: ThemeColors }): ReactElement {
+  if (entry.kind === "user") return <Text color={colors.accent}>{"> "}{entry.text}</Text>;
   if (entry.kind === "assistant") return <Markdown text={entry.text} />;
-  if (entry.kind === "error") return <Text color="red">{entry.text}</Text>;
+  if (entry.kind === "error") return <Text color={colors.error}>{entry.text}</Text>;
   return <Text dimColor>{entry.text}</Text>;
 }
 
@@ -72,6 +74,13 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
   };
   const [busy, setBusy] = useState(false);
   const [partial, setPartial] = useState<string | undefined>(undefined);
+  const [theme, setTheme] = useState<Theme>(() => loadTuiConfig(cwd).theme);
+  const colors = getThemeColors(theme);
+  const persistTheme = (next: Theme): void => {
+    setTheme(next);
+    saveTuiConfig(cwd, { theme: next });
+  };
+  const leader = useRef(false);
   const busyRef = useRef(false);
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
@@ -155,6 +164,12 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       if (outcome.lastFile !== undefined) commandState.current.lastFile = outcome.lastFile ?? undefined;
       setEntries((current) => [...current, ...outcome.entries]);
       setStatus(statusOf(session.snapshot()));
+      if (
+        (command.kind === "model" && command.model !== undefined)
+        || (command.kind === "provider" && command.provider !== undefined)
+      ) {
+        saveTuiConfig(cwd, { lastModel: session.snapshot().model });
+      }
       if (outcome.exit) finish();
       return;
     }
@@ -215,6 +230,22 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       return;
     }
     if (busy) return;
+    if (leader.current) {
+      leader.current = false;
+      runKeybind(`${LEADER} ${value.toLowerCase()}`, {
+        session,
+        ...(store === undefined ? {} : { store }),
+        theme,
+        addEntries: (added) => setEntries((current) => [...current, ...added]),
+        setTheme: persistTheme,
+        finish,
+      });
+      return;
+    }
+    if (ctrl && value === "x") {
+      leader.current = true;
+      return;
+    }
     if (suggestions.length > 0) {
       if (key.tab) {
         setInput(() => applyCompletion(inputRef.current, suggestions[selectedIndex]!));
@@ -256,18 +287,18 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
   return (
     <Box flexDirection="column">
       <Static items={entries}>
-        {(entry, index) => <EntryLine key={index} entry={entry} />}
+        {(entry, index) => <EntryLine key={index} entry={entry} colors={colors} />}
       </Static>
-      {busy ? <Text color="yellow">pensando…</Text> : null}
+      {busy ? <Text color={colors.warning}>pensando…</Text> : null}
       {partial === undefined ? null : <Text>{partial}</Text>}
-      {question === undefined ? null : <Text color="yellow">{question}</Text>}
-      <Box marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text color="cyan">{"> "}</Text>
+      {question === undefined ? null : <Text color={colors.warning}>{question}</Text>}
+      <Box marginTop={1} borderStyle="round" borderColor={colors.accent} paddingX={1}>
+        <Text color={colors.accent}>{"> "}</Text>
         <Text>{input}</Text>
         <Text inverse> </Text>
       </Box>
       {suggestions.map((item, index) => (
-        <Text key={item} {...(index === selectedIndex ? { color: "cyan" } : { dimColor: true })}>
+        <Text key={item} {...(index === selectedIndex ? { color: colors.accent } : { dimColor: true })}>
           {index === selectedIndex ? "> " : "  "}{item}
         </Text>
       ))}

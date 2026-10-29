@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { render } from "ink-testing-library";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TuiApp } from "../src/tui/app";
@@ -169,7 +169,8 @@ test("ignora Enter durante o turno e atualiza o status após /model", async () =
     }
   }
   const session = new Slow();
-  const instance = render(<TuiApp session={session} cwd="/tmp/astro" />);
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-busy-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
   try {
     instance.stdin.write("demora");
     instance.stdin.write("\r");
@@ -383,6 +384,40 @@ test("!cmd roda pelo shell runner e não vira turno", async () => {
     instance.stdin.write("!falha");
     instance.stdin.write("\r");
     await waitFor(() => instance.lastFrame()?.includes("erro do shell") === true);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("ctrl+x c limpa o contexto e ctrl+x t alterna o tema persistido", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-keys-"));
+  const session = new FakeSession();
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    instance.stdin.write("\u0018");
+    instance.stdin.write("c");
+    await waitFor(() => instance.lastFrame()?.includes("contexto limpo") === true);
+    expect(session.cleared).toBe(1);
+
+    instance.stdin.write("\u0018");
+    instance.stdin.write("t");
+    await waitFor(() => instance.lastFrame()?.includes("tema: light") === true);
+    const config = JSON.parse(readFileSync(join(cwd, ".astro", "tui.json"), "utf8")) as { theme?: string };
+    expect(config.theme).toBe("light");
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("/model persiste o último modelo em .astro/tui.json", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-model-"));
+  const instance = render(<TuiApp session={new FakeSession()} cwd={cwd} />);
+  try {
+    instance.stdin.write("/model p/m2");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("modelo: p/m2") === true);
+    const config = JSON.parse(readFileSync(join(cwd, ".astro", "tui.json"), "utf8")) as { lastModel?: string };
+    expect(config.lastModel).toBe("p/m2");
   } finally {
     instance.unmount();
   }

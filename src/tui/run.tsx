@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { redactSecrets } from "../sanitize-external";
 import { createApprovalBridge } from "./approvals";
 import { createShellRunner } from "./shell";
+import { loadTuiConfig } from "./theme";
 
 export interface RunTuiOptions {
   configPath: string;
@@ -13,6 +14,17 @@ export interface RunTuiOptions {
 
 /** Ink desmontaria no ctrl+c antes do handler da app; a app decide a saída. */
 export const TUI_RENDER_OPTIONS = { exitOnCtrlC: false } as const;
+
+/** Aplica o último modelo gravado; modelo removido da config é ignorado. */
+export function applySavedModel(session: { setModel(ref: string): string }, cwd: string): string | undefined {
+  const saved = loadTuiConfig(cwd).lastModel;
+  if (saved === undefined) return undefined;
+  try {
+    return session.setModel(saved);
+  } catch {
+    return undefined;
+  }
+}
 
 /** Branch git do cwd; ausente fora de um repositório. */
 export function gitBranch(cwd: string): string | undefined {
@@ -46,6 +58,7 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
       approveSwap: approvals.approveSwap,
       onBudgetExceeded: approvals.onBudgetExceeded,
     });
+    applySavedModel(session, cwd);
     const store = new SessionStore(resolve(cwd, ".astro", "sessions"));
     let instance: ReturnType<typeof render> | undefined;
     const branch = gitBranch(cwd);
