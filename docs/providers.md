@@ -10,10 +10,22 @@ Objetivo: guia de configuração de providers, validação manual de credenciais
 
 | Kind | Providers | Credencial | Onde |
 |---|---|---|---|
-| `openai-compat` | NVIDIA NIM, OpenRouter | `credentialRef` (env nomeada) | `src/provider/openai-compat.ts` |
+| `openai-compat` | NVIDIA NIM, OpenRouter, Ollama/LM Studio | `credentialRef` (env nomeada; opcional para provider local) | `src/provider/openai-compat.ts` |
 | `codex-oauth` | Codex OAuth | `~/.codex/auth.json` (somente leitura) | `src/provider/codex-oauth.ts` |
 
 Kinds de plugin são aceitos com `kind` custom e factory registrada por plugin (`src/plugins.ts`, `src/config.ts`).
+
+## Perfis globais e `--provider` (#201)
+
+Perfis vivem em `~/.astro/providers.json` (`ASTRO_HOME` sobrescreve), modo 0600, e nunca guardam segredo: só `credentialRef`. O schema rejeita campo desconhecido, header de autenticação e credencial embutida na `baseUrl`.
+
+| Precedência | Ordem |
+|---|---|
+| Definição do provider | `astro.config.json` > perfil global de mesmo nome |
+| Provider ativo | `--provider` > `ASTRO_PROVIDER` > `activeProfileId` > provider do `agent.model` |
+| Modelos | união; o projeto vence no mesmo `provider/id` |
+
+`OPENAI_API_KEY` + `OPENAI_MODEL` (e `OPENAI_BASE_URL` opcional) montam um perfil efêmero `env`, usado só naquela execução e nunca gravado. Sem `astro.config.json`, o primeiro run usa baseline somente leitura (`read_file`, `list_dir`, `grep`); escrita e shell exigem config explícita. `run.started` no audit registra `providerSource` (definição) e `providerSelection` (quem escolheu). CRUD pelo `/provider` entra na fatia seguinte de #201.
 
 ## Custo e preço
 

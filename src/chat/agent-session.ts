@@ -5,7 +5,8 @@ import { runTask, createProvider, shortTaskHash, type RunReport } from "../app";
 import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
 import type { BudgetDecider } from "../budget";
-import { loadConfig, type AstroConfig } from "../config";
+import type { AstroConfig } from "../config";
+import { loadEffectiveConfig, type ProviderSelection, type ProviderSource } from "../provider/profiles";
 import type { ChatMessage } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
@@ -19,6 +20,10 @@ export interface AgentSessionOptions {
   env?: Record<string, string | undefined>;
   /** Modelo inicial `provider/id`; default `agent.model` da config. */
   model?: string;
+  /** Provider ativo (`--provider`); ausente usa store/env/agent.model. */
+  provider?: string;
+  /** Tolerar config ausente e usar a baseline somente leitura (primeiro run). */
+  allowMissingConfig?: boolean;
   systemPrompt?: string;
   /** Decisores interativos (TTY); ausentes mantêm pending/non-interactive. */
   approveSwap?: SwapApprover;
@@ -75,6 +80,8 @@ export class AgentSession {
   readonly #cwd: string;
   readonly #env: Record<string, string | undefined> | undefined;
   readonly #config: AstroConfig;
+  readonly #providerSource: ProviderSource;
+  readonly #providerSelection: ProviderSelection;
   readonly #registry: Registry;
   readonly #auditPath: string;
   readonly #ledger: Ledger;
@@ -98,7 +105,14 @@ export class AgentSession {
     this.#configPath = opts.configPath;
     this.#cwd = opts.cwd ?? process.cwd();
     this.#env = opts.env;
-    this.#config = loadConfig(opts.configPath);
+    const effective = loadEffectiveConfig(opts.configPath, {
+      ...(opts.env === undefined ? {} : { env: opts.env }),
+      ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+      allowMissing: opts.allowMissingConfig === true,
+    });
+    this.#config = effective.config;
+    this.#providerSource = effective.providerSource;
+    this.#providerSelection = effective.providerSelection;
     this.#registry = new Registry(this.#config);
     this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
     this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
@@ -108,7 +122,12 @@ export class AgentSession {
     this.#modelRef = opts.model ?? this.#config.agent.model;
     this.#registry.require(this.#modelRef); // falha cedo com modelo inexistente
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
-    this.#append("run.started", { session: true, model: this.modelName() });
+    this.#append("run.started", {
+      session: true,
+      model: this.modelName(),
+      providerSource: this.#providerSource,
+      providerSelection: this.#providerSelection,
+    });
   }
 
   /** Auditor novo por evento: outro Auditor (runTask) avança o seq no mesmo arquivo. */
@@ -122,6 +141,14 @@ export class AgentSession {
 
   get model(): string {
     return this.#modelRef;
+  }
+
+  get providerSource(): ProviderSource {
+    return this.#providerSource;
+  }
+
+  get providerSelection(): ProviderSelection {
+    return this.#providerSelection;
   }
 
   /** Nome `provider/id` do modelo atual. */

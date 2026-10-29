@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Auditor } from "../audit";
-import { loadConfig } from "../config";
+import { loadEffectiveConfig } from "../provider/profiles";
 import { MCPRegistry } from "./registry";
 import { mcpTools } from "./tool";
 
@@ -102,7 +102,7 @@ export async function runMcpCommand(argv: string[], opts: McpCliOptions = {}): P
   }
 
   try {
-    const config = loadConfig(resolve(cwd, configPath));
+    const config = loadEffectiveConfig(resolve(cwd, configPath)).config;
     const servers = config.mcpServers ?? {};
     if (sub === "list" && Object.keys(servers).length === 0) {
       out("nenhum servidor MCP configurado");
