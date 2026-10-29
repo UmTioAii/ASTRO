@@ -203,9 +203,11 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         || (command.kind === "provider" && command.action === "use" && command.target !== undefined)
         || (command.kind === "resume" && command.ref !== undefined && !outcome.entries.some((entry) => entry.kind === "error"));
       if (modelChanged) {
-        persistLastModel(cwd, session.snapshot().model, (text) => {
-          added.push({ kind: "error", text });
-        });
+        try {
+          saveTuiConfig(cwd, { lastModel: session.snapshot().model });
+        } catch (error) {
+          added.push({ kind: "error", text: `erro: ${messageOf(error)}` });
+        }
       }
       setEntries((current) => [...current, ...added]);
       setStatus(statusOf(session.snapshot()));
@@ -328,10 +330,10 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         currentModel={session.model}
         initial={screen}
         onClose={() => setScreen(undefined)}
+        onActivate={(id) => {
           activateProvider(session, cwd, id, (text) => {
             setEntries((current) => [...current, { kind: "error", text }]);
           });
-          }
           setStatus(statusOf(session.snapshot()));
           setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
         }}
