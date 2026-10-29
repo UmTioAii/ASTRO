@@ -25,6 +25,10 @@
   },
   "scripts": {
     "build": "bun build src/cli.ts --target=bun --external ink --external react --outfile dist/cli.js && bun build src/launcher.ts --target=node --outfile dist/launcher.js",
+    "cli": "bun src/cli.ts",
+    "tui": "bun src/cli.ts tui",
+    "dev:launcher": "bun run build && node dist/launcher.js",
+    "smoke": "bun run build && bun scripts/smoke.ts",
     "prepack": "bun run build",
     "prepublishOnly": "bun run typecheck",
     "test": "bun test",
