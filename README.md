@@ -23,7 +23,18 @@ Multiple named agents, each bound to a model or profile, communicate through dur
 | Can a subagent escalate privileges? | No — each agent has its own tool allowlist; denied calls are audited. |
 | Can a provider outage kill a run? | No — fallback chain by priority, retrying only transient errors. |
 
-## Quick start
+## Install
+
+Requires [Bun](https://bun.sh) 1.4 or newer.
+
+```bash
+npm install -g @umtioai/astro-harness@alpha
+astro --help
+```
+
+The `alpha` tag is the current preview. The CLI reads `astro.config.json` from the directory you run it in.
+
+## Quick start from source
 
 ```bash
 git clone https://github.com/UmTioAii/ASTRO.git && cd ASTRO
