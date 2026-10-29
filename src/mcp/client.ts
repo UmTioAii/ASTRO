@@ -31,12 +31,13 @@ export class MCPClient {
   get closed(): boolean {
     return this.#transport.closed;
   }
-  static async connect(server: MCPServerConfig, env: NodeJS.ProcessEnv = process.env): Promise<MCPClient> {
+  static async connect(server: MCPServerConfig, env: NodeJS.ProcessEnv = process.env, secretEnvNames: readonly string[] = []): Promise<MCPClient> {
     // Resolve antes de criar transporte/rede: variável ausente falha sem chamada.
     const headers = server.transport === "stdio" ? undefined : resolveMcpHeaders(server.headers, env);
     let transport: MCPTransport;
     if (server.transport === "stdio") {
-      transport = StdioTransport.connect({ command: server.command!, args: server.args ?? [], ...(server.env === undefined ? {} : { env: server.env }), timeoutMs: server.timeoutMs, secretEnvNames: headerEnvNames(server.headers) });
+      const stdioSecrets = [...new Set([...headerEnvNames(server.headers), ...secretEnvNames])];
+      transport = StdioTransport.connect({ command: server.command!, args: server.args ?? [], ...(server.env === undefined ? {} : { env: server.env }), timeoutMs: server.timeoutMs, secretEnvNames: stdioSecrets });
     } else if (server.transport === "http") {
       transport = new HttpTransport({ url: server.url!, ...(headers === undefined ? {} : { headers }), timeoutMs: server.timeoutMs });
     } else if (server.transport === "sse") {

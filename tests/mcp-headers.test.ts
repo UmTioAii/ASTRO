@@ -6,6 +6,7 @@ import { runTask } from "../src/app";
 import { validateConfig } from "../src/config";
 import { MCPClient } from "../src/mcp/client";
 import { resolveMcpHeaders } from "../src/mcp/headers";
+import { MCPRegistry } from "../src/mcp/registry";
 
 function configWithMcpHeaders(headers: Record<string, string>) {
   return validateConfig({
@@ -84,6 +85,14 @@ test("config rejeita JWT e Basic em header neutro", () => {
     .toThrow(/credencial/);
 });
 
+test("config aceita prosa com Basic/Bearer em header neutro", () => {
+  expect(configWithMcpHeaders({ "X-Note": "Basic authentication required" }).mcpServers!.api.headers)
+    .toEqual({ "X-Note": "Basic authentication required" });
+  expect(configWithMcpHeaders({ "X-Note": "Bearer tokens are used" }).mcpServers!.api.headers)
+    .toEqual({ "X-Note": "Bearer tokens are used" });
+  expect(() => configWithMcpHeaders({ "X-Note": "Bearer tok-12345" })).toThrow(/credencial/);
+});
+
 test("resolveMcpHeaders rejeita caractere de controle sem ecoar o valor", () => {
   try {
     resolveMcpHeaders({ Authorization: "env:MCP_TOKEN" }, { MCP_TOKEN: "Bearer tok-123\nsecond-line" });
@@ -93,6 +102,18 @@ test("resolveMcpHeaders rejeita caractere de controle sem ecoar o valor", () => 
     expect(message).toContain("caractere de controle");
     expect(message).not.toContain("tok-123");
     expect(message).not.toContain("second-line");
+  }
+});
+
+test("resolveMcpHeaders rejeita caractere fora de ASCII sem ecoar o valor", () => {
+  try {
+    resolveMcpHeaders({ Authorization: "env:MCP_TOKEN" }, { MCP_TOKEN: "Bearer tok-123\u2028second" });
+    throw new Error("deveria rejeitar");
+  } catch (error) {
+    const message = (error as Error).message;
+    expect(message).toContain("ASCII");
+    expect(message).not.toContain("tok-123");
+    expect(message).not.toContain("second");
   }
 });
 
@@ -263,6 +284,30 @@ test("stdio MCP não herda a variável referenciada por header", async () => {
       client.close();
     }
   } finally {
+    delete process.env.MCP_HEADER;
+  }
+});
+
+test("stdio de um servidor não herda header env de outro servidor", async () => {
+  process.env.MCP_HEADER = "tok-123";
+  const dir = mkdtempSync(join(tmpdir(), "astro-mcp-header-registry-"));
+  const script = join(dir, "server.js");
+  writeFileSync(script, STDIO_ENV_SRC.trim());
+  const registry = new MCPRegistry({
+    servers: {
+      api: { transport: "http", url: "http://127.0.0.1:1/mcp", headers: { Authorization: "env:MCP_HEADER" }, timeoutMs: 200, enabled: true },
+      third: { transport: "stdio", command: "bun", args: [script], timeoutMs: 5000, enabled: true },
+    },
+    env: { MCP_HEADER: "tok-123" },
+    warn: () => {},
+  });
+  try {
+    const connected = await registry.connectAll();
+    expect(connected.connected.some((entry) => entry.server === "third")).toBe(true);
+    const result = await registry.call("third", "echo", {});
+    expect(result.content[0]!.text).toBe("sem");
+  } finally {
+    registry.close();
     delete process.env.MCP_HEADER;
   }
 });

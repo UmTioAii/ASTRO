@@ -51,7 +51,7 @@ export class SseTransport {
       transport.close();
       if (transport.#endpointTimeoutError !== undefined) throw transport.#endpointTimeoutError;
       if (error instanceof MCPError) throw error;
-      throw new MCPError(`falha ao conectar no MCP SSE: ${error instanceof Error ? error.message : String(error)}`);
+      throw new MCPError("falha de rede ao abrir o stream SSE do MCP");
     }
     await endpointReady;
     return transport;

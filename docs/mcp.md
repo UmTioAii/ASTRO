@@ -48,12 +48,12 @@ Timeout por requisição nos três: aborta só a própria pendência; o transpor
 
 - `connectAll` no início do run; servidor que falhou fica indisponível e o run segue.
 - Tool `mcp__*` na allowlist que não foi descoberta é pulada com warn; não derruba a config (só tool desconhecida sem prefixo continua erro).
-- `env` explícito dos servidores MCP e nomes referenciados por `headers` (`env:NOME`) entram em `secretEnvNames`, exceto nomes de sistema (PATH/HOME/TEMP etc.): o `run_command` e o filho stdio não veem os demais valores (I-03).
+- `env` explícito dos servidores MCP e a **união** dos nomes referenciados por `headers` (`env:NOME`) entram em `secretEnvNames`, exceto nomes de sistema (PATH/HOME/TEMP etc.): o `run_command` e qualquer filho stdio não veem os demais valores (I-03).
 - `close()` no `finally` do run, inclusive quando a sessão falha — sem processo órfão.
 
 ## Modelo de confiança
 
-Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. Em `headers`, use `"env:NOME_DA_VARIAVEL"`: o valor é resolvido no momento da conexão, só chega ao servidor HTTP/SSE e não é gravado de volta na config (I-03). Variável ausente, valor com caractere de controle ou header de autenticação literal falham antes da rede; a mensagem cita só o nome. Em header neutro, o bloqueio de valor literal é **heurístico** (prefixos conhecidos, `Bearer`/`Basic`, JWT); não é uma garantia de que qualquer segredo arbitrário será detectado — por isso o nome da variável de header também é removido do `run_command` e do filho stdio.
+Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. Em `headers`, use `"env:NOME_DA_VARIAVEL"`: o valor é resolvido no momento da conexão, só chega ao servidor HTTP/SSE e não é gravado de volta na config (I-03). Variável ausente, valor com caractere fora de ASCII imprimível ou header de autenticação literal falham antes da rede; a mensagem cita só o nome. Em header neutro, o bloqueio de valor literal é **heurístico** (prefixos conhecidos, `Bearer`/`Basic` com token, JWT); não é uma garantia de que qualquer segredo arbitrário será detectado — por isso o nome da variável de header, de qualquer servidor, também é removido do `run_command` e de todo filho stdio.
 
 ## CLI (`astro mcp list|test`)
 

@@ -26,9 +26,9 @@ export function headerEnvNames(headers: Record<string, string> | undefined): str
 }
 
 function assertHeaderValue(name: string, value: string): void {
-  // CR/LF/NUL permitiriam forjar linha de log ou quebrar o header; nunca ecoa o valor.
-  if (/[\u0000-\u001f\u007f]/.test(value)) {
-    throw new MCPError(`header "${name}" contém caractere de controle`);
+  // Só ASCII imprimível: CR/LF/NUL forjariam log e não-ASCII faz o fetch ecoar o valor.
+  if (!/^[\u0020-\u007e]*$/.test(value)) {
+    throw new MCPError(`header "${name}" contém caractere de controle ou fora de ASCII imprimível`);
   }
 }
 

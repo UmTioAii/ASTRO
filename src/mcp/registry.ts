@@ -1,5 +1,6 @@
 import type { MCPServerConfig } from "../config";
 import { MCPClient } from "./client";
+import { headerEnvNames } from "./headers";
 import { MCPError, type MCPToolDescriptor, type MCPToolResult } from "./types";
 
 /** Nome da tool MCP vista pelo modelo: `mcp__<server>__<tool>` (#56). */
@@ -44,6 +45,7 @@ export class MCPRegistry {
   readonly #servers: Record<string, MCPServerConfig>;
   readonly #warn: (message: string) => void;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #headerEnvNames: string[];
   readonly #now: () => number;
   readonly #states = new Map<string, ServerState>();
   readonly #reconnecting = new Map<string, Promise<void>>();
@@ -53,6 +55,8 @@ export class MCPRegistry {
     this.#servers = opts.servers;
     this.#warn = opts.warn ?? ((message: string) => console.warn(`mcp: ${message}`));
     this.#env = opts.env ?? process.env;
+    // União de todos os headers: um filho stdio não herda segredo de outro servidor.
+    this.#headerEnvNames = [...new Set(Object.values(opts.servers).flatMap((server) => headerEnvNames(server.headers)))];
     this.#now = opts.now ?? Date.now;
     for (const [name, server] of Object.entries(opts.servers)) {
       if (server.enabled) this.#states.set(name, { client: undefined, tools: [], failed: undefined, failures: 0, nextRetryAt: 0 });
@@ -109,7 +113,7 @@ export class MCPRegistry {
     const attempt = (async () => {
       if (state.client !== undefined && !state.client.closed) return; // outra chamada já reconectou
       state.client?.close();
-      const client = await MCPClient.connect(this.#servers[server]!, this.#env);
+      const client = await MCPClient.connect(this.#servers[server]!, this.#env, this.#headerEnvNames);
       if (this.#closed) { client.close(); throw new MCPError("registro MCP fechado"); }
       state.client = client;
       state.tools = await client.listTools();
