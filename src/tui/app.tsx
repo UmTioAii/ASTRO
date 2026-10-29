@@ -313,6 +313,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
       <ProviderScreen
         manager={manager}
         colors={colors}
+        currentModel={session.model}
         initial={screen}
         onClose={() => setScreen(undefined)}
         onActivate={(id) => {

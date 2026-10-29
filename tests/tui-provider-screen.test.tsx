@@ -36,10 +36,17 @@ async function waitFor(check: () => boolean): Promise<void> {
 
 test("lista providers com marcador e origem", async () => {
   const instance = render(
-    <ProviderScreen manager={manager()} colors={colors} onClose={() => undefined} onActivate={() => undefined} />,
+    <ProviderScreen
+      manager={manager()}
+      colors={colors}
+      currentModel="p/m1"
+      onClose={() => undefined}
+      onActivate={() => undefined}
+    />,
   );
   await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
   const frame = instance.lastFrame() ?? "";
+  expect(frame).toContain("em uso: p/m1");
   expect(frame).toContain("p (p)");
   expect(frame).toContain("[project]");
   expect(frame).toContain("a adicionar");

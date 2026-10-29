@@ -10,6 +10,8 @@ import type { ThemeColors } from "./theme";
 export interface ProviderScreenProps {
   manager: ProfileManager;
   colors: ThemeColors;
+  /** Modelo `provider/id` em uso pela sessão, para diferenciar do ativo salvo. */
+  currentModel?: string;
   initial?: { mode: "list" | "add" | "edit" | "remove"; target?: string };
   onClose: () => void;
   onActivate: (id: string) => void;
@@ -38,7 +40,7 @@ function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel
 }
 
 export function ProviderScreen({
-  manager, colors, initial, onClose, onActivate, onChanged,
+  manager, colors, currentModel, initial, onClose, onActivate, onChanged,
 }: ProviderScreenProps): ReactElement {
   const initialList = manager.list();
   const initialTarget = initial?.target === undefined
@@ -318,6 +320,7 @@ export function ProviderScreen({
   return (
     <Box flexDirection="column" borderStyle="round" paddingX={1}>
       <Text bold>Providers</Text>
+      {currentModel === undefined ? null : <Text dimColor>em uso: {currentModel}</Text>}
       {list.length === 0 ? <Text dimColor>nenhum provider</Text> : null}
       {list.map((profile, index) => (
         <Text key={profile.id} color={index === selected ? colors.accent : undefined}>
