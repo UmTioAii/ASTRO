@@ -3,7 +3,7 @@ import { MCPError, type MCPServerInfo, type MCPToolDescriptor, type MCPToolResul
 import { StdioTransport } from "./transport/stdio";
 import { HttpTransport } from "./transport/http";
 import { SseTransport } from "./transport/sse";
-import { resolveMcpHeaders } from "./headers";
+import { resolveMcpHeaders, headerEnvNames } from "./headers";
 
 /** Contrato comum dos transports (C2b): request/notify/close; `closed` diz se o transporte morreu. */
 export interface MCPTransport {
@@ -36,7 +36,7 @@ export class MCPClient {
     const headers = server.transport === "stdio" ? undefined : resolveMcpHeaders(server.headers, env);
     let transport: MCPTransport;
     if (server.transport === "stdio") {
-      transport = StdioTransport.connect({ command: server.command!, args: server.args ?? [], ...(server.env === undefined ? {} : { env: server.env }), timeoutMs: server.timeoutMs });
+      transport = StdioTransport.connect({ command: server.command!, args: server.args ?? [], ...(server.env === undefined ? {} : { env: server.env }), timeoutMs: server.timeoutMs, secretEnvNames: headerEnvNames(server.headers) });
     } else if (server.transport === "http") {
       transport = new HttpTransport({ url: server.url!, ...(headers === undefined ? {} : { headers }), timeoutMs: server.timeoutMs });
     } else if (server.transport === "sse") {

@@ -29,6 +29,7 @@ import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
 import { MCPRegistry } from "./mcp/registry";
+import { headerEnvNames } from "./mcp/headers";
 import { mcpTools } from "./mcp/tool";
 import { ToolExecutor } from "./tools/executor";
 import { readFileTool } from "./tools/read-file";
@@ -672,6 +673,10 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   for (const server of Object.values(mcpServers)) {
     for (const name of Object.keys(server.env ?? {})) {
       // PATH/HOME/etc. do MCP não são segredo e o shell precisa deles (run_command).
+      if (!SYSTEM_ENV.test(name)) secretEnvNames.push(name);
+    }
+    // Headers `env:NOME` também carregam segredo: fora do shell e do filho stdio.
+    for (const name of headerEnvNames(server.headers)) {
       if (!SYSTEM_ENV.test(name)) secretEnvNames.push(name);
     }
   }

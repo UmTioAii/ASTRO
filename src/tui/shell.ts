@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Auditor } from "../audit";
+import { headerEnvNames } from "../mcp/headers";
 import { loadEffectiveConfig } from "../provider/profiles";
 import { redactSecrets } from "../sanitize-external";
 import { ToolExecutor } from "../tools/executor";
@@ -55,6 +56,9 @@ export function createShellRunner(opts: ShellOptions): ShellRunner {
   }
   for (const server of Object.values(config.mcpServers ?? {})) {
     for (const name of Object.keys(server.env ?? {})) {
+      if (!SYSTEM_ENV.has(name.toUpperCase())) secretEnvNames.push(name);
+    }
+    for (const name of headerEnvNames(server.headers)) {
       if (!SYSTEM_ENV.has(name.toUpperCase())) secretEnvNames.push(name);
     }
   }

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
-import { headerEnvName } from "./mcp/headers";
+import { headerEnvName, isValidHeaderName } from "./mcp/headers";
 import { urlProblem } from "./url-safety";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
@@ -766,6 +766,9 @@ function stringRecord(raw: Record<string, unknown>, field: string): Record<strin
 function mcpHeaders(raw: Record<string, unknown>, field: string): Record<string, string> {
   const headers = stringRecord(raw, field);
   for (const [name, value] of Object.entries(headers)) {
+    if (!isValidHeaderName(name)) {
+      fail(`config inválida: "${field}.${name}" não é um nome de header válido`);
+    }
     if (value.startsWith("env:")) {
       if (headerEnvName(value) === undefined) {
         fail(`config inválida: "${field}.${name}" deve usar "env:NOME_DA_VARIAVEL"`);

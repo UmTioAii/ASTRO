@@ -10,7 +10,7 @@ Cliente MCP (Model Context Protocol) no ASTRO (C2, #56): config `mcpServers`, tr
 |---|---|---|
 | `transport` | `stdio` \| `sse` \| `http` | obrigatório |
 | `command` + `args` + `env` | `command` obrigatório em stdio | `args: []` |
-| `url` + `headers` | `url` obrigatória em sse/http; header de autenticação só como `env:NOME`; valor literal com cara de credencial é recusado | — |
+| `url` + `headers` | `url` obrigatória em sse/http; nome de header segue o token grammar (RFC 7230); header de autenticação só como `env:NOME`; o prefixo `env:` é reservado e valor literal com cara de credencial é recusado | — |
 | `retryBackoffMs` | inteiro positivo, base do backoff exponencial entre reconexões; teto de 30s | `1000` |
 | `timeoutMs` | inteiro positivo, por requisição | `30000` |
 | `enabled` | booleano; `false` fica fora do registry | `true` |
@@ -46,12 +46,12 @@ Timeout por requisição nos três: aborta só a própria pendência; o transpor
 
 - `connectAll` no início do run; servidor que falhou fica indisponível e o run segue.
 - Tool `mcp__*` na allowlist que não foi descoberta é pulada com warn; não derruba a config (só tool desconhecida sem prefixo continua erro).
-- `env` explícito dos servidores MCP entra em `secretEnvNames`, exceto nomes de sistema (PATH/HOME/TEMP etc.): o `run_command` não vê os demais valores (I-03).
+- `env` explícito dos servidores MCP e nomes referenciados por `headers` (`env:NOME`) entram em `secretEnvNames`, exceto nomes de sistema (PATH/HOME/TEMP etc.): o `run_command` e o filho stdio não veem os demais valores (I-03).
 - `close()` no `finally` do run, inclusive quando a sessão falha — sem processo órfão.
 
 ## Modelo de confiança
 
-Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. Em `headers`, use `"env:NOME_DA_VARIAVEL"`: o valor é resolvido no momento da conexão, só chega ao servidor e nunca entra em config, log, audit ou erro (I-03). Header de autenticação com valor literal é recusado; valor com cara de credencial em header neutro também.
+Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. Em `headers`, use `"env:NOME_DA_VARIAVEL"`: o valor é resolvido no momento da conexão, só chega ao servidor HTTP/SSE e não é gravado de volta na config (I-03). Variável ausente, valor com caractere de controle ou header de autenticação literal falham antes da rede; a mensagem cita só o nome. Em header neutro, o bloqueio de valor literal é **heurístico** (prefixos conhecidos, `Bearer`/`Basic`, JWT); não é uma garantia de que qualquer segredo arbitrário será detectado — por isso o nome da variável de header também é removido do `run_command` e do filho stdio.
 
 ## CLI (`astro mcp list|test`)
 
