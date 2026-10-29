@@ -25,14 +25,22 @@ Multiple named agents, each bound to a model or profile, communicate through dur
 
 ## Install
 
-Requires [Bun](https://bun.sh) 1.4 or newer.
+No global Bun required: the pinned Bun runtime ships as a platform dependency and a small Node
+launcher starts it. You only need Node 18+ (npm already requires it).
 
 ```bash
 npm install -g @umtioai/astro-harness@alpha
 astro --help
 ```
 
-The `alpha` tag is the current preview. The CLI reads `astro.config.json` from the directory you run it in.
+The CLI reads `astro.config.json` from the directory you run it in; without one, the interactive modes
+start with a read-only baseline.
+
+- Use your own Bun: `ASTRO_BUN_PATH=/path/to/bun astro`.
+- Installed with `--omit=optional`: reinstall without it, or set `ASTRO_BUN_PATH`.
+- The install does not create or shadow a global `bun`/`bunx` command.
+
+The `alpha` tag is the current preview.
 
 ## Quick start from source
 
