@@ -1,6 +1,7 @@
 /** Configuração da TUI (T2): tema e último modelo em `.astro/tui.json`. */
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import { ConfigError } from "../config";
 
 export type Theme = "dark" | "light";
@@ -10,11 +11,7 @@ export interface TuiConfig {
   lastModel?: string;
 }
 
-export interface ThemeColors {
-  accent: string;
-  warning: string;
-  error: string;
-}
+export type ThemeColors = { accent: string; warning: string; error: string };
 
 const DEFAULT_CONFIG: TuiConfig = { theme: "dark" };
 
@@ -24,8 +21,8 @@ function configPath(cwd: string): string {
 
 /** Garante que o alvo existente fica dentro do cwd canônico, seguindo links (I-11). */
 function assertInside(cwd: string, path: string): void {
-  const [root, real] = [realpathSync(cwd), realpathSync(path)];
-  if (real !== root && !real.startsWith(root + sep)) throw new ConfigError("config da TUI fora do cwd");
+  const rel = relative(realpathSync(cwd), realpathSync(path));
+  if (rel !== "" && (rel.startsWith("..") || isAbsolute(rel))) throw new ConfigError("config da TUI fora do cwd");
 }
 
 /** Lê a configuração; arquivo ausente, inválido ou fora do cwd cai no default. */
@@ -54,9 +51,14 @@ export function saveTuiConfig(cwd: string, config: Partial<TuiConfig>): void {
   assertInside(cwd, dir);
   const file = configPath(cwd);
   if (existsSync(file)) assertInside(cwd, file);
-  const temp = `${file}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(merged, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  renameSync(temp, file);
+  const temp = `${file}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temp, `${JSON.stringify(merged, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    renameSync(temp, file);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 export function nextTheme(theme: Theme): Theme {

@@ -315,7 +315,8 @@ test("/sessions e /resume no painel compartilham a lista", async () => {
     messages: [{ role: "user", content: "guardado" }], turns: 2, tokensIn: 20, tokensOut: 10, costUsd: 0.002,
   });
   const session = new FakeSession();
-  const instance = render(<TuiApp session={session} cwd="/tmp/astro" store={store} />);
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-resume-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} store={store} />);
   try {
     instance.stdin.write("/sessions");
     instance.stdin.write("\r");
@@ -331,6 +332,8 @@ test("/sessions e /resume no painel compartilham a lista", async () => {
     instance.stdin.write("\r");
     await waitFor(() => instance.lastFrame()?.includes("sessão retomada: xyz") === true);
     expect(session.resumed).toEqual(["xyz"]);
+    const config = JSON.parse(readFileSync(join(cwd, ".astro", "tui.json"), "utf8")) as { lastModel?: string };
+    expect(config.lastModel).toBe("p/m1");
 
     instance.stdin.write("/session");
     instance.stdin.write("\r");

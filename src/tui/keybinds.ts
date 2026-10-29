@@ -16,11 +16,6 @@ export interface KeybindContext {
   finish(): void;
 }
 
-export interface KeybindAction {
-  description: string;
-  run(context: KeybindContext): void;
-}
-
 function clearContext(context: KeybindContext): void {
   context.session.clear();
   context.addEntries([{ kind: "info", text: "contexto limpo" }]);
@@ -42,7 +37,7 @@ function toggleTheme(context: KeybindContext): void {
   context.addEntries([{ kind: "info", text: `tema: ${theme}` }]);
 }
 
-export const KEYBINDS: Record<string, KeybindAction> = {
+export const KEYBINDS: Record<string, { description: string; run(context: KeybindContext): void }> = {
   [`${LEADER} c`]: { description: "limpar o contexto", run: clearContext },
   [`${LEADER} e`]: { description: "sair", run: (context) => context.finish() },
   [`${LEADER} q`]: { description: "sair", run: (context) => context.finish() },

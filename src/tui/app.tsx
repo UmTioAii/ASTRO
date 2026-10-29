@@ -77,8 +77,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
   const [theme, setTheme] = useState<Theme>(() => loadTuiConfig(cwd).theme);
   const colors = getThemeColors(theme);
   const persistTheme = (next: Theme): void => {
-    saveTuiConfig(cwd, { theme: next });
     setTheme(next);
+    saveTuiConfig(cwd, { theme: next });
   };
   const leader = useRef(false);
   const busyRef = useRef(false);
@@ -165,7 +165,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       const added = [...outcome.entries];
       const modelChanged = (command.kind === "model" && command.model !== undefined)
         || (command.kind === "provider" && command.provider !== undefined)
-        || command.kind === "resume";
+        || (command.kind === "resume" && command.ref !== undefined && !outcome.entries.some((entry) => entry.kind === "error"));
       if (modelChanged) {
         try {
           saveTuiConfig(cwd, { lastModel: session.snapshot().model });
@@ -179,7 +179,6 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       return;
     }
     setEntries((current) => [...current, { kind: "user", text }]);
-    leader.current = false;
     busyRef.current = true;
     const controller = new AbortController();
     turn.current = controller;
@@ -235,7 +234,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       }
       return;
     }
-    if (busy) return;
+    if (busy || busyRef.current) return;
     if (leader.current) {
       leader.current = false;
       runKeybind(`${LEADER} ${value.toLowerCase()}`, {
