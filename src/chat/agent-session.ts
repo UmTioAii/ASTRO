@@ -82,6 +82,8 @@ export class AgentSession {
   readonly #config: AstroConfig;
   readonly #providerSource: ProviderSource;
   readonly #providerSelection: ProviderSelection;
+  readonly #allowMissing: boolean;
+  readonly #warnings: string[];
   readonly #registry: Registry;
   readonly #auditPath: string;
   readonly #ledger: Ledger;
@@ -111,8 +113,8 @@ export class AgentSession {
       allowMissing: opts.allowMissingConfig === true,
     });
     this.#config = effective.config;
-    this.#providerSource = effective.providerSource;
-    this.#providerSelection = effective.providerSelection;
+    this.#warnings = effective.warnings;
+    this.#allowMissing = opts.allowMissingConfig === true;
     this.#registry = new Registry(this.#config);
     this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
     this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
@@ -120,7 +122,13 @@ export class AgentSession {
     this.#approveSwap = opts.approveSwap;
     this.#budgetDecider = opts.onBudgetExceeded;
     this.#modelRef = opts.model ?? this.#config.agent.model;
-    this.#registry.require(this.#modelRef); // falha cedo com modelo inexistente
+    const usedProvider = this.#registry.require(this.#modelRef).provider; // falha cedo com modelo inexistente
+    this.#providerSource = effective.projectProviders.includes(usedProvider)
+      ? "project"
+      : usedProvider === effective.envProviderId
+        ? "env"
+        : "global";
+    this.#providerSelection = usedProvider === effective.activeProvider ? effective.providerSelection : "project";
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
     this.#append("run.started", {
       session: true,
@@ -149,6 +157,11 @@ export class AgentSession {
 
   get providerSelection(): ProviderSelection {
     return this.#providerSelection;
+  }
+
+  /** Avisos do load efetivo (ex.: baseline somente leitura). */
+  get warnings(): readonly string[] {
+    return this.#warnings;
   }
 
   /** Nome `provider/id` do modelo atual. */
@@ -303,6 +316,7 @@ export class AgentSession {
           runId: this.id,
           model: this.#modelRef,
           suppressRunEvents: true,
+          ...(this.#allowMissing ? { allowMissingConfig: true } : {}),
           history,
           ...(onToken === undefined ? {} : { onToken }),
           ...(this.#approveSwap === undefined ? {} : { approveSwap: this.#approveSwap }),

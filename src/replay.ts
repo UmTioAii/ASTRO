@@ -84,6 +84,7 @@ export async function replayRun(opts: ReplayOptions): Promise<ReplayResult> {
     task: opts.task,
     ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
     ...(opts.env === undefined ? {} : { env: opts.env }),
+    ignoreStoredSelection: true,
     ...(opts.approveSwap === undefined ? {} : { approveSwap: opts.approveSwap }),
     ...(opts.onBudgetExceeded === undefined ? {} : { onBudgetExceeded: opts.onBudgetExceeded }),
   });

@@ -60,14 +60,17 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
       configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
       allowMissingConfig: opts.allowMissingConfig === true,
     });
-    const session = openSession((model) => new AgentSession({
+    const createSession = (model?: string) => new AgentSession({
       configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
       ...(opts.provider === undefined ? {} : { provider: opts.provider }),
       allowMissingConfig: opts.allowMissingConfig === true,
       approveSwap: approvals.approveSwap,
       onBudgetExceeded: approvals.onBudgetExceeded,
       ...(model === undefined ? {} : { model }),
-    }), cwd);
+    });
+    // `--provider` explícito vence o último modelo salvo em .astro/tui.json.
+    const session = opts.provider === undefined ? openSession(createSession, cwd) : createSession();
+    for (const warning of session.warnings) console.error(`aviso: ${warning}`);
     const store = new SessionStore(resolve(cwd, ".astro", "sessions"));
     let instance: ReturnType<typeof render> | undefined;
     const branch = gitBranch(cwd);

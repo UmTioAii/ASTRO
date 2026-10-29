@@ -49,6 +49,10 @@ export interface RunOptions {
   env?: Record<string, string | undefined>;
   /** Provider ativo (`--provider`); ausente usa store/env/agent.model. */
   provider?: string;
+  /** Tolerar config ausente (baseline somente leitura) — chat/TUI. */
+  allowMissingConfig?: boolean;
+  /** Resume/replay: não trocar provider por store/env sem pedido explícito. */
+  ignoreStoredSelection?: boolean;
   /** Registro de métricas Prometheus (F6-1); quando presente, alimentado pelo run. */
   metrics?: Metrics;
   /** Raiz de skills do usuário (C1c); default `~/.astro/skills`. Injetável para teste. */
@@ -439,6 +443,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const effective = loadEffectiveConfig(opts.configPath, {
     env,
     ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+    ...(opts.allowMissingConfig === true ? { allowMissing: true } : {}),
+    ...(opts.ignoreStoredSelection === true || opts.resume !== undefined ? { ignoreStoredSelection: true } : {}),
   });
   const config = effective.config;
   /** Teto global de turnos (Q-01/L2): `run.maxTurns` só **capa**, nunca eleva
@@ -535,6 +541,13 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   }
   const baseModel = resumedModel ?? model;
   const baseProfile = resumedProfile ?? (opts.model === undefined ? config.agent.profile : undefined);
+  const usedProvider = baseModel.provider;
+  const usedSource = effective.projectProviders.includes(usedProvider)
+    ? "project"
+    : usedProvider === effective.envProviderId
+      ? "env"
+      : "global";
+  const usedSelection = usedProvider === effective.activeProvider ? effective.providerSelection : "project";
   if (opts.suppressRunEvents !== true) audit.append({
     run,
     agent: AGENT_NAME,
@@ -542,8 +555,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     payload: {
       taskHash: shortTaskHash(opts.task),
       model: `${baseModel.provider}/${baseModel.id}`,
-      providerSource: effective.providerSource,
-      providerSelection: effective.providerSelection,
+      providerSource: usedSource,
+      providerSelection: usedSelection,
       ...(baseProfile === undefined ? {} : { profile: baseProfile }),
       ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
     },

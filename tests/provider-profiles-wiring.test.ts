@@ -14,12 +14,17 @@ interface RunResult {
 }
 
 async function runCli(args: string[], opts: { cwd: string; env: Record<string, string | undefined>; stdin?: string }): Promise<RunResult> {
+  const baseEnv: Record<string, string | undefined> = { ...process.env };
+  for (const key of ["ASTRO_PROVIDER", "ASTRO_MODEL", "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"]) {
+    delete baseEnv[key];
+  }
+  const home = opts.env.ASTRO_HOME ?? mkdtempSync(join(tmpdir(), "astro-wire-home-"));
   const proc = Bun.spawn(["bun", "src/cli.ts", ...args], {
     cwd: root,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...opts.env } as Record<string, string>,
+    env: { ...baseEnv, ...opts.env, ASTRO_HOME: home } as Record<string, string>,
   });
   proc.stdin.write(opts.stdin ?? "");
   proc.stdin.end();
@@ -56,6 +61,35 @@ test("chat sem config usa o perfil global e audita a origem", async () => {
   const started = auditStarted(cwd);
   expect((started.payload as Record<string, unknown>).providerSource).toBe("global");
   expect((started.payload as Record<string, unknown>).providerSelection).toBe("store");
+});
+
+test("primeiro turno sem config usa a baseline somente leitura", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({
+      choices: [{ message: { content: "ok da baseline" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }),
+  });
+  try {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-wire-baseline-"));
+    const home = mkdtempSync(join(tmpdir(), "astro-wire-baseline-home-"));
+    const result = await runCli(["chat", "--cwd", cwd], {
+      cwd,
+      env: {
+        ASTRO_HOME: home,
+        OPENAI_API_KEY: "k",
+        OPENAI_MODEL: "gpt-4o",
+        OPENAI_BASE_URL: `http://127.0.0.1:${server.port}/v1`,
+      },
+      stdin: "oi\n/exit\n",
+    });
+    expect(result.exit).toBe(0);
+    expect(result.stdout).toContain("ok da baseline");
+    expect(result.stderr).toContain("somente leitura");
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("chat com OPENAI_* usa perfil efêmero sem criar store", async () => {

@@ -289,6 +289,34 @@ test("agents nomeados com profile sobrevivem à revalidação", () => {
   expect(result.config.agents?.coder?.profile).toBe("fast");
 });
 
+test("ignoreStoredSelection mantém o provider do projeto (resume/replay)", () => {
+  const result = resolveEffectiveConfig({
+    project: project(),
+    store: store(profile()),
+    ignoreStoredSelection: true,
+    env: {},
+  });
+  expect(result.activeProvider).toBe("p");
+  expect(result.providerSelection).toBe("project");
+});
+
+test("--provider em projeto com agent.profile é erro explícito", () => {
+  const base = project();
+  const pooled = validateConfig({
+    providers: base.providers,
+    models: base.models,
+    agent: { profile: "fast", maxSteps: 2, tools: ["read_file"] },
+    modelPool: { fast: { model: "p/m1" } },
+    paths: base.paths,
+  });
+  expect(() => resolveEffectiveConfig({
+    project: pooled,
+    store: store(profile({ id: "q", name: "Q", models: [{ id: "m2", tags: [], context: 1000 }] })),
+    providerFlag: "q",
+    env: {},
+  })).toThrow(/agent\.profile tem precedência/);
+});
+
 test("--provider desconhecido é erro", () => {
   expect(() => resolveEffectiveConfig({
     project: project(),
