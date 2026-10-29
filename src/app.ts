@@ -24,7 +24,8 @@ import { resolveTaskSkill } from "./skills/executor";
 import type { AuditEvent } from "./audit";
 import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, type BudgetStatus } from "./budget";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
-import { planResume, ReplayIncompleteError } from "./resume";
+import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
+import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
 import { MCPRegistry } from "./mcp/registry";
@@ -447,6 +448,13 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     ...(opts.ignoreStoredSelection === true || opts.resume !== undefined ? { ignoreStoredSelection: true } : {}),
   });
   const config = effective.config;
+  const identityFor = (m: ModelEntry): AgentIdentity => {
+    const identity = providerIdentity(config, m.provider);
+    return {
+      provider: m.provider,
+      ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
+    };
+  };
   /** Teto global de turnos (Q-01/L2): `run.maxTurns` só **capa**, nunca eleva
    * `agent.maxSteps`; "unlimited" fica limitado ao agente até o corte físico (B10). */
   const sessionMaxSteps = config.run?.maxTurns !== undefined && config.run.maxTurns !== "unlimited"
@@ -525,6 +533,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       if (resumed.agent.model !== model.id) {
         throw new ReplayIncompleteError(`modelo do agente "${agentId}" mudou (gravado "${resumed.agent.model}", config "${model.id}"); replay incompleto`);
       }
+      assertResumeIdentity(resumed.agent, identityFor(model), ledger, run);
       resumedModel = model;
     } else {
       const agent = config.agents?.[agentId];
@@ -535,6 +544,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       if (resumed.agent.model !== resolved.id) {
         throw new ReplayIncompleteError(`modelo do agente "${agentId}" mudou (gravado "${resumed.agent.model}", config "${resolved.id}"); replay incompleto`);
       }
+      assertResumeIdentity(resumed.agent, identityFor(resolved), ledger, run);
       resumedModel = resolved;
       resumedProfile = agent.profile;
     }
@@ -542,6 +552,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const baseModel = resumedModel ?? model;
   const baseProfile = resumedProfile ?? (opts.model === undefined ? config.agent.profile : undefined);
   const usedProvider = baseModel.provider;
+  const usedIdentity = providerIdentity(config, usedProvider);
   const { providerSource: usedSource, providerSelection: usedSelection } = providerIdentityFor(effective, usedProvider);
   if (opts.suppressRunEvents !== true) audit.append({
     run,
@@ -550,6 +561,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     payload: {
       taskHash: shortTaskHash(opts.task),
       model: `${baseModel.provider}/${baseModel.id}`,
+      provider: usedProvider,
+      ...(usedIdentity.credentialRef === undefined ? {} : { credentialRef: usedIdentity.credentialRef }),
       providerSource: usedSource,
       providerSelection: usedSelection,
       ...(baseProfile === undefined ? {} : { profile: baseProfile }),
@@ -710,6 +723,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         credentialRef,
         quotaDomain,
         cwd,
+        identityFor,
         provider: effectiveProvider,
         providerFor,
         approveSwap,
