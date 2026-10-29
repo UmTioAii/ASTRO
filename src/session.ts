@@ -457,7 +457,7 @@ export interface AgentIdentity {
   credentialRef?: string;
 }
 
-/** Garante um `agent.created` (idempotente; reabre agente já destruído - F-22). */
+/** Agente ativo = último evento do id no run não é `destroyed` (created/identity contam). */
 function ensureAgentCreated(
   ledger: Ledger,
   audit: Auditor,

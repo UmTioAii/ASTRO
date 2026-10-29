@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { Auditor } from "../src/audit";
 import { runTask } from "../src/app";
 import { Ledger } from "../src/ledger";
-import { ReplayIncompleteError } from "../src/resume";
+import { assertResumeIdentity, rebuildAgentTree, ReplayIncompleteError } from "../src/resume";
 
-function setup(provider = "a", credentialRef = "KEY_A", seedProvider = provider, seedCredential = credentialRef) {
+function setup(provider = "a", credentialRef: string | null = "KEY_A", seedProvider = provider, seedCredential: string | null = credentialRef) {
   const cwd = mkdtempSync(join(tmpdir(), "astro-resume-identity-"));
   const seen: string[] = [];
   const server = Bun.serve({
@@ -20,7 +20,7 @@ function setup(provider = "a", credentialRef = "KEY_A", seedProvider = provider,
   });
   const config = {
     providers: {
-      a: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef },
+      a: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, ...(credentialRef === null ? {} : { credentialRef }) },
       b: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY_B" },
     },
     models: [
@@ -40,7 +40,7 @@ function setup(provider = "a", credentialRef = "KEY_A", seedProvider = provider,
     session_id: "r1",
     model: "m1",
     provider: seedProvider,
-    credentialRef: seedCredential,
+    ...(seedCredential === null ? {} : { credentialRef: seedCredential }),
   });
   ledger.recordState("r1", "interrupted", { agent: "default", reason: "cancelled" });
   return { cwd, configPath, seen, server, ledger };
@@ -71,6 +71,31 @@ describe("identidade efetiva no resume (I-08, #163)", () => {
     }
   });
 
+  test("keyed para keyless recusa", async () => {
+    const { cwd, configPath, seen, server, ledger } = setup("a", null, "a", "KEY_A");
+    try {
+      expect(rebuildAgentTree(ledger, "r1").active?.credentialRef).toBe("KEY_A");
+      await expect(runTask({
+        configPath, task: "continue", cwd, env: { KEY_A: "1" }, resume: "r1",
+      })).rejects.toThrow(/credencial do agente/);
+      expect(seen).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("keyless para keyed recusa", async () => {
+    const { cwd, configPath, seen, server } = setup("a", "KEY_A", "a", null);
+    try {
+      await expect(runTask({
+        configPath, task: "continue", cwd, env: { KEY_A: "1" }, resume: "r1",
+      })).rejects.toThrow(/credencial do agente/);
+      expect(seen).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("ledger antigo sem provider é aceito uma vez e grava a identidade", async () => {
     const { cwd, configPath, seen, server, ledger } = setup("a", "KEY_A");
     try {
@@ -92,6 +117,9 @@ describe("identidade efetiva no resume (I-08, #163)", () => {
       expect(seen).toEqual(["m1"]);
       const identity = fresh.readAllEntries().find((e) => e.kind === "agent" && e.event === "identity");
       expect(identity).toMatchObject({ provider: "a", credentialRef: "KEY_A", model: "m1" });
+      const node = rebuildAgentTree(fresh, "r1").nodes[0]!;
+      expect(() => assertResumeIdentity(node, { provider: "b", credentialRef: "KEY_B" }, fresh, "r1"))
+        .toThrow(/provider do agente/);
       const started = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll()
         .find((e) => e.tipo === "run.started");
       expect(started?.payload).toMatchObject({ provider: "a", credentialRef: "KEY_A" });

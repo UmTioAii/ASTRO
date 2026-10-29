@@ -7,7 +7,7 @@ import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./ha
 import { redactSecrets } from "./sanitize-external";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
-export const LEDGER_SCHEMA_VERSION = 1;
+export const LEDGER_SCHEMA_VERSION = 2;
 
 /** Timeout do lock de arquivo do CAS de handoff (F-26); depois segue em melhor esforço. */
 const LEDGER_LOCK_TIMEOUT_MS = 1_000;

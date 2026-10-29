@@ -27,7 +27,10 @@ retomava em outra conta/provider sem gate nem evento de troca — violação de 
 
 - Troca silenciosa de provider/credencial em run retomado deixa de existir; o erro nomeia os dois
   lados e nunca o valor da chave.
-- Ledgers antigos continuam retomáveis, com um evento extra na primeira retomada.
+- Ledgers antigos continuam retomáveis, com um evento extra na primeira tentativa; se a config
+  estiver errada e a credencial faltar, a primeira tentativa ainda fixa a identidade (documentado).
+- `LEDGER_SCHEMA_VERSION` sobe para 2 porque leitores antigos tratam `identity` como `destroyed`
+  (ADR-0002).
 - `agentActive` considera `created` **ou** `identity` como agente vivo; só `destroyed` encerra.
 - Quem lê o ledger ganha dois campos opcionais; consumidores antigos os ignoram.
 

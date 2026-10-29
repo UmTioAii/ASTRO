@@ -87,8 +87,10 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
     if (node === undefined) throw new ReplayIncompleteError(`agente "${event.agent_id}" destruído sem created; replay incompleto`);
     if (event.event === "identity") {
       if (event.model !== undefined) node.model = event.model;
-      if (event.provider !== undefined) node.provider = event.provider;
-      if (event.credentialRef !== undefined) node.credentialRef = event.credentialRef;
+      if (event.provider !== undefined) {
+        node.provider = event.provider;
+        node.credentialRef = event.credentialRef;
+      }
       if (event.profile !== undefined) node.profile = event.profile;
       continue;
     }
@@ -133,17 +135,16 @@ export function assertResumeIdentity(
     );
   }
   const recordedCredential = agent.credentialRef;
-  if (
-    recordedProvider !== undefined &&
-    recordedCredential !== undefined &&
-    expected.credentialRef !== undefined &&
-    recordedCredential !== expected.credentialRef
-  ) {
-    throw new ReplayIncompleteError(
-      `credencial do agente "${agent.agent_id}" mudou (gravado "${recordedCredential}", config "${expected.credentialRef}"); replay incompleto`,
-    );
+  if (recordedProvider !== undefined) {
+    if (recordedCredential !== expected.credentialRef) {
+      const from = recordedCredential ?? "sem credencial";
+      const to = expected.credentialRef ?? "sem credencial";
+      throw new ReplayIncompleteError(
+        `credencial do agente "${agent.agent_id}" mudou (gravado "${from}", config "${to}"); replay incompleto`,
+      );
+    }
+    return;
   }
-  if (recordedProvider !== undefined && recordedCredential === expected.credentialRef) return;
 
   ledger.recordAgentIdentity({
     run,
@@ -155,5 +156,5 @@ export function assertResumeIdentity(
     ...(agent.profile === undefined ? {} : { profile: agent.profile }),
   });
   agent.provider = expected.provider;
-  if (expected.credentialRef !== undefined) agent.credentialRef = expected.credentialRef;
+  agent.credentialRef = expected.credentialRef;
 }
