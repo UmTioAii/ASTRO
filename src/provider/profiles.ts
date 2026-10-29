@@ -1,5 +1,6 @@
 /** Perfis de provider persistidos fora do projeto (~/.astro/providers.json). Sem segredo. */
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { isKnownTag } from "../tags";
@@ -33,8 +34,14 @@ const ROOT_KEYS = new Set(["version", "activeProfileId", "profiles"]);
 const PROFILE_KEYS = new Set([
   "id", "name", "kind", "baseUrl", "credentialRef", "credentialsPath", "quotaDomain", "headers", "models",
 ]);
-const AUTH_HEADERS = new Set(["authorization", "api-key", "x-api-key", "x-auth-token"]);
+const AUTH_HEADERS = /(^|-)authorization$|(^|-)api[-_]?key$|^cookie$|^set-cookie$|^x-auth-|token$/;
+const PROFILE_ID = /^[a-z0-9][a-z0-9-]*$/;
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/** Credencial cabe em qualquer header que carregue auth, não só nos quatro óbvios. */
+function isAuthHeader(name: string): boolean {
+  return AUTH_HEADERS.test(name.toLowerCase());
+}
 
 function fail(message: string): never {
   throw new Error(`perfil inválido: ${message}`);
@@ -64,7 +71,7 @@ function validateHeaders(raw: unknown, field: string): Record<string, string> {
   const headers = asObject(raw, field);
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
-    if (AUTH_HEADERS.has(name.toLowerCase())) {
+    if (isAuthHeader(name)) {
       fail(`header de autenticação não é permitido em "${field}": "${name.toLowerCase()}"`);
     }
     out[name] = asString(value, `${field}.${name}`);
@@ -89,13 +96,30 @@ function validateModel(raw: unknown, field: string): ProfileModel {
   return { id, tags, context };
 }
 
+function validateBaseUrl(value: unknown, field: string): string {
+  const raw = asString(value, field);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    fail(`"${field}" deve ser uma URL http(s) válida`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    fail(`"${field}" deve ser uma URL http(s) válida`);
+  }
+  return raw;
+}
+
 function validateProfile(raw: unknown, field: string): ProviderProfile {
   const profile = asObject(raw, field);
   rejectUnknown(profile, PROFILE_KEYS, field);
   const id = asString(profile.id, `${field}.id`);
+  if (!PROFILE_ID.test(id) || id.length > 64) {
+    fail(`"${field}.id" deve ser um slug (minúsculas, dígitos e hífen; até 64 caracteres)`);
+  }
   const name = asString(profile.name, `${field}.name`);
   const kind = asString(profile.kind, `${field}.kind`);
-  const baseUrl = profile.baseUrl === undefined ? undefined : asString(profile.baseUrl, `${field}.baseUrl`);
+  const baseUrl = profile.baseUrl === undefined ? undefined : validateBaseUrl(profile.baseUrl, `${field}.baseUrl`);
   const credentialRef = profile.credentialRef === undefined
     ? undefined
     : asString(profile.credentialRef, `${field}.credentialRef`);
@@ -115,6 +139,11 @@ function validateProfile(raw: unknown, field: string): ProviderProfile {
     fail(`"${field}.models" deve ter ao menos um modelo`);
   }
   const models = profile.models.map((model, index) => validateModel(model, `${field}.models[${index}]`));
+  const modelIds = new Set<string>();
+  for (const model of models) {
+    if (modelIds.has(model.id)) fail(`modelo duplicado em "${field}.models": "${model.id}"`);
+    modelIds.add(model.id);
+  }
 
   if (kind === "openai-compat" && baseUrl === undefined) {
     fail(`"${field}.baseUrl" é obrigatório para kind "openai-compat"`);
@@ -146,9 +175,10 @@ export function validateProfileStore(raw: unknown): ProviderStore {
   const names = new Set<string>();
   for (const profile of profiles) {
     if (ids.has(profile.id)) fail(`id duplicado: "${profile.id}"`);
-    if (names.has(profile.name)) fail(`nome duplicado: "${profile.name}"`);
+    const nameKey = profile.name.toLowerCase();
+    if (names.has(nameKey)) fail(`nome duplicado: "${profile.name}"`);
     ids.add(profile.id);
-    names.add(profile.name);
+    names.add(nameKey);
   }
 
   const activeProfileId = root.activeProfileId === undefined
@@ -182,8 +212,17 @@ export function loadProfileStore(path: string = profilesPath()): ProviderStore {
     if (code === "ENOENT") return { version: 1, profiles: [] };
     throw new Error(`store de perfis inválido em "${path}": ${error instanceof Error ? error.message : String(error)}`);
   }
+  if (text.trim() === "") return { version: 1, profiles: [] };
+  let parsed: unknown;
   try {
-    return validateProfileStore(JSON.parse(text));
+    parsed = JSON.parse(text);
+  } catch {
+    // Nunca ecoar o detalhe do parser: ele cita os primeiros caracteres do
+    // conteúdo colado, que pode ser uma chave (I-03).
+    throw new Error(`store de perfis inválido em "${path}": JSON inválido`);
+  }
+  try {
+    return validateProfileStore(parsed);
   } catch (error) {
     throw new Error(`store de perfis inválido em "${path}": ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -193,9 +232,9 @@ export function loadProfileStore(path: string = profilesPath()): ProviderStore {
 export function saveProfileStore(store: ProviderStore, path: string = profilesPath()): void {
   const valid = validateProfileStore(store);
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(tmp, `${JSON.stringify(valid, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    writeFileSync(tmp, `${JSON.stringify(valid, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
     renameSync(tmp, path);
   } catch (error) {
     try { unlinkSync(tmp); } catch { /* tmp já não existe */ }

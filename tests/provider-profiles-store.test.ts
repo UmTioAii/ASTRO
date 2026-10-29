@@ -70,3 +70,38 @@ test("modo 0600 no POSIX", () => {
   saveProfileStore({ version: 1, profiles: [profile] }, path);
   expect(statSync(path).mode & 0o777).toBe(0o600);
 });
+
+test("arquivo vazio é um store vazio", () => {
+  const path = join(tempHome(), "providers.json");
+  writeFileSync(path, "   \n");
+  expect(loadProfileStore(path)).toEqual({ version: 1, profiles: [] });
+});
+
+test("erro de JSON não ecoa o conteúdo colado", () => {
+  const path = join(tempHome(), "providers.json");
+  writeFileSync(path, '{ "apiKey": "sk-secret-fragment"');
+  const call = () => loadProfileStore(path);
+  expect(call).toThrow(/JSON inválido/);
+  expect(call).not.toThrow(/sk-secret/);
+  expect(call).not.toThrow(/Unexpected|JSON Parse/);
+});
+
+test("segundo save sobrescreve o store", () => {
+  const path = join(tempHome(), "providers.json");
+  saveProfileStore({ version: 1, profiles: [profile] }, path);
+  saveProfileStore({
+    version: 1,
+    activeProfileId: "outro",
+    profiles: [{ ...profile, id: "outro", name: "Outro" }],
+  }, path);
+  const loaded = loadProfileStore(path);
+  expect(loaded.profiles.map((item) => item.id)).toEqual(["outro"]);
+  expect(loaded.activeProfileId).toBe("outro");
+});
+
+test("tmp pré-existente não é reutilizado", () => {
+  const path = join(tempHome(), "providers.json");
+  writeFileSync(`${path}.tmp`, "preservar");
+  saveProfileStore({ version: 1, profiles: [profile] }, path);
+  expect(readFileSync(`${path}.tmp`, "utf8")).toBe("preservar");
+});

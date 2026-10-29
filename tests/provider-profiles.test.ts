@@ -130,3 +130,46 @@ test("aceita activeProfileId existente", () => {
 test("rejeita perfil que não é objeto", () => {
   expect(() => validateProfileStore({ version: 1, profiles: ["x"] })).toThrow(/profiles\[0\]/);
 });
+
+test("rejeita id que não é slug", () => {
+  expect(() => validateProfileStore(storeWith({ ...baseProfile, id: "OpenAI Work" })))
+    .toThrow(/slug/);
+  expect(() => validateProfileStore(storeWith({ ...baseProfile, id: "../../etc/passwd" })))
+    .toThrow(/slug/);
+});
+
+test("rejeita nome duplicado ignorando maiúsculas", () => {
+  expect(() => validateProfileStore({
+    version: 1,
+    profiles: [baseProfile, { ...baseProfile, id: "outro", name: "openai work" }],
+  })).toThrow(/duplicado/);
+});
+
+test("rejeita modelo duplicado no mesmo perfil", () => {
+  expect(() => validateProfileStore(storeWith({
+    ...baseProfile,
+    models: [
+      { id: "gpt-4o", tags: [], context: 1000 },
+      { id: "gpt-4o", tags: [], context: 2000 },
+    ],
+  }))).toThrow(/modelo duplicado/);
+});
+
+test("rejeita baseUrl que não é http(s)", () => {
+  expect(() => validateProfileStore(storeWith({ ...baseProfile, baseUrl: "http//localhost:11434/v1" })))
+    .toThrow(/URL http\(s\)/);
+  expect(() => validateProfileStore(storeWith({ ...baseProfile, baseUrl: "ftp://example/v1" })))
+    .toThrow(/URL http\(s\)/);
+});
+
+test("rejeita headers de credencial menos óbvios", () => {
+  for (const headers of [
+    { "x-goog-api-key": "AIza" },
+    { "Proxy-Authorization": "x" },
+    { Cookie: "session=1" },
+    { "x-amz-security-token": "x" },
+  ]) {
+    expect(() => validateProfileStore(storeWith({ ...baseProfile, headers })))
+      .toThrow(/header de autenticação/);
+  }
+});
