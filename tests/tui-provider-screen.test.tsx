@@ -49,13 +49,15 @@ test("lista providers com marcador e origem", async () => {
 test("a abre o formulário e salva um provider custom", async () => {
   const m = manager();
   const activated: string[] = [];
+  const order: string[] = [];
   const instance = render(
     <ProviderScreen
       manager={m}
       colors={colors}
       initial={{ mode: "add" }}
       onClose={() => undefined}
-      onActivate={(id) => activated.push(id)}
+      onActivate={(id) => { activated.push(id); order.push("activate"); }}
+      onChanged={() => order.push("changed")}
     />,
   );
   await waitFor(() => instance.lastFrame()?.includes("De onde partir?") === true);
@@ -78,7 +80,53 @@ test("a abre o formulário e salva um provider custom", async () => {
   await waitFor(() => instance.lastFrame()?.includes("salvo: local") === true);
   expect(m.list().map((item) => item.id)).toContain("local");
   expect(activated).toContain("local");
+  expect(order).toEqual(["changed", "activate"]);
   instance.unmount();
+});
+
+test("edit preserva headers e remove confirma", async () => {
+  const m = manager();
+  const added = m.add({
+    name: "Casa",
+    kind: "openai-compat",
+    baseUrl: "https://casa.example/v1",
+    credentialRef: "KEY",
+    headers: { "X-Title": "ASTRO" },
+    models: [{ id: "m1", tags: ["writing-code"], context: 8192 }],
+  });
+  const edit = render(
+    <ProviderScreen
+      manager={m}
+      colors={colors}
+      initial={{ mode: "edit", target: added.id }}
+      onClose={() => undefined}
+      onActivate={() => undefined}
+    />,
+  );
+  await waitFor(() => edit.lastFrame()?.includes("Editar casa") === true);
+  for (const label of ["Base URL", "Modelos", "Variável da chave", "Confirmar"]) {
+    edit.stdin.write("\r");
+    await waitFor(() => edit.lastFrame()?.includes(label) === true);
+  }
+  edit.stdin.write("\r");
+  await waitFor(() => edit.lastFrame()?.includes("salvo: casa") === true);
+  expect(m.list().find((item) => item.id === "casa")?.headers).toEqual({ "X-Title": "ASTRO" });
+  edit.unmount();
+
+  const remove = render(
+    <ProviderScreen
+      manager={m}
+      colors={colors}
+      initial={{ mode: "remove", target: "casa" }}
+      onClose={() => undefined}
+      onActivate={() => undefined}
+    />,
+  );
+  await waitFor(() => remove.lastFrame()?.includes("Remover Casa?") === true);
+  remove.stdin.write("s");
+  await waitFor(() => remove.lastFrame()?.includes("removido: casa") === true);
+  expect(m.list().some((item) => item.id === "casa")).toBe(false);
+  remove.unmount();
 });
 
 test("provider do projeto não é removível pela tela", async () => {

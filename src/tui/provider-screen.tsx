@@ -4,6 +4,7 @@ import { useState, type ReactElement } from "react";
 import { PROVIDER_CATALOG } from "../provider/catalog";
 import type { ProfileDraft, ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ProfileModel } from "../provider/profiles";
+import { redactSecrets } from "../sanitize-external";
 import type { ThemeColors } from "./theme";
 
 export interface ProviderScreenProps {
@@ -22,7 +23,7 @@ const CATALOG = ["custom", ...PROVIDER_CATALOG.map((entry) => entry.key)];
 const DEFAULT_CONTEXT = 128_000;
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return redactSecrets(error instanceof Error ? error.message : String(error));
 }
 
 function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel[] {
@@ -39,31 +40,48 @@ function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel
 export function ProviderScreen({
   manager, colors, initial, onClose, onActivate, onChanged,
 }: ProviderScreenProps): ReactElement {
+  const initialList = manager.list();
+  const initialTarget = initial?.target === undefined
+    ? undefined
+    : initialList.find((item) => item.id === initial.target)
+      ?? initialList.find((item) => item.name.toLowerCase() === initial.target!.toLowerCase());
+  const initialEdit = initial?.mode === "edit" && initialTarget?.source === "global" ? initialTarget : undefined;
   const [view, setView] = useState<"list" | "form" | "remove">(
-    initial?.mode === "add" || initial?.mode === "edit" ? "form" : initial?.mode === "remove" ? "remove" : "list",
+    initial?.mode === "add"
+      ? "form"
+      : initial?.mode === "edit"
+        ? initialEdit === undefined ? "list" : "form"
+        : initial?.mode === "remove"
+          ? "remove"
+          : "list",
   );
   const [selected, setSelected] = useState(() => {
-    if (initial?.target === undefined) return 0;
-    const index = manager.list().findIndex((item) => item.id === initial.target);
+    if (initialTarget === undefined) return 0;
+    const index = initialList.findIndex((item) => item.id === initialTarget.id);
     return index < 0 ? 0 : index;
   });
-  const [editing, setEditing] = useState<ProfileView | undefined>(
-    initial?.mode === "edit" && initial.target !== undefined
-      ? manager.list().find((item) => item.id === initial.target)
-      : undefined,
-  );
+  const [editing, setEditing] = useState<ProfileView | undefined>(initialEdit);
   const [step, setStep] = useState<Step>(initial?.mode === "edit" ? "name" : "catalog");
   const [catalogIndex, setCatalogIndex] = useState(0);
-  const [name, setName] = useState(editing?.name ?? "");
-  const [baseUrl, setBaseUrl] = useState(editing?.baseUrl ?? "");
-  const [models, setModels] = useState(editing?.models.map((model) => model.id).join(";") ?? "");
-  const [credential, setCredential] = useState(editing?.credentialRef ?? "");
-  const [message, setMessage] = useState<string | undefined>(undefined);
+  const [name, setName] = useState(
+    initialEdit?.name ?? (initial?.mode === "add" && initial.target !== undefined ? initial.target : ""),
+  );
+  const [baseUrl, setBaseUrl] = useState(initialEdit?.baseUrl ?? "");
+  const [models, setModels] = useState(initialEdit?.models.map((model) => model.id).join(";") ?? "");
+  const [credential, setCredential] = useState(initialEdit?.credentialRef ?? "");
+  const [message, setMessage] = useState<string | undefined>(() => {
+    if (initial?.mode !== "edit" || initial.target === undefined) return undefined;
+    if (initialTarget === undefined) return `provider "${initial.target}" não encontrado`;
+    return initialEdit === undefined
+      ? `provider "${initial.target}" é ${initialTarget.source}; edite pelo astro chat`
+      : undefined;
+  });
 
 
   const list = manager.list();
   const current = list[Math.min(selected, Math.max(list.length - 1, 0))];
   const entry = catalogIndex === 0 ? undefined : PROVIDER_CATALOG[catalogIndex - 1];
+  const kind = editing?.kind ?? entry?.kind ?? "openai-compat";
 
   const startAdd = (): void => {
     setEditing(undefined);
@@ -113,20 +131,22 @@ export function ProviderScreen({
       ...(editing?.quotaDomain === undefined && entry === undefined
         ? {}
         : { quotaDomain: editing?.quotaDomain ?? entry?.key }),
+      ...(editing?.headers === undefined ? {} : { headers: editing.headers }),
     };
     try {
       const saved = editing === undefined ? manager.add(draft) : manager.edit(editing.id, draft);
+      let activationError: string | undefined;
       if (editing === undefined) {
         try {
           manager.use(saved.id);
-          onActivate(saved.id);
         } catch (error) {
-          setMessage(messageOf(error));
+          activationError = messageOf(error);
         }
       }
       onChanged?.();
+      if (editing === undefined && activationError === undefined) onActivate(saved.id);
       setView("list");
-      setMessage(`salvo: ${saved.id}`);
+      setMessage(activationError === undefined ? `salvo: ${saved.id}` : `salvo: ${saved.id} (não ativado: ${activationError})`);
     } catch (error) {
       setMessage(messageOf(error));
     }
@@ -204,8 +224,11 @@ export function ProviderScreen({
 
     if (key.return) {
       const index = STEPS.indexOf(step);
-      if (step === "baseUrl" && baseUrl.trim() === "") { setMessage("base url é obrigatória"); return; }
-      if (step === "credential" && credential.trim() !== "") {
+      if (step === "baseUrl" && baseUrl.trim() === "" && kind !== "codex-oauth") {
+        setMessage("base url é obrigatória");
+        return;
+      }
+      if (step === "credential" && credential.trim() !== "" && kind !== "codex-oauth") {
         const valid = /^[A-Z_][A-Z0-9_]*$/.test(credential.trim());
         if (!valid) { setMessage("use o nome da variável, ex.: OPENAI_API_KEY"); return; }
       }
@@ -272,7 +295,7 @@ export function ProviderScreen({
                   <Text dimColor>enter salvar · esc voltar</Text>
                 </Box>
               )
-            : <Text color={colors.accent}>{value || " "}</Text>}
+            : <Text color={colors.accent}>{step === "credential" ? "*".repeat(value.length) || " " : value || " "}</Text>}
         <Text dimColor>
           {step === "catalog" ? "↑↓ escolher · enter continuar · esc voltar" : `${STEPS.indexOf(step) + 1}/6 · enter continuar · esc voltar`}
         </Text>

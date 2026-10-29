@@ -4,7 +4,7 @@ Objetivo: registrar o motivo de cada escolha com ID estável.
 
 | Cobre | Não cobre |
 |---|---|
-| Decisões D-01 a D-20 do repo e a correspondência com a trilha de planejamento | Invariantes (em `docs/invariants.md`) e ADRs (em `docs/adr/`) |
+| Decisões D-01 a D-21 do repo e a correspondência com a trilha de planejamento | Invariantes (em `docs/invariants.md`) e ADRs (em `docs/adr/`) |
 
 IDs estáveis; não renumerar.
 

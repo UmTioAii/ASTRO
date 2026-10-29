@@ -27,7 +27,7 @@ Perfis vivem em `~/.astro/providers.json` (`ASTRO_HOME` sobrescreve), modo 0600,
 
 `OPENAI_API_KEY` + `OPENAI_MODEL` (e `OPENAI_BASE_URL` opcional) montam um perfil efêmero `env`, usado só naquela execução e nunca gravado. Sem `astro.config.json`, `chat`/`tui` usam baseline somente leitura (`read_file`, `list_dir`, `grep`); `run` exige config explícita, e escrita/shell exigem config em qualquer caso. Em projeto com `agent.profile`, `--provider` divergente é erro (o profile decide o modelo); `run.started` registra `providerSource` (definição) e `providerSelection` (quem escolheu).
 
-CRUD: `/provider add` (catálogo ou custom), `/provider edit <nome|id>`, `/provider remove <nome|id>` e `/provider use <nome|id>`. Na TUI, `/provider` abre a tela cheia (a adicionar, e editar, d remover, enter ativar). Perfis do projeto e o perfil `env` são somente leitura; remover um perfil referenciado pelo projeto é recusado.
+CRUD: `/provider add` (catálogo ou custom), `/provider edit <nome|id>`, `/provider remove <nome|id>` e `/provider use <nome|id>`. Na TUI, `/provider` abre a tela cheia (a adicionar, e editar, d remover, enter ativar, esc voltar); `/provider use <nome>` continua trocando inline. Perfis do projeto e o perfil `env` são somente leitura; remover um perfil referenciado pelo projeto é recusado.
 
 ## Custo e preço
 

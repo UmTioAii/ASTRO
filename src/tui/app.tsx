@@ -308,6 +308,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         onClose={() => setScreen(undefined)}
         onActivate={(id) => {
           try {
+            session.reload?.();
             session.setProvider(id);
             saveTuiConfig(cwd, { lastModel: session.snapshot().model });
             setStatus(statusOf(session.snapshot()));
