@@ -171,6 +171,7 @@ test("rejeita headers de credencial menos óbvios", () => {
     { "x-rapidapi-key": "x" },
     { "x-functions-key": "x" },
     { "x-secret-key": "x" },
+    { "x-client-secret": "x" },
   ]) {
     expect(() => validateProfileStore(storeWith({ ...baseProfile, headers })))
       .toThrow(/header de autenticação/);
@@ -192,6 +193,10 @@ test("rejeita credencial embutida na baseUrl", () => {
   expect(() => validateProfileStore(storeWith({
     ...baseProfile,
     baseUrl: "https://proxy.example/v1?api_key=sk-live",
+  }))).toThrow(/query/);
+  expect(() => validateProfileStore(storeWith({
+    ...baseProfile,
+    baseUrl: "https://proxy.example/v1?token=sk-live",
   }))).toThrow(/query/);
 });
 
