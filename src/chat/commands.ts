@@ -55,7 +55,7 @@ function parseProvider(arg: string): ReplCommand {
     case "edit":
     case "remove":
     case "use":
-      if (target === "") return { kind: "unknown", raw: `provider ${sub}` };
+      if (target === "") return { kind: "provider", action: sub.toLowerCase() as ProviderAction };
       return { kind: "provider", action: sub.toLowerCase() as ProviderAction, target };
     default:
       // Compatibilidade: /provider <nome> equivale a /provider use <nome>.

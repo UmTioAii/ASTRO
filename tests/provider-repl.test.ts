@@ -10,8 +10,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 function projectConfig(cwd: string): string {
   const path = join(cwd, "astro.config.json");
   writeFileSync(path, JSON.stringify({
-    providers: { p: { kind: "openai-compat", baseUrl: "http://127.0.0.1:1/v1", credentialRef: "KEY" } },
-    models: [{ provider: "p", id: "m1", tags: ["writing-code"], context: 8192 }],
+    providers: {
+      p: { kind: "openai-compat", baseUrl: "http://127.0.0.1:1/v1", credentialRef: "KEY" },
+      q: { kind: "openai-compat", baseUrl: "http://127.0.0.1:2/v1", credentialRef: "KEY" },
+    },
+    models: [
+      { provider: "p", id: "m1", tags: ["writing-code"], context: 8192 },
+      { provider: "q", id: "m2", tags: ["writing-code"], context: 8192 },
+    ],
     agent: { model: "p/m1", maxSteps: 2, tools: ["read_file"] },
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));
@@ -19,12 +25,16 @@ function projectConfig(cwd: string): string {
 }
 
 async function chat(cwd: string, cfg: string, home: string, stdin: string) {
+  const baseEnv: Record<string, string | undefined> = { ...process.env };
+  for (const key of ["ASTRO_PROVIDER", "ASTRO_MODEL", "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"]) {
+    delete baseEnv[key];
+  }
   const proc = Bun.spawn(["bun", "src/cli.ts", "chat", "--cwd", cwd, "--config", cfg], {
     cwd: root,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ASTRO_HOME: home } as Record<string, string>,
+    env: { ...baseEnv, ASTRO_HOME: home } as Record<string, string>,
   });
   proc.stdin.write(stdin);
   proc.stdin.end();
@@ -61,6 +71,36 @@ test("/provider remove apaga o perfil", async () => {
   expect(removed.exit).toBe(0);
   expect(removed.stdout).toContain("removido: local");
   expect(loadProfileStore(join(home, "providers.json")).profiles).toEqual([]);
+});
+
+test("/provider <nome> troca para provider do projeto sem persistir", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-provider-switch-"));
+  const home = mkdtempSync(join(tmpdir(), "astro-provider-switch-home-"));
+  const cfg = projectConfig(cwd);
+  const result = await chat(cwd, cfg, home, "/provider q\n/exit\n");
+  expect(result.exit).toBe(0);
+  expect(result.stdout).toContain("provider: q/m2");
+  expect(result.stdout).toContain("definido no projeto; não persistido");
+});
+
+test("ativar um add em projeto com agent.profile avisa e não derruba o REPL", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-provider-pool-"));
+  const home = mkdtempSync(join(tmpdir(), "astro-provider-pool-home-"));
+  const cfg = join(cwd, "astro.config.json");
+  writeFileSync(cfg, JSON.stringify({
+    providers: { p: { kind: "openai-compat", baseUrl: "http://127.0.0.1:1/v1", credentialRef: "KEY" } },
+    models: [{ provider: "p", id: "m1", tags: ["writing-code"], context: 8192 }],
+    modelPool: { fast: { model: "p/m1" } },
+    agent: { profile: "fast", maxSteps: 2, tools: ["read_file"] },
+    paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+  }));
+  const result = await chat(
+    cwd, cfg, home,
+    "/provider add\ncustom\nLocal\nhttp://localhost:1/v1\n\nm1\nS\nS\n/exit\n",
+  );
+  expect(result.exit).toBe(0);
+  expect(result.stdout).toContain("agent.profile tem precedência");
+  expect(loadProfileStore(join(home, "providers.json")).profiles.map((item) => item.id)).toEqual(["local"]);
 });
 
 test("/provider remove de provider do projeto é recusado", async () => {

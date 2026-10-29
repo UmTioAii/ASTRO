@@ -83,6 +83,7 @@ export class AgentSession {
   #providerSource: ProviderSource;
   #providerSelection: ProviderSelection;
   readonly #allowMissing: boolean;
+  readonly #providerFlag: string | undefined;
   readonly #warnings: string[];
   #registry: Registry;
   readonly #auditPath: string;
@@ -115,6 +116,7 @@ export class AgentSession {
     this.#config = effective.config;
     this.#warnings = effective.warnings;
     this.#allowMissing = opts.allowMissingConfig === true;
+    this.#providerFlag = opts.provider;
     this.#registry = new Registry(this.#config);
     this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
     this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
@@ -161,15 +163,18 @@ export class AgentSession {
     return this.#warnings;
   }
 
-  /** Recarrega config/perfis do disco; mantém o modelo atual se ainda existir. */
-  reload(): void {
+  /** Recarrega config/perfis do disco; com followActive adota o provider ativo. */
+  reload(followActive = false): void {
     const effective = loadEffectiveConfig(this.#configPath, {
       ...(this.#env === undefined ? {} : { env: this.#env }),
+      ...(this.#providerFlag === undefined ? {} : { provider: this.#providerFlag }),
       allowMissing: this.#allowMissing,
     });
     this.#config = effective.config;
     this.#registry = new Registry(this.#config);
-    if (!this.#registry.get(this.#modelRef)) this.#modelRef = this.#config.agent.model;
+    if ((followActive || !this.#registry.get(this.#modelRef)) && this.#config.agent.model !== this.#modelRef) {
+      this.#modelRef = this.#config.agent.model;
+    }
     const identity = providerIdentityFor(effective, this.#registry.require(this.#modelRef).provider);
     this.#providerSource = identity.providerSource;
     this.#providerSelection = identity.providerSelection;

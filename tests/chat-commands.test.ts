@@ -36,8 +36,8 @@ describe("comandos do chat (T1, #62)", () => {
       kind: "provider", action: "use", target: "openai-work",
     });
     expect(parseCommand("/provider q")).toEqual({ kind: "provider", action: "use", target: "q" });
-    expect(parseCommand("/provider use")).toEqual({ kind: "unknown", raw: "provider use" });
-    expect(parseCommand("/provider edit")).toEqual({ kind: "unknown", raw: "provider edit" });
+    expect(parseCommand("/provider use")).toEqual({ kind: "provider", action: "use" });
+    expect(parseCommand("/provider edit")).toEqual({ kind: "provider", action: "edit" });
   });
   test("ajuda lista os quatro comandos", () => {
     for (const command of ["/help", "/model", "/clear", "/exit"]) expect(HELP_TEXT).toContain(command);

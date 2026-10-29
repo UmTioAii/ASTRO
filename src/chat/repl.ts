@@ -28,7 +28,7 @@ export interface ChatSession {
   listProviders(): ProviderInfo[];
   setProvider(name: string): string;
   /** Recarrega config/perfis do disco (após /provider add|edit|remove). */
-  reload?(): void;
+  reload?(followActive?: boolean): void;
   snapshot(): SessionSnapshot;
   close(): void;
 }
@@ -172,6 +172,13 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
           continue;
         }
         const listText = (): string => manager.list().map(profileListLine).join("\n");
+        const reloadSession = (followActive = false): void => {
+          try {
+            session.reload?.(followActive);
+          } catch (error) {
+            io.write(`erro ao recarregar a config: ${messageOf(error)}`);
+          }
+        };
         if (command.action === "list") {
           io.write(listText());
           continue;
@@ -179,25 +186,39 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         if (command.action === "add") {
           const saved = await runProviderWizard(io, manager, {
             mode: "add",
+            ...(command.target === undefined ? {} : { initialName: command.target }),
             onUse: (id) => {
-              session.reload?.();
+              reloadSession(true);
               session.setProvider(id);
             },
           });
-          if (saved !== undefined) io.write(listText());
+          if (saved !== undefined) {
+            reloadSession(true);
+            io.write(listText());
+          }
           continue;
         }
-        const target = command.target === undefined ? undefined : findProfile(manager, command.target);
+        if (command.target === undefined) {
+          io.write(`uso: /provider ${command.action} <nome|id>`);
+          continue;
+        }
+        const target = findProfile(manager, command.target);
         if (target === undefined) {
-          io.write(`provider "${command.target ?? ""}" não encontrado`);
+          io.write(`provider "${command.target}" não encontrado`);
           continue;
         }
         if (command.action === "use") {
           try {
-            manager.use(target.id);
-            session.reload?.();
-            session.setProvider(target.id);
-            io.write(`provider: ${session.model}`);
+            if (target.source === "project") {
+              io.write(`provider: ${session.setProvider(target.id)} (definido no projeto; não persistido)`);
+            } else if (target.source === "env") {
+              io.write(`provider: ${session.setProvider(target.id)} (env; só nesta sessão)`);
+            } else {
+              manager.use(target.id);
+              reloadSession(true);
+              session.setProvider(target.id);
+              io.write(`provider: ${session.model}`);
+            }
           } catch (error) {
             io.write(`erro: ${messageOf(error)}`);
           }
@@ -206,8 +227,8 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         if (command.action === "remove") {
           try {
             manager.remove(target.id);
-            session.reload?.();
             io.write(`removido: ${target.id}`);
+            reloadSession(true);
           } catch (error) {
             io.write(`erro: ${messageOf(error)}`);
           }
@@ -215,7 +236,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         }
         const saved = await runProviderWizard(io, manager, { mode: "edit", profile: target });
         if (saved !== undefined) {
-          session.reload?.();
+          reloadSession(true);
           io.write(listText());
         }
         continue;

@@ -845,7 +845,10 @@ async function main(argv: string[]): Promise<number> {
       const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
       const configPath = resolve(o.configPath);
       const project = existsSync(configPath) ? loadConfig(configPath) : undefined;
-      const manager = new ProfileManager({ project, env: process.env });
+      const manager = new ProfileManager({
+        project, env: process.env,
+        ...(o.provider === undefined ? {} : { provider: o.provider }),
+      });
       const session = new AgentSession({
         configPath, cwd: base, env: process.env,
         ...(o.provider === undefined ? {} : { provider: o.provider }),

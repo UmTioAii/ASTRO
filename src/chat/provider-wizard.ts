@@ -11,6 +11,8 @@ export interface WizardIO {
 export interface WizardOptions {
   mode: "add" | "edit";
   profile?: ProviderProfile;
+  /** Nome inicial vindo de `/provider add <nome>`. */
+  initialName?: string;
   onUse?: (id: string) => void;
 }
 
@@ -66,7 +68,7 @@ export async function runProviderWizard(
     }
   }
 
-  const name = await ask(io, "nome", current?.name ?? entry?.name ?? "");
+  const name = await ask(io, "nome", current?.name ?? opts.initialName ?? entry?.name ?? "");
   if (name === undefined || name === "") {
     io.write("cancelado");
     return undefined;
@@ -149,19 +151,20 @@ export async function runProviderWizard(
     return undefined;
   }
 
-  if (draft.credentialRef !== undefined) {
-    const value = process.env[draft.credentialRef];
-    if (value === undefined || value.trim() === "") {
-      io.write(`! ${draft.credentialRef} não encontrada no ambiente; exporte antes de usar`);
-    }
+  if (draft.credentialRef !== undefined && !manager.credentialPresent(draft.credentialRef)) {
+    io.write(`! ${draft.credentialRef} não encontrada no ambiente; exporte antes de usar`);
   }
 
   if (opts.mode === "add") {
     const activate = await ask(io, "ativar agora? [S/n]", "S");
     if (activate !== undefined && !activate.toLowerCase().startsWith("n")) {
-      manager.use(saved.id);
-      opts.onUse?.(saved.id);
-      io.write(`provider ativo: ${saved.id}`);
+      try {
+        manager.use(saved.id);
+        opts.onUse?.(saved.id);
+        io.write(`provider ativo: ${saved.id}`);
+      } catch (error) {
+        io.write(`erro: ${messageOf(error)}`);
+      }
     }
   }
 

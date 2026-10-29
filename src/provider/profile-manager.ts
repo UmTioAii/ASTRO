@@ -32,6 +32,8 @@ export interface ProfileManagerOptions {
   storePath?: string;
   project?: AstroConfig;
   env?: NodeJS.ProcessEnv;
+  /** Flag `--provider` da execução: alinha o marcador ativo com o loader. */
+  provider?: string;
 }
 
 function slug(name: string): string {
@@ -67,11 +69,13 @@ export class ProfileManager {
   readonly #storePath: string;
   readonly #project: AstroConfig | undefined;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #provider: string | undefined;
   #store: ProviderStore;
 
   constructor(opts: ProfileManagerOptions = {}) {
     this.#env = opts.env ?? process.env;
     this.#project = opts.project;
+    this.#provider = opts.provider;
     this.#storePath = opts.storePath ?? profilesPath(this.#env);
     this.#store = loadProfileStore(this.#storePath);
   }
@@ -176,6 +180,7 @@ export class ProfileManager {
         ...(this.#project === undefined ? {} : { project: this.#project }),
         store: this.#store,
         ...(envProfile === undefined ? {} : { envProfile }),
+        ...(this.#provider === undefined ? {} : { providerFlag: this.#provider }),
         env: this.#env,
       }).activeProvider;
     } catch {
@@ -185,6 +190,12 @@ export class ProfileManager {
 
   #reload(): void {
     this.#store = loadProfileStore(this.#storePath);
+  }
+
+  /** Variável de credencial presente no env desta execução. */
+  credentialPresent(name: string): boolean {
+    const value = this.#env[name];
+    return value !== undefined && value.trim() !== "";
   }
 
   #requireEditable(id: string): void {
