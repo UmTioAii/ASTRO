@@ -307,15 +307,15 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         initial={screen}
         onClose={() => setScreen(undefined)}
         onActivate={(id) => {
+          session.reload?.();
+          session.setProvider(id);
           try {
-            session.reload?.();
-            session.setProvider(id);
             saveTuiConfig(cwd, { lastModel: session.snapshot().model });
-            setStatus(statusOf(session.snapshot()));
-            setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
-          } catch (error) {
-            setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
+          } catch {
+            // falha ao persistir o último modelo não desfaz a ativação em memória
           }
+          setStatus(statusOf(session.snapshot()));
+          setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
         }}
         onChanged={() => {
           try {

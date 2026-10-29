@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
+import { isAuthHeader, looksLikeSecret } from "./secrets";
+import { urlProblem } from "./url-safety";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
 /** Configuração comum a todos os providers. */
@@ -290,7 +292,14 @@ function validateHeaders(value: unknown, field: string): Record<string, string> 
     if (name.trim().length === 0) {
       fail(`config inválida: "${field}" contém um nome de header vazio`);
     }
-    headers[name] = expectString(headerValue, `${field}.${name}`);
+    if (isAuthHeader(name)) {
+      fail(`config inválida: "${field}.${name}" é header de autenticação; use credentialRef`);
+    }
+    const text = expectString(headerValue, `${field}.${name}`);
+    if (looksLikeSecret(text)) {
+      fail(`config inválida: "${field}.${name}" parece conter uma credencial; use credentialRef`);
+    }
+    headers[name] = text;
   }
   return headers;
 }
@@ -315,9 +324,12 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
   };
 
   if (kind === "openai-compat") {
+    const baseUrl = expectString(raw.baseUrl, `${field}.baseUrl`);
+    const baseUrlIssue = urlProblem(baseUrl);
+    if (baseUrlIssue !== undefined) fail(`config inválida: "${field}.baseUrl" ${baseUrlIssue}`);
     return {
       kind,
-      baseUrl: expectString(raw.baseUrl, `${field}.baseUrl`),
+      baseUrl,
       ...(raw.credentialRef === undefined
         ? {}
         : { credentialRef: expectString(raw.credentialRef, `${field}.credentialRef`) }),
@@ -329,6 +341,10 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
 
   if (kind === "codex-oauth") {
     const baseUrl = raw.baseUrl === undefined ? undefined : expectString(raw.baseUrl, `${field}.baseUrl`);
+    if (baseUrl !== undefined) {
+      const baseUrlIssue = urlProblem(baseUrl);
+      if (baseUrlIssue !== undefined) fail(`config inválida: "${field}.baseUrl" ${baseUrlIssue}`);
+    }
     return {
       kind,
       credentialsPath: expectString(raw.credentialsPath, `${field}.credentialsPath`),

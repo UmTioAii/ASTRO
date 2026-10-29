@@ -115,7 +115,7 @@ export async function runProviderWizard(
     return undefined;
   }
 
-  const quotaDomain = current?.quotaDomain ?? entry?.key;
+  const quotaDomain = current?.quotaDomain ?? entry?.quotaDomain ?? entry?.key;
   const draft: ProfileDraft = {
     name,
     kind,

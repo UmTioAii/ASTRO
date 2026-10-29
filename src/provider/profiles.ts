@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ConfigError, loadConfig, validateConfig, type AstroConfig, type ModelConfig, type ProviderConfig } from "../config";
 import { isKnownTag } from "../tags";
+import { isAuthHeader, looksLikeSecret } from "../secrets";
+import { urlProblem } from "../url-safety";
 
 export interface ProfileModel {
   id: string;
@@ -35,16 +37,8 @@ const ROOT_KEYS = new Set(["version", "activeProfileId", "profiles"]);
 const PROFILE_KEYS = new Set([
   "id", "name", "kind", "baseUrl", "credentialRef", "credentialsPath", "quotaDomain", "headers", "models",
 ]);
-const AUTH_HEADERS = /(^|-)authorization$|(^|-)api[-_]?key$|(^|-)key$|(^|-)secret$|^cookie$|^set-cookie$|^x-auth-|token$/;
-const SECRET_VALUE = /^(sk-|nvapi-|AIza|ghp_|github_pat_|glpat-|xox[baprs]-)/;
-const SENSITIVE_QUERY = /^(api[-_]?key|key|token|access[-_]?token|secret)$/i;
 const PROFILE_ID = /^[a-z0-9][a-z0-9-]*$/;
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
-
-/** Credencial cabe em qualquer header que carregue auth, não só nos quatro óbvios. */
-function isAuthHeader(name: string): boolean {
-  return AUTH_HEADERS.test(name.toLowerCase());
-}
 
 function fail(message: string): never {
   throw new Error(`perfil inválido: ${message}`);
@@ -78,7 +72,7 @@ function validateHeaders(raw: unknown, field: string): Record<string, string> {
       fail(`header de autenticação não é permitido em "${field}": "${name.toLowerCase()}"`);
     }
     const text = asString(value, `${field}.${name}`);
-    if (SECRET_VALUE.test(text.trim())) {
+    if (looksLikeSecret(text)) {
       fail(`"${field}.${name}" parece conter uma credencial; use credentialRef`);
     }
     out[name] = text;
@@ -105,23 +99,8 @@ function validateModel(raw: unknown, field: string): ProfileModel {
 
 function validateBaseUrl(value: unknown, field: string): string {
   const raw = asString(value, field);
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    fail(`"${field}" deve ser uma URL http(s) válida`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    fail(`"${field}" deve ser uma URL http(s) válida`);
-  }
-  if (url.username !== "" || url.password !== "") {
-    fail(`"${field}" não pode embutir credencial; use credentialRef`);
-  }
-  for (const key of url.searchParams.keys()) {
-    if (SENSITIVE_QUERY.test(key)) {
-      fail(`"${field}" não pode levar credencial na query (${key}); use credentialRef`);
-    }
-  }
+  const problem = urlProblem(raw);
+  if (problem !== undefined) fail(`"${field}" ${problem}`);
   return raw;
 }
 
