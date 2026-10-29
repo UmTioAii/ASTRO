@@ -23,6 +23,8 @@ export interface CommandOutcome {
   exit?: boolean;
   /** Caminho gravado; `null` quando a gravação falhou (limpa o anterior). */
   lastFile?: string | null;
+  /** Abre a tela de providers com o modo inicial. */
+  openProviders?: { mode: "list" | "add" | "edit" | "remove"; target?: string };
 }
 
 type SlashCommand = Exclude<ReplCommand, { kind: "prompt" } | { kind: "empty" }>;
@@ -62,23 +64,23 @@ export async function runCommand(
     case "providers":
       return { entries: [{ kind: "info", text: providerLines(session) }] };
     case "provider": {
-      if (command.action === "list") {
-        return { entries: [{ kind: "info", text: providerLines(session) }] };
-      }
       if (command.action === "use") {
-        if (command.target === undefined) return { entries: [{ kind: "info", text: providerLines(session) }] };
+        if (command.target === undefined) {
+          return { entries: [], openProviders: { mode: "list" } };
+        }
         try {
           return { entries: [{ kind: "info", text: `provider: ${session.setProvider(command.target)}` }] };
         } catch (error) {
           return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
         }
       }
-      return {
-        entries: [{
-          kind: "info",
-          text: `/provider ${command.action} está disponível no astro chat; a tela da TUI entra na próxima fatia`,
-        }],
-      };
+      if (command.action === "list") {
+        return { entries: [], openProviders: { mode: "list" } };
+      }
+      if (command.target === undefined) {
+        return { entries: [], openProviders: { mode: command.action } };
+      }
+      return { entries: [], openProviders: { mode: command.action, target: command.target } };
     }
     case "sessions": {
       if (store === undefined) {

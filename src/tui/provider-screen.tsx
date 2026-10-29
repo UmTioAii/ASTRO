@@ -1,0 +1,300 @@
+/** Tela cheia de providers (TUI): lista + formulário, sem tocar segredo. */
+import { Box, Text, useInput } from "ink";
+import { useState, type ReactElement } from "react";
+import { PROVIDER_CATALOG } from "../provider/catalog";
+import type { ProfileDraft, ProfileManager, ProfileView } from "../provider/profile-manager";
+import type { ProfileModel } from "../provider/profiles";
+import type { ThemeColors } from "./theme";
+
+export interface ProviderScreenProps {
+  manager: ProfileManager;
+  colors: ThemeColors;
+  initial?: { mode: "list" | "add" | "edit" | "remove"; target?: string };
+  onClose: () => void;
+  onActivate: (id: string) => void;
+  onChanged?: () => void;
+}
+
+type Step = "catalog" | "name" | "baseUrl" | "models" | "credential" | "confirm";
+
+const STEPS: Step[] = ["catalog", "name", "baseUrl", "models", "credential", "confirm"];
+const CATALOG = ["custom", ...PROVIDER_CATALOG.map((entry) => entry.key)];
+const DEFAULT_CONTEXT = 128_000;
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel[] {
+  return text
+    .split(/[;,]/)
+    .map((id) => id.trim())
+    .filter((id) => id !== "")
+    .map((id) => {
+      const found = known.find((model) => model.id === id);
+      return found === undefined ? { id, tags: [], context: DEFAULT_CONTEXT } : found;
+    });
+}
+
+export function ProviderScreen({
+  manager, colors, initial, onClose, onActivate, onChanged,
+}: ProviderScreenProps): ReactElement {
+  const [view, setView] = useState<"list" | "form" | "remove">(
+    initial?.mode === "add" || initial?.mode === "edit" ? "form" : initial?.mode === "remove" ? "remove" : "list",
+  );
+  const [selected, setSelected] = useState(() => {
+    if (initial?.target === undefined) return 0;
+    const index = manager.list().findIndex((item) => item.id === initial.target);
+    return index < 0 ? 0 : index;
+  });
+  const [editing, setEditing] = useState<ProfileView | undefined>(
+    initial?.mode === "edit" && initial.target !== undefined
+      ? manager.list().find((item) => item.id === initial.target)
+      : undefined,
+  );
+  const [step, setStep] = useState<Step>(initial?.mode === "edit" ? "name" : "catalog");
+  const [catalogIndex, setCatalogIndex] = useState(0);
+  const [name, setName] = useState(editing?.name ?? "");
+  const [baseUrl, setBaseUrl] = useState(editing?.baseUrl ?? "");
+  const [models, setModels] = useState(editing?.models.map((model) => model.id).join(";") ?? "");
+  const [credential, setCredential] = useState(editing?.credentialRef ?? "");
+  const [message, setMessage] = useState<string | undefined>(undefined);
+
+
+  const list = manager.list();
+  const current = list[Math.min(selected, Math.max(list.length - 1, 0))];
+  const entry = catalogIndex === 0 ? undefined : PROVIDER_CATALOG[catalogIndex - 1];
+
+  const startAdd = (): void => {
+    setEditing(undefined);
+    setStep("catalog");
+    setCatalogIndex(0);
+    setName("");
+    setBaseUrl("");
+    setModels("");
+    setCredential("");
+    setMessage(undefined);
+    setView("form");
+  };
+
+  const startEdit = (profile: ProfileView): void => {
+    if (profile.source !== "global") {
+      setMessage(profile.source === "project"
+        ? `provider "${profile.id}" está definido no astro.config.json`
+        : `provider "${profile.id}" é efêmero (env)`);
+      return;
+    }
+    setEditing(profile);
+    setStep("name");
+    setName(profile.name);
+    setBaseUrl(profile.baseUrl ?? "");
+    setModels(profile.models.map((model) => model.id).join(";"));
+    setCredential(profile.credentialRef ?? "");
+    setMessage(undefined);
+    setView("form");
+  };
+
+  const save = (): void => {
+    const known = [...(editing?.models ?? []), ...(entry?.models ?? [])];
+    const parsedModels = parseModels(models, known);
+    if (parsedModels.length === 0) {
+      setMessage("informe ao menos um modelo");
+      return;
+    }
+    const draft: ProfileDraft = {
+      name,
+      kind: editing?.kind ?? entry?.kind ?? "openai-compat",
+      models: parsedModels,
+      ...(baseUrl === "" ? {} : { baseUrl }),
+      ...(credential === "" ? {} : { credentialRef: credential }),
+      ...(editing?.credentialsPath === undefined && entry?.credentialsPath === undefined
+        ? {}
+        : { credentialsPath: editing?.credentialsPath ?? entry?.credentialsPath }),
+      ...(editing?.quotaDomain === undefined && entry === undefined
+        ? {}
+        : { quotaDomain: editing?.quotaDomain ?? entry?.key }),
+    };
+    try {
+      const saved = editing === undefined ? manager.add(draft) : manager.edit(editing.id, draft);
+      if (editing === undefined) {
+        try {
+          manager.use(saved.id);
+          onActivate(saved.id);
+        } catch (error) {
+          setMessage(messageOf(error));
+        }
+      }
+      onChanged?.();
+      setView("list");
+      setMessage(`salvo: ${saved.id}`);
+    } catch (error) {
+      setMessage(messageOf(error));
+    }
+  };
+
+  useInput((input, key) => {
+    if (view === "list") {
+      if (key.escape) { onClose(); return; }
+      if (key.upArrow) { setSelected((value) => Math.max(0, value - 1)); return; }
+      if (key.downArrow) { setSelected((value) => Math.min(list.length - 1, value + 1)); return; }
+      if (input === "a") { startAdd(); return; }
+      if (input === "e") { if (current !== undefined) startEdit(current); return; }
+      if (input === "d") {
+        if (current === undefined) return;
+        if (current.source !== "global") {
+          setMessage(current.source === "project"
+            ? `provider "${current.id}" está definido no astro.config.json`
+            : `provider "${current.id}" é efêmero (env)`);
+          return;
+        }
+        setView("remove");
+        return;
+      }
+      if (key.return && current !== undefined) {
+        try {
+          if (current.source === "global") manager.use(current.id);
+          onActivate(current.id);
+          setMessage(`ativo: ${current.id}`);
+          onChanged?.();
+        } catch (error) {
+          setMessage(messageOf(error));
+        }
+      }
+      return;
+    }
+
+    if (view === "remove") {
+      if (input === "s" && current !== undefined) {
+        try {
+          manager.remove(current.id);
+          onChanged?.();
+              setMessage(`removido: ${current.id}`);
+        } catch (error) {
+          setMessage(messageOf(error));
+        }
+        setView("list");
+        return;
+      }
+      if (input === "n" || key.escape) setView("list");
+      return;
+    }
+
+    if (key.escape) {
+      const index = STEPS.indexOf(step);
+      if (index <= 0) { setView("list"); return; }
+      setStep(STEPS[index - 1] as Step);
+      return;
+    }
+
+    if (step === "catalog") {
+      if (key.upArrow) { setCatalogIndex((value) => Math.max(0, value - 1)); return; }
+      if (key.downArrow) { setCatalogIndex((value) => Math.min(CATALOG.length - 1, value + 1)); return; }
+      if (key.return) {
+        const chosen = catalogIndex === 0 ? undefined : PROVIDER_CATALOG[catalogIndex - 1];
+        if (chosen !== undefined) {
+          setName(chosen.name);
+          setBaseUrl(chosen.baseUrl ?? "");
+          setModels(chosen.models.map((model) => model.id).join(";"));
+          setCredential(chosen.credentialRef ?? "");
+        }
+        setStep("name");
+      }
+      return;
+    }
+
+    if (key.return) {
+      const index = STEPS.indexOf(step);
+      if (step === "baseUrl" && baseUrl.trim() === "") { setMessage("base url é obrigatória"); return; }
+      if (step === "credential" && credential.trim() !== "") {
+        const valid = /^[A-Z_][A-Z0-9_]*$/.test(credential.trim());
+        if (!valid) { setMessage("use o nome da variável, ex.: OPENAI_API_KEY"); return; }
+      }
+      setMessage(undefined);
+      setStep(STEPS[index + 1] ?? "confirm");
+      if (step === "confirm") save();
+      return;
+    }
+    if (key.backspace || key.delete) {
+      if (step === "name") setName((value) => value.slice(0, -1));
+      else if (step === "baseUrl") setBaseUrl((value) => value.slice(0, -1));
+      else if (step === "models") setModels((value) => value.slice(0, -1));
+      else if (step === "credential") setCredential((value) => value.slice(0, -1));
+      return;
+    }
+    if (input === "") return;
+    if (step === "name") setName((value) => value + input);
+    else if (step === "baseUrl") setBaseUrl((value) => value + input);
+    else if (step === "models") setModels((value) => value + input);
+    else if (step === "credential") setCredential((value) => value + input);
+  });
+
+  if (view === "remove" && current !== undefined) {
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Remover {current.name}?</Text>
+        <Text dimColor>s remover · n cancelar</Text>
+        {message === undefined ? null : <Text color={colors.error}>{message}</Text>}
+      </Box>
+    );
+  }
+
+  if (view === "form") {
+    const labels: Record<Step, string> = {
+      catalog: "De onde partir?",
+      name: "Nome",
+      baseUrl: "Base URL",
+      models: "Modelos (separe com ;)",
+      credential: "Variável da chave (vazio = sem chave)",
+      confirm: "Confirmar",
+    };
+    const value = step === "name" ? name
+      : step === "baseUrl" ? baseUrl
+        : step === "models" ? models
+          : step === "credential" ? credential
+            : "";
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text bold>{editing === undefined ? "Novo provider" : `Editar ${editing.id}`}</Text>
+        <Text>{labels[step]}</Text>
+        {step === "catalog"
+          ? CATALOG.map((item, index) => (
+              <Text key={item} color={index === catalogIndex ? colors.accent : undefined}>
+                {index === catalogIndex ? "> " : "  "}{item}
+              </Text>
+            ))
+          : step === "confirm"
+            ? (
+                <Box flexDirection="column">
+                  <Text>nome:    {name}</Text>
+                  <Text>baseUrl: {baseUrl || "-"}</Text>
+                  <Text>modelos: {models}</Text>
+                  <Text>chave:   {credential || "-"}</Text>
+                  <Text dimColor>enter salvar · esc voltar</Text>
+                </Box>
+              )
+            : <Text color={colors.accent}>{value || " "}</Text>}
+        <Text dimColor>
+          {step === "catalog" ? "↑↓ escolher · enter continuar · esc voltar" : `${STEPS.indexOf(step) + 1}/6 · enter continuar · esc voltar`}
+        </Text>
+        {message === undefined ? null : <Text color={colors.error}>{message}</Text>}
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+      <Text bold>Providers</Text>
+      {list.length === 0 ? <Text dimColor>nenhum provider</Text> : null}
+      {list.map((profile, index) => (
+        <Text key={profile.id} color={index === selected ? colors.accent : undefined}>
+          {index === selected ? "> " : "  "}
+          {profile.source === "env" ? "◐" : profile.active ? "●" : "○"} {profile.name} ({profile.id}){" "}
+          {profile.kind} {profile.baseUrl ?? profile.credentialsPath ?? "-"}{" "}
+          cred={profile.credentialRef ?? "sem chave"} [{profile.source}]
+        </Text>
+      ))}
+      <Text dimColor>a adicionar · e editar · d remover · enter ativar · esc voltar</Text>
+      {message === undefined ? null : <Text color={colors.error}>{message}</Text>}
+    </Box>
+  );
+}

@@ -30,6 +30,7 @@ IDs estáveis; não renumerar.
 | D-18 | **Taxonomia de erros** (ver D-14) | `ErrorClass` type + `ProviderError` class. Usado em `openai-compat.ts`, `codex-oauth.ts`. | Tratamento uniforme; logs e métricas por classe. |
 | D-19 | **Ciclo de vida de modelo** | `ModelStatus`: `active` | `deprecated` | `disabled`. `Registry.require()` só devolve `active`. | Descontinuação segura; modelos legados ficam na config mas não são selecionáveis. |
 | D-20 | **Quota domain por provider** | `quotaDomain` agrupa credenciais que compartilham limite (ex.: mesma conta OpenRouter). Default `"default"`. | Ledger e futuras quotas operam no domínio correto. |
+| D-21 | **Perfis globais de provider** | `~/.astro/providers.json` (`ASTRO_HOME`) guarda perfis sem segredo; projeto vence por nome; ativo segue `--provider` > `ASTRO_PROVIDER` > `activeProfileId` > `agent.model`; env é efêmero e a baseline sem config é somente leitura. | CRUD pelo `/provider` e onboarding sem editar JSON (#201); a origem fica auditada em `run.started`. |
 
 ---
 

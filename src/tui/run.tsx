@@ -1,7 +1,10 @@
 /** Bootstrap da TUI: Ink é carregado por import dinâmico só neste comando. */
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { ConfigError } from "../config";
+import { loadConfig } from "../config";
+import { ProfileManager } from "../provider/profile-manager";
 import { redactSecrets } from "../sanitize-external";
 import { createApprovalBridge } from "./approvals";
 import { createShellRunner } from "./shell";
@@ -72,6 +75,13 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
     const session = opts.provider === undefined ? openSession(createSession, cwd) : createSession();
     for (const warning of session.warnings) console.error(`aviso: ${warning}`);
     const store = new SessionStore(resolve(cwd, ".astro", "sessions"));
+    const configPath = resolve(opts.configPath);
+    const project = existsSync(configPath) ? loadConfig(configPath) : undefined;
+    const manager = new ProfileManager({
+      project,
+      env: opts.env ?? process.env,
+      ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+    });
     let instance: ReturnType<typeof render> | undefined;
     const branch = gitBranch(cwd);
     try {
@@ -83,6 +93,7 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
           store={store}
           approvals={approvals}
           shell={shell}
+          manager={manager}
           onExit={() => instance?.unmount()}
         />,
         TUI_RENDER_OPTIONS,
