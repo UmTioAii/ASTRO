@@ -34,7 +34,9 @@ const ROOT_KEYS = new Set(["version", "activeProfileId", "profiles"]);
 const PROFILE_KEYS = new Set([
   "id", "name", "kind", "baseUrl", "credentialRef", "credentialsPath", "quotaDomain", "headers", "models",
 ]);
-const AUTH_HEADERS = /(^|-)authorization$|(^|-)api[-_]?key$|^cookie$|^set-cookie$|^x-auth-|token$/;
+const AUTH_HEADERS = /(^|-)authorization$|(^|-)api[-_]?key$|(^|-)key$|(^|-)secret$|^cookie$|^set-cookie$|^x-auth-|token$/;
+const SECRET_VALUE = /^(sk-|nvapi-|AIza|ghp_|github_pat_|glpat-|xox[baprs]-)/;
+const SENSITIVE_QUERY = /^(api[-_]?key|key|token|access[-_]?token|secret)$/i;
 const PROFILE_ID = /^[a-z0-9][a-z0-9-]*$/;
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -74,7 +76,11 @@ function validateHeaders(raw: unknown, field: string): Record<string, string> {
     if (isAuthHeader(name)) {
       fail(`header de autenticação não é permitido em "${field}": "${name.toLowerCase()}"`);
     }
-    out[name] = asString(value, `${field}.${name}`);
+    const text = asString(value, `${field}.${name}`);
+    if (SECRET_VALUE.test(text.trim())) {
+      fail(`"${field}.${name}" parece conter uma credencial; use credentialRef`);
+    }
+    out[name] = text;
   }
   return out;
 }
@@ -106,6 +112,14 @@ function validateBaseUrl(value: unknown, field: string): string {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     fail(`"${field}" deve ser uma URL http(s) válida`);
+  }
+  if (url.username !== "" || url.password !== "") {
+    fail(`"${field}" não pode embutir credencial; use credentialRef`);
+  }
+  for (const key of url.searchParams.keys()) {
+    if (SENSITIVE_QUERY.test(key)) {
+      fail(`"${field}" não pode levar credencial na query (${key}); use credentialRef`);
+    }
   }
   return raw;
 }

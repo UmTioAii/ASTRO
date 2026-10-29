@@ -168,8 +168,37 @@ test("rejeita headers de credencial menos óbvios", () => {
     { "Proxy-Authorization": "x" },
     { Cookie: "session=1" },
     { "x-amz-security-token": "x" },
+    { "x-rapidapi-key": "x" },
+    { "x-functions-key": "x" },
+    { "x-secret-key": "x" },
   ]) {
     expect(() => validateProfileStore(storeWith({ ...baseProfile, headers })))
       .toThrow(/header de autenticação/);
   }
+});
+
+test("rejeita valor de header com cara de chave", () => {
+  expect(() => validateProfileStore(storeWith({
+    ...baseProfile,
+    headers: { "X-Custom": "sk-live-do-not-store" },
+  }))).toThrow(/credencial/);
+});
+
+test("rejeita credencial embutida na baseUrl", () => {
+  expect(() => validateProfileStore(storeWith({
+    ...baseProfile,
+    baseUrl: "https://user:sk-live-do-not-store@proxy.example/v1",
+  }))).toThrow(/credencial/);
+  expect(() => validateProfileStore(storeWith({
+    ...baseProfile,
+    baseUrl: "https://proxy.example/v1?api_key=sk-live",
+  }))).toThrow(/query/);
+});
+
+test("aceita query não sensível na baseUrl", () => {
+  const store = validateProfileStore(storeWith({
+    ...baseProfile,
+    baseUrl: "https://proxy.example/v1?version=1",
+  }));
+  expect(store.profiles[0]!.baseUrl).toContain("version=1");
 });

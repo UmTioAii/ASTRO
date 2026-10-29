@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadProfileStore, profilesPath, saveProfileStore } from "../src/provider/profiles";
@@ -44,9 +44,10 @@ test("save cria o diretório pai", () => {
 });
 
 test("save não deixa arquivo temporário", () => {
-  const path = join(tempHome(), "providers.json");
+  const dir = tempHome();
+  const path = join(dir, "providers.json");
   saveProfileStore({ version: 1, profiles: [profile] }, path);
-  expect(existsSync(`${path}.tmp`)).toBe(false);
+  expect(readdirSync(dir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 });
 
 test("JSON corrompido falha citando o caminho", () => {
