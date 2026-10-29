@@ -1,11 +1,31 @@
 {
-  "name": "astro",
-  "version": "0.1.0",
+  "name": "@umtioai/astro-harness",
+  "version": "0.1.0-alpha.0",
   "description": "Harness single-agent em Bun/TypeScript com ledger de uso e auditoria append-only.",
-  "private": true,
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "astro": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UmTioAii/ASTRO.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "build": "bun build src/cli.ts --target=bun --external ink --external react --outfile dist/cli.js",
+    "prepack": "bun run build",
+    "prepublishOnly": "bun run typecheck",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "eval": "bun src/cli.ts eval",

@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { runTask, type RunReport, createProvider } from "./app";
 import { existsSync } from "node:fs";
 import { loadConfig, validateConfig } from "./config";
@@ -77,24 +78,24 @@ function ttyBudgetDecider(): BudgetDecider | undefined {
 }
 
 const USAGE = `Uso:
-  bun src/cli.ts run "<pedido>" [--config <path>] [--cwd <dir>] [--provider <name>]
-  bun src/cli.ts eval [--threshold <0..1>] [--golden <dir>] [--report <path>] [--baseline <path>] [--write-baseline]
-  bun src/cli.ts bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
-  bun src/cli.ts serve [--port <n>]
-  bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
-  bun src/cli.ts chat [--config <path>] [--cwd <dir>] [--provider <name>]
-  bun src/cli.ts tui [--config <path>] [--cwd <dir>] [--provider <name>]
-  bun src/cli.ts resume <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
-  bun src/cli.ts health [--config <path>]
-  bun src/cli.ts providers <health|list|test> [--config <path>]
-  bun src/cli.ts handoff show <handoff_id> [--config <path>]
-  bun src/cli.ts cost --by-agent [--config <path>]
-  bun src/cli.ts pool <list|health> [--config <path>]
-  bun src/cli.ts agents list [--config <path>]
-  bun src/cli.ts config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
-  bun src/cli.ts skills <list|show|validate|install|remove|verify> [--user] [--force]
-  bun src/cli.ts mcp <list|test <server> <tool>> [--args <json>] [--config <path>]
-  bun src/cli.ts --help
+  astro run "<pedido>" [--config <path>] [--cwd <dir>] [--provider <name>]
+  astro eval [--threshold <0..1>] [--golden <dir>] [--report <path>] [--baseline <path>] [--write-baseline]
+  astro bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
+  astro serve [--port <n>]
+  astro replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
+  astro chat [--config <path>] [--cwd <dir>] [--provider <name>]
+  astro tui [--config <path>] [--cwd <dir>] [--provider <name>]
+  astro resume <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
+  astro health [--config <path>]
+  astro providers <health|list|test> [--config <path>]
+  astro handoff show <handoff_id> [--config <path>]
+  astro cost --by-agent [--config <path>]
+  astro pool <list|health> [--config <path>]
+  astro agents list [--config <path>]
+  astro config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
+  astro skills <list|show|validate|install|remove|verify> [--user] [--force]
+  astro mcp <list|test <server> <tool>> [--args <json>] [--config <path>]
+  astro --help
 
 Opções:
   --config <path>  configuração do Astro (default: astro.config.json)
