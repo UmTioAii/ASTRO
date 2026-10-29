@@ -424,11 +424,20 @@ export function resolveEffectiveConfig(input: {
   }
 
   const { model: _resolvedModel, ...agentSansModel } = base.agent;
+  // `validateConfig` devolve agents com `model` resolvido + `profile`; revalidar os dois falha.
+  const agentsSansModel = base.agents === undefined
+    ? undefined
+    : Object.fromEntries(Object.entries(base.agents).map(([name, entry]) => {
+        if (entry.profile === undefined) return [name, entry];
+        const { model: _resolved, ...rest } = entry;
+        return [name, rest];
+      }));
   const config = validateConfig({
     ...base,
     providers,
     models,
     agent: pooled ? agentSansModel : { ...base.agent, model: modelRef },
+    ...(agentsSansModel === undefined ? {} : { agents: agentsSansModel }),
   });
   const providerSource: ProviderSource = project !== undefined && Object.hasOwn(project.providers, activeProvider)
     ? "project"

@@ -273,6 +273,22 @@ test("perfil salvo com id env colide e avisa", () => {
   expect(result.warnings.join(" ")).toMatch(/env.*ignorado/);
 });
 
+test("agents nomeados com profile sobrevivem à revalidação", () => {
+  const base = project();
+  const withAgents = validateConfig({
+    ...base,
+    modelPool: { fast: { model: "p/m1" } },
+    agents: { coder: { profile: "fast" } },
+  });
+  const result = resolveEffectiveConfig({
+    project: withAgents,
+    store: store(profile()),
+    env: {},
+  });
+  expect(result.config.agents?.coder?.model).toBe("p/m1");
+  expect(result.config.agents?.coder?.profile).toBe("fast");
+});
+
 test("--provider desconhecido é erro", () => {
   expect(() => resolveEffectiveConfig({
     project: project(),
