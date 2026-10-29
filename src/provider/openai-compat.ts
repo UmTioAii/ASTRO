@@ -18,7 +18,7 @@ interface RetryOptions {
 
 interface OpenAICompatProviderOptions {
   baseUrl: string;
-  apiKey: string;
+  apiKey?: string;
   headers?: Record<string, string>;
   retry?: RetryOptions;
   fetchFn?: FetchLike;
@@ -206,7 +206,7 @@ export class OpenAICompatProvider implements Provider {
 
   constructor(opts: OpenAICompatProviderOptions) {
     this.url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`;
-    this.apiKey = opts.apiKey;
+    this.apiKey = opts.apiKey ?? "";
     this.fetchFn = opts.fetchFn ?? fetch;
 
     const headers = new Headers();
@@ -214,7 +214,7 @@ export class OpenAICompatProvider implements Provider {
       headers.set(name, value);
     }
     headers.set("content-type", "application/json");
-    headers.set("authorization", `Bearer ${opts.apiKey}`);
+    if (this.apiKey.length > 0) headers.set("authorization", `Bearer ${this.apiKey}`);
     this.headers = headers;
 
     const maxAttempts = opts.retry?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;

@@ -100,8 +100,8 @@ export async function runHealthCheck(
   for (const [name, provider] of Object.entries(config.providers)) {
     if (isOpenAICompat(provider)) {
       const credentialRef = provider.credentialRef;
-      const apiKey = env[credentialRef];
-      if (apiKey === undefined || apiKey.length === 0) {
+      const apiKey = credentialRef === undefined ? undefined : env[credentialRef];
+      if (credentialRef !== undefined && (apiKey === undefined || apiKey.length === 0)) {
         checks.push({
           name: `provider:${name}`,
           status: "down",
@@ -110,7 +110,8 @@ export async function runHealthCheck(
         });
         continue;
       }
-      const headers: Record<string, string> = { authorization: `Bearer ${apiKey}` };
+      const headers: Record<string, string> = {};
+      if (apiKey !== undefined) headers.authorization = `Bearer ${apiKey}`;
       for (const [h, v] of Object.entries(provider.headers ?? {})) headers[h] = v;
       const result = await checkEndpoint(provider.baseUrl, headers, timeoutMs, fetchLike);
       checks.push({
@@ -194,11 +195,13 @@ export async function testProvider(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchLike = opts.fetchLike ?? fetch;
   if (isOpenAICompat(provider)) {
-    const apiKey = env[provider.credentialRef];
-    if (apiKey === undefined || apiKey.length === 0) {
-      return { name: `provider:${name}`, status: "down", priority: provider.priority ?? DEFAULT_PRIORITY, detail: `defina ${provider.credentialRef} no ambiente` };
+    const credentialRef = provider.credentialRef;
+    const apiKey = credentialRef === undefined ? undefined : env[credentialRef];
+    if (credentialRef !== undefined && (apiKey === undefined || apiKey.length === 0)) {
+      return { name: `provider:${name}`, status: "down", priority: provider.priority ?? DEFAULT_PRIORITY, detail: `defina ${credentialRef} no ambiente` };
     }
-    const headers: Record<string, string> = { authorization: `Bearer ${apiKey}` };
+    const headers: Record<string, string> = {};
+    if (apiKey !== undefined) headers.authorization = `Bearer ${apiKey}`;
     for (const [h, v] of Object.entries(provider.headers ?? {})) headers[h] = v;
     const result = await checkEndpoint(provider.baseUrl, headers, timeoutMs, fetchLike);
     return {

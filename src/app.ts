@@ -120,7 +120,7 @@ function expandHome(path: string): string {
 
 interface ProviderSetup {
   provider: Provider;
-  credentialRef: string;
+  credentialRef?: string;
   quotaDomain: string;
 }
 
@@ -139,13 +139,18 @@ function providerConfigFor(config: AstroConfig, model: ModelEntry): ProviderConf
 function providerIdentity(
   config: AstroConfig,
   provider: string,
-): { credentialRef: string; quotaDomain: string } {
+): { credentialRef?: string; quotaDomain: string } {
   const providerConfig = config.providers[provider];
   if (providerConfig === undefined) {
     throw new ConfigError(`provider "${provider}" não encontrado na configuração`);
   }
   const quotaDomain = providerConfig.quotaDomain ?? "default";
-  if (isOpenAICompat(providerConfig)) return { credentialRef: providerConfig.credentialRef, quotaDomain };
+  if (isOpenAICompat(providerConfig)) {
+    return {
+      ...(providerConfig.credentialRef === undefined ? {} : { credentialRef: providerConfig.credentialRef }),
+      quotaDomain,
+    };
+  }
   if (isCodexOAuth(providerConfig)) {
     return { credentialRef: expandHome(providerConfig.credentialsPath), quotaDomain };
   }
@@ -182,26 +187,30 @@ export function createProvider(
   const { credentialRef, quotaDomain } = providerIdentity(config, model.provider);
 
   if (isOpenAICompat(providerConfig)) {
-    const apiKey = env[credentialRef];
-    if (apiKey === undefined || apiKey.length === 0) {
+    const apiKey = credentialRef === undefined ? undefined : env[credentialRef];
+    if (credentialRef !== undefined && (apiKey === undefined || apiKey.length === 0)) {
       throw new Error(`defina ${credentialRef} no ambiente`);
     }
 
     return {
       provider: new OpenAICompatProvider({
         baseUrl: providerConfig.baseUrl,
-        apiKey,
+        ...(apiKey === undefined ? {} : { apiKey }),
         ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
       }),
-      credentialRef,
+      ...(credentialRef === undefined ? {} : { credentialRef }),
       quotaDomain,
     };
   }
 
   if (isCodexOAuth(providerConfig)) {
+    const credentialsPath = credentialRef;
+    if (credentialsPath === undefined) {
+      throw new ConfigError(`provider "${model.provider}" sem credentialsPath`);
+    }
     return {
       provider: new CodexOAuthProvider({
-        credentialsPath: credentialRef,
+        credentialsPath,
         ...(providerConfig.baseUrl === undefined ? {} : { baseUrl: providerConfig.baseUrl }),
         ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
       }),
@@ -240,7 +249,7 @@ function identityResolver(config: AstroConfig, registry: Registry): IdentityReso
     return {
       provider,
       model,
-      credentialRef,
+      ...(credentialRef === undefined ? {} : { credentialRef }),
       quotaDomain,
       ...(price === undefined ? {} : { price }),
     };
@@ -271,7 +280,7 @@ function createGuardedProvider(
     tipo: "credential.acquired",
     payload: {
       provider: model.provider,
-      credentialRef: setup.credentialRef,
+      ...(setup.credentialRef === undefined ? {} : { credentialRef: setup.credentialRef }),
       quotaDomain: setup.quotaDomain,
       ...(profile === undefined ? {} : { profile }),
     },
@@ -621,7 +630,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const secretEnvNames: string[] = [];
   for (const provider of Object.values(config.providers)) {
     if (isOpenAICompat(provider)) {
-      secretEnvNames.push(provider.credentialRef);
+      if (provider.credentialRef !== undefined) secretEnvNames.push(provider.credentialRef);
     }
   }
 

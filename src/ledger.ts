@@ -19,7 +19,7 @@ export interface LedgerEntry {
   agent: string;
   provider: string;
   model: string;
-  credentialRef: string;
+  credentialRef?: string;
   quotaDomain: string;
   tokensIn: number;
   tokensOut: number;
