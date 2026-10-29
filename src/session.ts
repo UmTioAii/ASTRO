@@ -254,7 +254,15 @@ export async function runSession(
     throw new BudgetExceededError("ceiling", status);
   };
 
-  ensureAgentCreated(opts.ledger, opts.audit, opts.run, opts.agent, opts.model.id, opts.agentProfile);
+  ensureAgentCreated(
+    opts.ledger,
+    opts.audit,
+    opts.run,
+    opts.agent,
+    opts.model.id,
+    { provider: opts.model.provider, ...(opts.credentialRef === undefined ? {} : { credentialRef: opts.credentialRef }) },
+    opts.agentProfile,
+  );
 
   try {
     let effectiveMaxSteps = opts.maxSteps;
@@ -435,20 +443,28 @@ function interruptReason(error: unknown, signal?: AbortSignal): string {
   return error instanceof Error ? error.name : String(error);
 }
 
-/** Está ativo? O último evento `agent` do id no run é `created`. */
+/** Está ativo? O último evento `agent` do id no run não é `destroyed` (created/identity contam). */
 function agentActive(ledger: Ledger, run: string, agentId: string): boolean {
-  return ledger.readAllEntries()
+  const last = ledger.readAllEntries()
     .filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === run && e.agent_id === agentId)
-    .at(-1)?.event === "created";
+    .at(-1);
+  return last !== undefined && last.event !== "destroyed";
 }
 
-/** Garante um `agent.created` (idempotente; reabre agente já destruído — F-22). */
+export interface AgentIdentity {
+  provider: string;
+  /** Nome da variável; nunca o valor (I-03). */
+  credentialRef?: string;
+}
+
+/** Garante um `agent.created` (idempotente; reabre agente já destruído - F-22). */
 function ensureAgentCreated(
   ledger: Ledger,
   audit: Auditor,
   run: string,
   agentId: string,
   model: string,
+  identity: AgentIdentity,
   profile?: string,
   parentAgentId?: string,
 ): void {
@@ -458,11 +474,19 @@ function ensureAgentCreated(
     agent_id: agentId,
     session_id: run,
     model,
+    provider: identity.provider,
+    ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
     ...(profile === undefined ? {} : { profile }),
     ...(parentAgentId === undefined ? {} : { parent_agent_id: parentAgentId }),
   });
   audit.append({ run, agent: agentId, tipo: "agent.created",
-    payload: { agent_id: agentId, model, ...(parentAgentId === undefined ? {} : { parent_agent_id: parentAgentId }) } });
+    payload: {
+      agent_id: agentId,
+      model,
+      provider: identity.provider,
+      ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
+      ...(parentAgentId === undefined ? {} : { parent_agent_id: parentAgentId }),
+    } });
 }
 
 /** Garante um `agent.destroyed` (só se ativo; ledger → audit, ADR-0008 A5). */
@@ -476,6 +500,8 @@ function ensureAgentDestroyed(ledger: Ledger, audit: Auditor, run: string, agent
 export interface MultiAgentSessionOptions {
   run: string;
   credentialRef?: string;
+  /** Identidade de credencial por modelo; default provider do modelo + credentialRef base. */
+  identityFor?: (model: ModelEntry) => AgentIdentity;
   quotaDomain: string;
   cwd: string;
   provider: Provider;
@@ -540,6 +566,13 @@ export async function runMultiAgentSession(
   let currentAgent = opts.registry.requireAgent(currentAgentName);
   /** Resolve o model do agent no instanciamento (F-29, ADR-0007): profile da pool ou model direto; sem resolvedor usa o base (compat). */
   const modelFor = (agent: AgentEntry): ModelEntry => opts.registry.resolveModel !== undefined ? opts.registry.resolveModel(agent) : opts.baseModel;
+  const identityOf = (model: ModelEntry): AgentIdentity =>
+    opts.identityFor?.(model) ?? {
+      provider: model.provider,
+      ...(model.provider === opts.baseModel.provider && opts.credentialRef !== undefined
+        ? { credentialRef: opts.credentialRef }
+        : {}),
+    };
 
   let currentModel = modelFor(currentAgent);
   /** Gate de troca por handoff (F-19, I-08): só quando a identidade efetiva muda. */
@@ -653,9 +686,9 @@ export async function runMultiAgentSession(
       const resumo = resumeDetail(opts.ledger, pending.artifact);
       messages.push({ role: "system", content: `[Sistema: handoff ${pending.handoff_id} para "${pending.artifact.to}": ${JSON.stringify(pending.artifact)}]${resumo}` });
       ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, pending.artifact.from, "handoff");
-      ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, currentAgent.profile, pending.artifact.from);
+      ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, identityOf(currentModel), currentAgent.profile, pending.artifact.from);
     }
-    ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, currentAgent.profile);
+    ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, identityOf(currentModel), currentAgent.profile);
     agentsUsed.push(currentAgentName);
 
     let effectiveBaseMaxSteps = opts.baseMaxSteps;
@@ -831,7 +864,7 @@ export async function runMultiAgentSession(
           // Self-handoff mantém o mesmo agente ativo: sem destroyed/created (F-22)
           if (handoff.to !== emitterName) {
             ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, emitterName, "handoff");
-            ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, currentAgent.profile, emitterName);
+            ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, identityOf(currentModel), currentAgent.profile, emitterName);
           }
           agentsUsed.push(currentAgentName);
           opts.audit.append({ run: opts.run, agent: entry.artifact.from, tipo: "agent.switch",

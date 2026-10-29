@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
-import { Ledger } from "../src/ledger";
+import { Ledger, LEDGER_SCHEMA_VERSION } from "../src/ledger";
 import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
 import type { ModelEntry } from "../src/registry";
 import { ToolExecutor } from "../src/tools/executor";
@@ -225,7 +225,7 @@ describe("runMultiAgentSession (F3-2)", () => {
     await runMultiAgentSession(opts, "escreva");
     const usage = ledger.readAll();
     expect(usage).toHaveLength(2);
-    expect(usage[0].schemaVersion).toBe(1);
+    expect(usage[0].schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(usage[0].callHashes).toHaveLength(1);
     expect(usage[1].callHashes).toEqual([]);
     const st = ledger.lastState(run)!;

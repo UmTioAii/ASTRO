@@ -19,6 +19,8 @@ export interface AgentNode {
   session_id: string;
   need?: string;
   model?: string;
+  provider?: string;
+  credentialRef?: string;
   profile?: string;
   createdSeq: number;
   destroyedSeq?: number;
@@ -74,6 +76,8 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
         session_id: event.session_id,
         ...(event.need === undefined ? {} : { need: event.need }),
         ...(event.model === undefined ? {} : { model: event.model }),
+        ...(event.provider === undefined ? {} : { provider: event.provider }),
+        ...(event.credentialRef === undefined ? {} : { credentialRef: event.credentialRef }),
         ...(event.profile === undefined ? {} : { profile: event.profile }),
         createdSeq: event.seq,
       });
@@ -81,6 +85,15 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
     }
     const node = nodes.get(event.agent_id);
     if (node === undefined) throw new ReplayIncompleteError(`agente "${event.agent_id}" destruído sem created; replay incompleto`);
+    if (event.event === "identity") {
+      if (event.model !== undefined) node.model = event.model;
+      if (event.provider !== undefined) {
+        node.provider = event.provider;
+        node.credentialRef = event.credentialRef;
+      }
+      if (event.profile !== undefined) node.profile = event.profile;
+      continue;
+    }
     if (node.destroyedSeq !== undefined) throw new ReplayIncompleteError(`agente "${event.agent_id}" destruído duas vezes; replay incompleto`);
     node.destroyedSeq = event.seq;
     if (event.reason !== undefined) node.reason = event.reason;
@@ -102,4 +115,46 @@ export function planResume(ledger: Ledger, run: string): ResumePlan {
   const tree = rebuildAgentTree(ledger, run);
   if (tree.active === undefined) throw new ReplayIncompleteError(`run "${run}" sem agente ativo; replay incompleto`);
   return { run, state: state.state, tree, agent: tree.active };
+}
+
+/**
+ * Compara a identidade gravada do agente com a config atual e recusa troca
+ * silenciosa de provider/credencial (I-08). Ledger antigo (sem provider) é
+ * aceito uma vez e recebe um evento `identity` com a identidade atual.
+ */
+export function assertResumeIdentity(
+  agent: AgentNode,
+  expected: { provider: string; credentialRef?: string },
+  ledger: Ledger,
+  run: string,
+): void {
+  const recordedProvider = agent.provider;
+  if (recordedProvider !== undefined && recordedProvider !== expected.provider) {
+    throw new ReplayIncompleteError(
+      `provider do agente "${agent.agent_id}" mudou (gravado "${recordedProvider}", config "${expected.provider}"); replay incompleto`,
+    );
+  }
+  const recordedCredential = agent.credentialRef;
+  if (recordedProvider !== undefined) {
+    if (recordedCredential !== expected.credentialRef) {
+      const from = recordedCredential ?? "sem credencial";
+      const to = expected.credentialRef ?? "sem credencial";
+      throw new ReplayIncompleteError(
+        `credencial do agente "${agent.agent_id}" mudou (gravado "${from}", config "${to}"); replay incompleto`,
+      );
+    }
+    return;
+  }
+
+  ledger.recordAgentIdentity({
+    run,
+    agent_id: agent.agent_id,
+    session_id: run,
+    provider: expected.provider,
+    ...(agent.model === undefined ? {} : { model: agent.model }),
+    ...(expected.credentialRef === undefined ? {} : { credentialRef: expected.credentialRef }),
+    ...(agent.profile === undefined ? {} : { profile: agent.profile }),
+  });
+  agent.provider = expected.provider;
+  agent.credentialRef = expected.credentialRef;
 }

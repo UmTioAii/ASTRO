@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Ledger } from "../src/ledger";
+import { Ledger, LEDGER_SCHEMA_VERSION } from "../src/ledger";
 import {
   HandoffError,
   buildHandoffArtifact,
@@ -88,7 +88,7 @@ describe("ledger com handoff (F-23)", () => {
     const created = l.recordHandoff("handoff.created", "r1", a);
     l.recordHandoff("handoff.received", "r1", a);
     expect(created.kind).toBe("handoff.created");
-    expect(created.schemaVersion).toBe(1);
+    expect(created.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(created.handoff_id).toBe(handoffId(a));
     expect(l.readAll()).toHaveLength(1);
     expect(l.readHandoffs().map((e) => e.kind)).toEqual(["handoff.created", "handoff.received"]);

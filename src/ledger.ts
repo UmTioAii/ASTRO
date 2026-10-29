@@ -7,7 +7,7 @@ import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./ha
 import { redactSecrets } from "./sanitize-external";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
-export const LEDGER_SCHEMA_VERSION = 1;
+export const LEDGER_SCHEMA_VERSION = 2;
 
 /** Timeout do lock de arquivo do CAS de handoff (F-26); depois segue em melhor esforço. */
 const LEDGER_LOCK_TIMEOUT_MS = 1_000;
@@ -60,7 +60,7 @@ export interface LedgerStateEntry {
 }
 
 /** Evento de ciclo de vida de agent (S-05, PS-5, A4, M3). */
-export type AgentEventKind = "created" | "destroyed";
+export type AgentEventKind = "created" | "destroyed" | "identity";
 
 /** Entrada de lifecycle de agent no ledger (S-05). */
 export interface LedgerAgentEntry {
@@ -74,6 +74,9 @@ export interface LedgerAgentEntry {
   session_id: string;
   need?: string;
   model?: string;
+  provider?: string;
+  /** Nome da variável de credencial; nunca o valor (I-03). */
+  credentialRef?: string;
   profile?: string;
   reason?: string;
   seq: number;
@@ -407,6 +410,8 @@ export class Ledger {
     session_id: string;
     need?: string;
     model?: string;
+    provider?: string;
+    credentialRef?: string;
     profile?: string;
     reason?: string;
   }): LedgerAgentEntry {
@@ -421,12 +426,42 @@ export class Ledger {
       session_id: redactSecrets(opts.session_id),
       ...(opts.need === undefined ? {} : { need: redactSecrets(opts.need) }),
       ...(opts.model === undefined ? {} : { model: redactSecrets(opts.model) }),
+      ...(opts.provider === undefined ? {} : { provider: redactSecrets(opts.provider) }),
+      ...(opts.credentialRef === undefined ? {} : { credentialRef: redactSecrets(opts.credentialRef) }),
       ...(opts.profile === undefined ? {} : { profile: redactSecrets(opts.profile) }),
       ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
       seq: this.takeSeq(),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     // onRecord só é chamado para entradas de uso (kind === "usage")
+    return entry;
+  }
+
+  /** Atualiza a identidade efetiva (provider/credencial) de um agente já ativo. */
+  recordAgentIdentity(opts: {
+    run: string;
+    agent_id: string;
+    session_id: string;
+    model?: string;
+    provider?: string;
+    credentialRef?: string;
+    profile?: string;
+  }): LedgerAgentEntry {
+    const entry: LedgerAgentEntry = {
+      schemaVersion: LEDGER_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      run: redactSecrets(opts.run),
+      kind: "agent",
+      event: "identity",
+      agent_id: redactSecrets(opts.agent_id),
+      session_id: redactSecrets(opts.session_id),
+      ...(opts.model === undefined ? {} : { model: redactSecrets(opts.model) }),
+      ...(opts.provider === undefined ? {} : { provider: redactSecrets(opts.provider) }),
+      ...(opts.credentialRef === undefined ? {} : { credentialRef: redactSecrets(opts.credentialRef) }),
+      ...(opts.profile === undefined ? {} : { profile: redactSecrets(opts.profile) }),
+      seq: this.takeSeq(),
+    };
+    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
     return entry;
   }
 
