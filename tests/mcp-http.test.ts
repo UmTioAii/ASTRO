@@ -96,6 +96,25 @@ const http = (server: { port?: number }, timeoutMs: number) =>
 const sse = (server: { port?: number }, timeoutMs: number) =>
   MCPClient.connect({ transport: "sse", url: `http://127.0.0.1:${server.port}/sse`, timeoutMs, enabled: true });
 
+/**
+ * Contrato de ordem dos POSTs: `initialize` primeiro, `tools/call` por último e
+ * a notificação `notifications/initialized` (fire-and-forget) em qualquer
+ * posição entre os dois. Quatro POSTs exatos: nada de retry ou chamada extra.
+ */
+function expectValidPostOrder(methods: string[]): void {
+  expect(methods).toHaveLength(4);
+  expect(methods[0]).toBe("initialize");
+  expect(methods.at(-1)).toBe("tools/call");
+  expect([...methods.slice(1, -1)].sort()).toEqual(["notifications/initialized", "tools/list"]);
+}
+
+test("ordem dos POSTs aceita notificação fire-and-forget entre initialize e tools/call", () => {
+  expect(() => expectValidPostOrder(["initialize", "tools/list", "notifications/initialized", "tools/call"])).not.toThrow();
+  expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "tools/list", "tools/call"])).not.toThrow();
+  expect(() => expectValidPostOrder(["initialize", "tools/list", "tools/call"])).toThrow();
+  expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "tools/list", "tools/call", "tools/call"])).toThrow();
+});
+
 test("transport http conecta, mantém sessão e chama tools", async () => {
   const { server, posts } = httpServer();
   try {
@@ -104,7 +123,7 @@ test("transport http conecta, mantém sessão e chama tools", async () => {
       expect(client.serverInfo.name).toBe("http-mock");
       expect((await client.listTools()).map((tool) => tool.name)).toEqual(["echo"]);
       expect((await client.callTool("echo", {})).content[0]!.text).toBe(`http:3`);
-      expect(posts.map((post) => post.method)).toEqual(["initialize", "notifications/initialized", "tools/list", "tools/call"]);
+      expectValidPostOrder(posts.map((post) => post.method));
     } finally { client.close(); }
     await expect(MCPClient.connect({ transport: "http", url: "http://127.0.0.1:1/mcp", timeoutMs: 300, enabled: true })).rejects.toThrow(/timeout|falha/);
   } finally { server.stop(true); }
