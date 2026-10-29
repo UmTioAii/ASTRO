@@ -6,6 +6,7 @@ import { validateConfig, type AstroConfig } from "../src/config";
 import {
   loadEffectiveConfig,
   profileFromEnv,
+  providerIdentityFor,
   resolveEffectiveConfig,
   saveProfileStore,
   type ProviderProfile,
@@ -315,6 +316,21 @@ test("--provider em projeto com agent.profile é erro explícito", () => {
     providerFlag: "q",
     env: {},
   })).toThrow(/agent\.profile tem precedência/);
+});
+
+test("origem de provider não ativo reflete o store, não o projeto", () => {
+  const effective = resolveEffectiveConfig({
+    project: project(),
+    store: store(profile({ id: "x", name: "X" }), profile({ id: "y", name: "Y" })),
+    env: {},
+  });
+  expect(effective.activeProvider).toBe("x");
+  const fromStore = providerIdentityFor(effective, "y");
+  expect(fromStore.providerSource).toBe("global");
+  expect(fromStore.providerSelection).toBe("store");
+  const fromProject = providerIdentityFor(effective, "p");
+  expect(fromProject.providerSource).toBe("project");
+  expect(fromProject.providerSelection).toBe("project");
 });
 
 test("--provider desconhecido é erro", () => {

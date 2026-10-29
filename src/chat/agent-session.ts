@@ -6,7 +6,7 @@ import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
 import type { BudgetDecider } from "../budget";
 import type { AstroConfig } from "../config";
-import { loadEffectiveConfig, type ProviderSelection, type ProviderSource } from "../provider/profiles";
+import { loadEffectiveConfig, providerIdentityFor, type ProviderSelection, type ProviderSource } from "../provider/profiles";
 import type { ChatMessage } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
@@ -123,12 +123,9 @@ export class AgentSession {
     this.#budgetDecider = opts.onBudgetExceeded;
     this.#modelRef = opts.model ?? this.#config.agent.model;
     const usedProvider = this.#registry.require(this.#modelRef).provider; // falha cedo com modelo inexistente
-    this.#providerSource = effective.projectProviders.includes(usedProvider)
-      ? "project"
-      : usedProvider === effective.envProviderId
-        ? "env"
-        : "global";
-    this.#providerSelection = usedProvider === effective.activeProvider ? effective.providerSelection : "project";
+    const identity = providerIdentityFor(effective, usedProvider);
+    this.#providerSource = identity.providerSource;
+    this.#providerSelection = identity.providerSelection;
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
     this.#append("run.started", {
       session: true,

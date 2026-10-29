@@ -6,7 +6,7 @@ import { isAbortError } from "./abort";
 import { SwapDeniedError, swapDelta, type SwapApprover, type SwapRequest } from "./approval";
 import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
 import { ConfigError } from "./config";
-import { loadEffectiveConfig } from "./provider/profiles";
+import { loadEffectiveConfig, providerIdentityFor } from "./provider/profiles";
 import { Ledger } from "./ledger";
 import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
@@ -542,12 +542,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const baseModel = resumedModel ?? model;
   const baseProfile = resumedProfile ?? (opts.model === undefined ? config.agent.profile : undefined);
   const usedProvider = baseModel.provider;
-  const usedSource = effective.projectProviders.includes(usedProvider)
-    ? "project"
-    : usedProvider === effective.envProviderId
-      ? "env"
-      : "global";
-  const usedSelection = usedProvider === effective.activeProvider ? effective.providerSelection : "project";
+  const { providerSource: usedSource, providerSelection: usedSelection } = providerIdentityFor(effective, usedProvider);
   if (opts.suppressRunEvents !== true) audit.append({
     run,
     agent: AGENT_NAME,

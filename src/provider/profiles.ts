@@ -273,6 +273,30 @@ export interface EffectiveConfig {
   warnings: string[];
 }
 
+/**
+ * Origem de um provider qualquer (não só o ativo), para o audit não mentir quando
+ * o modelo usado vem de agente nomeado, `opts.model` ou último modelo salvo.
+ */
+export function providerIdentityFor(
+  effective: EffectiveConfig,
+  provider: string,
+): { providerSource: ProviderSource; providerSelection: ProviderSelection } {
+  const providerSource: ProviderSource = effective.projectProviders.includes(provider)
+    ? "project"
+    : provider === effective.envProviderId
+      ? "env"
+      : "global";
+  if (provider === effective.activeProvider) {
+    return { providerSource, providerSelection: effective.providerSelection };
+  }
+  const providerSelection: ProviderSelection = providerSource === "project"
+    ? "project"
+    : providerSource === "env"
+      ? "env"
+      : "store";
+  return { providerSource, providerSelection };
+}
+
 /** Primeiro run sem config é somente leitura; escrita/shell exigem config explícita. */
 const BASELINE_TOOLS = ["read_file", "list_dir", "grep"];
 const BASELINE_PATHS = { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" };
