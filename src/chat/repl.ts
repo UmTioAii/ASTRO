@@ -18,6 +18,7 @@ export interface ReplIO {
 export interface ChatSession {
   readonly model: string;
   send(prompt: string, signal?: AbortSignal, onToken?: (text: string) => void): Promise<TurnResult>;
+  compact(): Promise<string>;
   clear(): void;
   resume(snapshot: SessionSnapshot): void;
   setModel(ref: string): string;
@@ -224,6 +225,15 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
       if (command.kind === "clear") {
         session.clear();
         io.write("contexto limpo");
+        continue;
+      }
+      if (command.kind === "compact") {
+        try {
+          const summary = await session.compact();
+          io.write(summary);
+        } catch (error) {
+          io.write(`erro: ${messageOf(error)}`);
+        }
         continue;
       }
       if (command.kind === "model") {

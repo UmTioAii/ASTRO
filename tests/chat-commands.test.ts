@@ -79,4 +79,11 @@ describe("comandos do chat (T1, #62)", () => {
     expect(formatUptime("2026-10-28T10:30:00.000Z", base)).toBe("1h 30m");
     expect(formatUptime("não-data", base)).toBe("desconhecido");
   });
+
+  test("/compact e /summarize são reconhecidos", () => {
+    expect(parseCommand("/compact")).toEqual({ kind: "compact" });
+    expect(parseCommand("/summarize")).toEqual({ kind: "compact" });
+    expect(parseCommand("/compact extra")).toEqual({ kind: "compact" });
+    expect(parseCommand("/summarize extra")).toEqual({ kind: "compact" });
+  });
 });

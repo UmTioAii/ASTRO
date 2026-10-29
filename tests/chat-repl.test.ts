@@ -6,6 +6,7 @@ import { runRepl, type ChatSession, type ReplIO } from "../src/chat/repl";
 import type { SessionSnapshot, TurnResult } from "../src/chat/agent-session";
 import { BudgetExceededError } from "../src/budget";
 import { SessionStore } from "../src/chat/store";
+import { AgentSession } from "../src/chat/agent-session";
 
 class ScriptedIO implements ReplIO {
   readonly outputs: string[] = [];
@@ -26,6 +27,9 @@ class FakeSession implements ChatSession {
   fail = 0;
   fatal: Error | undefined;
   clearedFlag = false;
+  compact(): Promise<string> {
+    return Promise.resolve("não usado");
+  }
   async send(prompt: string): Promise<TurnResult> {
     this.sent.push(prompt);
     if (this.fail > 0) {
@@ -179,5 +183,35 @@ describe("REPL do chat (T1, #62)", () => {
     expect(io.outputs.some((line) => line.includes("AGENTS.md criado em"))).toBe(true);
     expect(io.outputs.some((line) => line.startsWith("erro:") && line.includes("já existe"))).toBe(true);
     expect(existsSync(join(cwd, "AGENTS.md"))).toBe(true);
+  });
+
+  test("/compact chama compact() na sessão e mostra resultado", async () => {
+    class Compactable extends FakeSession {
+      compacted = false;
+      async compact(): Promise<string> {
+        this.compacted = true;
+        return "sumário: conversa compactada";
+      }
+    }
+    const session = new Compactable();
+    const io = new ScriptedIO(["/compact", "/exit"]);
+    await runRepl(session, io);
+    expect(session.compacted).toBe(true);
+    expect(io.outputs.some((line) => line.includes("sumário: conversa compactada"))).toBe(true);
+  });
+
+  test("/summarize é alias de /compact", async () => {
+    class Compactable extends FakeSession {
+      compacted = false;
+      async compact(): Promise<string> {
+        this.compacted = true;
+        return "sumário via summarize";
+      }
+    }
+    const session = new Compactable();
+    const io = new ScriptedIO(["/summarize", "/exit"]);
+    await runRepl(session, io);
+    expect(session.compacted).toBe(true);
+    expect(io.outputs.some((line) => line.includes("sumário via summarize"))).toBe(true);
   });
 });

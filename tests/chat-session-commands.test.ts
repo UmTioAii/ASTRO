@@ -22,6 +22,9 @@ class ScriptedIO implements ReplIO {
 class FakeSession implements ChatSession {
   model = "p/m1";
   sent: string[] = [];
+  compact(): Promise<string> {
+    return Promise.resolve("não usado");
+  }
   async send(prompt: string): Promise<TurnResult> {
     this.sent.push(prompt);
     return {

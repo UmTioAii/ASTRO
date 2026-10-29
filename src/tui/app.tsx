@@ -160,7 +160,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       return;
     }
     if (command.kind !== "prompt") {
-      const outcome = runCommand(command, session, commandState.current, store, cwd);
+      const outcome = await runCommand(command, session, commandState.current, store, cwd);
       if (outcome.lastFile !== undefined) commandState.current.lastFile = outcome.lastFile ?? undefined;
       const added = [...outcome.entries];
       const modelChanged = (command.kind === "model" && command.model !== undefined)

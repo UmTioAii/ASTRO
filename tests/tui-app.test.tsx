@@ -15,6 +15,9 @@ class FakeSession implements ChatSession {
   sent: string[] = [];
   cleared = 0;
   failNext = false;
+  compact(): Promise<string> {
+    return Promise.resolve("não usado");
+  }
   async send(prompt: string, signal?: AbortSignal): Promise<TurnResult> {
     this.sent.push(prompt);
     if (this.failNext) {
