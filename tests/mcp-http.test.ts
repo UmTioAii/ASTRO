@@ -96,6 +96,31 @@ const http = (server: { port?: number }, timeoutMs: number) =>
 const sse = (server: { port?: number }, timeoutMs: number) =>
   MCPClient.connect({ transport: "sse", url: `http://127.0.0.1:${server.port}/sse`, timeoutMs, enabled: true });
 
+/**
+ * Contrato de ordem dos POSTs: `initialize` primeiro; os POSTs com id seguem
+ * `initialize` -> `tools/list` -> `tools/call`; a notificação
+ * `notifications/initialized` (fire-and-forget) aparece exatamente uma vez em
+ * qualquer posição, inclusive depois de `tools/call`, porque a gravação no mock
+ * depende do parse concorrente. Quatro POSTs exatos: nada de retry.
+ */
+function expectValidPostOrder(methods: string[]): void {
+  expect(methods).toHaveLength(4);
+  expect(methods.filter((method) => method !== "notifications/initialized"))
+    .toEqual(["initialize", "tools/list", "tools/call"]);
+  expect(methods.filter((method) => method === "notifications/initialized")).toHaveLength(1);
+}
+
+test("ordem dos POSTs aceita notificação fire-and-forget em qualquer posição", () => {
+  expect(() => expectValidPostOrder(["initialize", "tools/list", "notifications/initialized", "tools/call"])).not.toThrow();
+  expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "tools/list", "tools/call"])).not.toThrow();
+  expect(() => expectValidPostOrder(["initialize", "tools/list", "tools/call", "notifications/initialized"])).not.toThrow();
+  expect(() => expectValidPostOrder(["initialize", "tools/list", "tools/call"])).toThrow();
+  expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "tools/list", "tools/call", "tools/call"])).toThrow();
+  expect(() => expectValidPostOrder(["initialize", "tools/call", "notifications/initialized", "tools/list"])).toThrow();
+  expect(() => expectValidPostOrder(["tools/list", "initialize", "notifications/initialized", "tools/call"])).toThrow();
+  expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "notifications/initialized", "tools/call"])).toThrow();
+});
+
 test("transport http conecta, mantém sessão e chama tools", async () => {
   const { server, posts } = httpServer();
   try {
@@ -104,7 +129,7 @@ test("transport http conecta, mantém sessão e chama tools", async () => {
       expect(client.serverInfo.name).toBe("http-mock");
       expect((await client.listTools()).map((tool) => tool.name)).toEqual(["echo"]);
       expect((await client.callTool("echo", {})).content[0]!.text).toBe(`http:3`);
-      expect(posts.map((post) => post.method)).toEqual(["initialize", "notifications/initialized", "tools/list", "tools/call"]);
+      expectValidPostOrder(posts.map((post) => post.method));
     } finally { client.close(); }
     await expect(MCPClient.connect({ transport: "http", url: "http://127.0.0.1:1/mcp", timeoutMs: 300, enabled: true })).rejects.toThrow(/timeout|falha/);
   } finally { server.stop(true); }
