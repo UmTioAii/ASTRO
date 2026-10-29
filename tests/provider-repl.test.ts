@@ -99,8 +99,21 @@ test("ativar um add em projeto com agent.profile avisa e não derruba o REPL", a
     "/provider add\ncustom\nLocal\nhttp://localhost:1/v1\n\nm1\nS\nS\n/exit\n",
   );
   expect(result.exit).toBe(0);
+  expect(result.stdout).toContain("salvo: local");
   expect(result.stdout).toContain("agent.profile tem precedência");
   expect(loadProfileStore(join(home, "providers.json")).profiles.map((item) => item.id)).toEqual(["local"]);
+});
+
+test("add sem ativar não troca o modelo da sessão", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-provider-model-"));
+  const home = mkdtempSync(join(tmpdir(), "astro-provider-model-home-"));
+  const cfg = projectConfig(cwd);
+  const result = await chat(
+    cwd, cfg, home,
+    "/model q/m2\n/provider add\ncustom\nLocal\nhttp://localhost:1/v1\n\nm1\nS\nn\n/details\n/exit\n",
+  );
+  expect(result.exit).toBe(0);
+  expect(result.stdout).toContain("modelo q/m2");
 });
 
 test("/provider remove de provider do projeto é recusado", async () => {

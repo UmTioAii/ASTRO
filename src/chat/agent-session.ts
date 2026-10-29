@@ -172,9 +172,7 @@ export class AgentSession {
     });
     this.#config = effective.config;
     this.#registry = new Registry(this.#config);
-    if ((followActive || !this.#registry.get(this.#modelRef)) && this.#config.agent.model !== this.#modelRef) {
-      this.#modelRef = this.#config.agent.model;
-    }
+    if (!this.#registry.get(this.#modelRef)) this.#modelRef = this.#config.agent.model;
     const identity = providerIdentityFor(effective, this.#registry.require(this.#modelRef).provider);
     this.#providerSource = identity.providerSource;
     this.#providerSelection = identity.providerSelection;

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { AgentSession } from "../src/chat/agent-session";
 import { saveProfileStore } from "../src/provider/profiles";
 
-test("reload troca o provider sem perder mensagens e cai no projeto se o ativo sumir", () => {
+test("reload preserva a escolha explícita e cai no projeto se o modelo sumir", () => {
   const cwd = mkdtempSync(join(tmpdir(), "astro-reload-"));
   const home = mkdtempSync(join(tmpdir(), "astro-reload-home-"));
   const configPath = join(cwd, "astro.config.json");
@@ -15,9 +15,6 @@ test("reload troca o provider sem perder mensagens e cai no projeto se o ativo s
     agent: { model: "p/m1", maxSteps: 2, tools: ["read_file"] },
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));
-  const session = new AgentSession({ configPath, cwd, env: { ASTRO_HOME: home } });
-  expect(session.model).toBe("p/m1");
-
   saveProfileStore({
     version: 1,
     activeProfileId: "q",
@@ -27,14 +24,19 @@ test("reload troca o provider sem perder mensagens e cai no projeto se o ativo s
       models: [{ id: "m2", tags: ["writing-code"], context: 8192 }],
     }],
   }, join(home, "providers.json"));
-  session.reload(true);
+
+  const session = new AgentSession({ configPath, cwd, env: { ASTRO_HOME: home } });
   expect(session.model).toBe("q/m2");
-  expect(session.messages.length).toBe(1);
   expect(session.providerSource).toBe("global");
   expect(session.providerSelection).toBe("store");
 
+  session.setModel("p/m1");
+  session.reload();
+  expect(session.model).toBe("p/m1");
+  expect(session.messages.length).toBe(1);
+
   saveProfileStore({ version: 1, profiles: [] }, join(home, "providers.json"));
-  session.reload(true);
+  session.reload();
   expect(session.model).toBe("p/m1");
   expect(session.messages.length).toBe(1);
 });

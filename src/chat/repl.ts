@@ -28,7 +28,7 @@ export interface ChatSession {
   listProviders(): ProviderInfo[];
   setProvider(name: string): string;
   /** Recarrega config/perfis do disco (após /provider add|edit|remove). */
-  reload?(followActive?: boolean): void;
+  reload?(): void;
   snapshot(): SessionSnapshot;
   close(): void;
 }
@@ -172,9 +172,9 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
           continue;
         }
         const listText = (): string => manager.list().map(profileListLine).join("\n");
-        const reloadSession = (followActive = false): void => {
+        const reloadSession = (): void => {
           try {
-            session.reload?.(followActive);
+            session.reload?.();
           } catch (error) {
             io.write(`erro ao recarregar a config: ${messageOf(error)}`);
           }
@@ -188,12 +188,12 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
             mode: "add",
             ...(command.target === undefined ? {} : { initialName: command.target }),
             onUse: (id) => {
-              reloadSession(true);
+              reloadSession();
               session.setProvider(id);
             },
           });
           if (saved !== undefined) {
-            reloadSession(true);
+            reloadSession();
             io.write(listText());
           }
           continue;
@@ -215,7 +215,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
               io.write(`provider: ${session.setProvider(target.id)} (env; só nesta sessão)`);
             } else {
               manager.use(target.id);
-              reloadSession(true);
+              reloadSession();
               session.setProvider(target.id);
               io.write(`provider: ${session.model}`);
             }
@@ -228,7 +228,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
           try {
             manager.remove(target.id);
             io.write(`removido: ${target.id}`);
-            reloadSession(true);
+            reloadSession();
           } catch (error) {
             io.write(`erro: ${messageOf(error)}`);
           }
@@ -236,7 +236,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         }
         const saved = await runProviderWizard(io, manager, { mode: "edit", profile: target });
         if (saved !== undefined) {
-          reloadSession(true);
+          reloadSession();
           io.write(listText());
         }
         continue;
