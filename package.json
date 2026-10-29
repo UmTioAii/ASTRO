@@ -1,11 +1,11 @@
 {
   "name": "@umtioai/astro-harness",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Harness single-agent em Bun/TypeScript com ledger de uso e auditoria append-only.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "astro": "./dist/cli.js"
+    "astro": "./dist/launcher.js"
   },
   "files": [
     "dist",
@@ -13,7 +13,8 @@
     "LICENSE"
   ],
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.0",
+    "node": ">=18"
   },
   "repository": {
     "type": "git",
@@ -23,7 +24,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --target=bun --external ink --external react --outfile dist/cli.js",
+    "build": "bun build src/cli.ts --target=bun --external ink --external react --outfile dist/cli.js && bun build src/launcher.ts --target=node --outfile dist/launcher.js",
     "prepack": "bun run build",
     "prepublishOnly": "bun run typecheck",
     "test": "bun test",
@@ -40,5 +41,19 @@
   "dependencies": {
     "ink": "8.0.0",
     "react": "19.3.1"
+  },
+  "optionalDependencies": {
+    "@oven/bun-darwin-aarch64": "1.4.2",
+    "@oven/bun-darwin-x64": "1.4.2",
+    "@oven/bun-freebsd-aarch64": "1.4.2",
+    "@oven/bun-freebsd-x64": "1.4.2",
+    "@oven/bun-linux-aarch64": "1.4.2",
+    "@oven/bun-linux-aarch64-android": "1.4.2",
+    "@oven/bun-linux-aarch64-musl": "1.4.2",
+    "@oven/bun-linux-x64": "1.4.2",
+    "@oven/bun-linux-x64-android": "1.4.2",
+    "@oven/bun-linux-x64-musl": "1.4.2",
+    "@oven/bun-windows-aarch64": "1.4.2",
+    "@oven/bun-windows-x64": "1.4.2"
   }
 }
