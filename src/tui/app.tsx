@@ -65,12 +65,26 @@ function EntryLine({ entry, colors }: { entry: Entry; colors: ThemeColors }): Re
 }
 
 /** Persiste o último modelo sem derrubar a ativação se o arquivo falhar. */
-export function persistLastModel(cwd: string, model: string): void {
+export function persistLastModel(cwd: string, model: string, onWarning?: (message: string) => void): void {
   try {
     saveTuiConfig(cwd, { lastModel: model });
   } catch {
-    console.error("aviso: não foi possível salvar o último modelo da TUI");
+    const message = "aviso: não foi possível salvar o último modelo da TUI";
+    if (onWarning === undefined) console.error(message);
+    else onWarning(message);
   }
+}
+
+/** Ativa o provider na sessão e persiste o último modelo, sem falhar a ativação. */
+export function activateProvider(
+  session: Pick<ChatSession, "reload" | "setProvider" | "snapshot">,
+  cwd: string,
+  id: string,
+  onWarning?: (message: string) => void,
+): void {
+  session.reload?.();
+  session.setProvider(id);
+  persistLastModel(cwd, session.snapshot().model, onWarning);
 }
 
 export function TuiApp({ session, cwd, branch, store, approvals, shell, manager, onExit }: TuiAppProps): ReactElement {
