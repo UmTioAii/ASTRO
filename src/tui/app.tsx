@@ -64,6 +64,15 @@ function EntryLine({ entry, colors }: { entry: Entry; colors: ThemeColors }): Re
   return <Text dimColor>{entry.text}</Text>;
 }
 
+/** Persiste o último modelo sem derrubar a ativação se o arquivo falhar. */
+export function persistLastModel(cwd: string, model: string): void {
+  try {
+    saveTuiConfig(cwd, { lastModel: model });
+  } catch {
+    console.error("aviso: não foi possível salvar o último modelo da TUI");
+  }
+}
+
 export function TuiApp({ session, cwd, branch, store, approvals, shell, manager, onExit }: TuiAppProps): ReactElement {
   const [entries, setEntries] = useState<Entry[]>([{ kind: "info", text: WELCOME }]);
   const [question, setQuestion] = useState<string | undefined>(() => approvals?.current()?.text);
