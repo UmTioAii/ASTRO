@@ -73,6 +73,7 @@ bun link                     # after build: global `astro` points to this checko
 
 `bun run smoke` checks the generated artifact (Node launcher resolving the bundled Bun) without
 touching npm. After changing source, `bun run build` refreshes `dist`; `bun link` is needed only once.
+The launcher and smoke commands require Node 18+ on `PATH`; the published CLI brings its own Bun.
 
 ## Configuration (`astro.config.json`)
 
