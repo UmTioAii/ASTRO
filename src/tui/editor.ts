@@ -2,8 +2,8 @@
 import { searchFiles } from "./files";
 
 export const COMMANDS = [
-  "/help", "/model", "/providers", "/provider", "/session", "/sessions", "/resume",
-  "/save", "/export", "/init", "/details", "/new", "/clear", "/exit",
+  "/help", "/model", "/providers", "/provider", "/session", "/details", "/sessions", "/resume",
+  "/save", "/export", "/init", "/compact", "/summarize", "/new", "/clear", "/exit",
 ] as const;
 
 /** Itens que o painel deve mostrar para a linha atual. */

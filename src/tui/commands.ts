@@ -32,13 +32,13 @@ function messageOf(error: unknown): string {
 }
 
 /** Executa um comando que não é turno; devolve entradas para a UI renderizar. */
-export function runCommand(
+export async function runCommand(
   command: SlashCommand,
   session: ChatSession,
   state: CommandState,
   store?: SessionStore,
   cwd = process.cwd(),
-): CommandOutcome {
+): Promise<CommandOutcome> {
   switch (command.kind) {
     case "help":
       return { entries: [{ kind: "info", text: HELP_TEXT }] };
@@ -111,6 +111,14 @@ export function runCommand(
           entries: [{ kind: "info", text: `sessão retomada: ${loaded.record.id} (${loaded.record.turns} turnos)` }],
           lastFile: loaded.path,
         };
+      } catch (error) {
+        return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
+      }
+    }
+    case "compact": {
+      try {
+        const summary = await session.compact();
+        return { entries: [{ kind: "info", text: summary }] };
       } catch (error) {
         return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
       }

@@ -1,7 +1,7 @@
 /** Sessão de chat (T1): multi-turn sobre o mesmo run; a UI só fala com esta classe. */
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
-import { runTask, shortTaskHash, type RunReport } from "../app";
+import { runTask, createProvider, shortTaskHash, type RunReport } from "../app";
 import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
 import type { BudgetDecider } from "../budget";
@@ -178,6 +178,61 @@ export class AgentSession {
     if (this.#busy) throw new Error("turno em andamento");
     this.#messages = [{ role: "system", content: this.#systemPrompt }];
     this.#resumedFrom = undefined;
+  }
+
+  /** Compacta o histórico: pede ao provider um sumário sem tools, substitui mensagens (mantém system). */
+  async compact(): Promise<string> {
+    if (this.#busy) throw new Error("turno em andamento");
+    if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
+
+    // Se não há histórico além do system, é no-op
+    if (this.#messages.length <= 1) return "histórico vazio, nada para compactar";
+
+    const modelEntry = this.#registry.require(this.#modelRef);
+    const setup = createProvider(this.#config, modelEntry, this.#env ?? process.env);
+    const provider = setup.provider;
+
+    // Prepara mensagens para sumarização: remove system e tool calls
+    const history = this.#messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    const summaryPrompt = "Resuma a conversa a seguir de forma concisa, preservando fatos, decisões e tarefas pendentes. Não inclua saudações nem meta-comentários.";
+    const messages: ChatMessage[] = [
+      { role: "system", content: summaryPrompt },
+      ...history,
+    ];
+
+    // Chama provider SEM tools
+    const response = await provider.complete({
+      model: this.#modelRef,
+      messages,
+      tools: undefined,
+    });
+
+    const summary = response.content.trim();
+
+    // Substitui histórico pelo system + sumário
+    this.#messages = [
+      { role: "system", content: this.#systemPrompt },
+      { role: "assistant", content: summary },
+    ];
+
+    // Atualiza contadores da sessão
+    this.#tokensIn += response.usage.inputTokens;
+    this.#tokensOut += response.usage.outputTokens;
+    if (response.usage.inputTokens > 0 || response.usage.outputTokens > 0) {
+      this.#costKnown = false; // preço exato depende do modelo; ledger já tem o detalhe
+    }
+
+    // Auditoria sem conteúdo do prompt
+    this.#append("chat.compact", {
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+      model: this.modelName(),
+    });
+
+    return summary;
   }
 
   /** Retoma uma sessão gravada: troca o system, mantém mensagens e acumulados. */

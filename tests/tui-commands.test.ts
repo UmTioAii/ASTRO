@@ -13,6 +13,9 @@ class FakeSession implements ChatSession {
   send(): Promise<never> {
     throw new Error("não usado");
   }
+  compact(): Promise<string> {
+    return Promise.resolve("não usado");
+  }
   clear(): void {
     this.cleared++;
     this.resumedFrom = undefined;
@@ -49,66 +52,66 @@ class FakeSession implements ChatSession {
 }
 
 describe("comandos da TUI (T2, #63)", () => {
-  test("ajuda, clear, modelo e provider produzem entradas", () => {
+  test("ajuda, clear, modelo e provider produzem entradas", async () => {
     const session = new FakeSession();
-    const help = runCommand({ kind: "help" }, session, {});
+    const help = await runCommand({ kind: "help" }, session, {});
     expect(help.entries[0]!.text).toContain("Comandos:");
 
-    expect(runCommand({ kind: "clear" }, session, {}).entries[0]!.text).toBe("contexto limpo");
+    expect((await runCommand({ kind: "clear" }, session, {})).entries[0]!.text).toBe("contexto limpo");
     expect(session.cleared).toBe(1);
 
-    expect(runCommand({ kind: "model", model: "p/m2" }, session, {}).entries[0]!.text).toBe("modelo: p/m2");
-    const bad = runCommand({ kind: "model", model: "ghost" }, session, {});
+    expect((await runCommand({ kind: "model", model: "p/m2" }, session, {})).entries[0]!.text).toBe("modelo: p/m2");
+    const bad = await runCommand({ kind: "model", model: "ghost" }, session, {});
     expect(bad.entries[0]).toMatchObject({ kind: "error" });
     expect(bad.entries[0]!.text).toContain("modelo desconhecido");
 
-    expect(runCommand({ kind: "providers" }, session, {}).entries[0]!.text).toContain("cred=KEY");
-    expect(runCommand({ kind: "provider", provider: "p" }, session, {}).entries[0]!.text).toBe("provider: p/m1");
+    expect((await runCommand({ kind: "providers" }, session, {})).entries[0]!.text).toContain("cred=KEY");
+    expect((await runCommand({ kind: "provider", provider: "p" }, session, {})).entries[0]!.text).toBe("provider: p/m1");
   });
 
-  test("session mostra o último arquivo; sem store avisa", () => {
+  test("session mostra o último arquivo; sem store avisa", async () => {
     const session = new FakeSession();
-    const withFile = runCommand({ kind: "session" }, session, { lastFile: "/tmp/s.json" }, new SessionStore("/tmp"));
+    const withFile = await runCommand({ kind: "session" }, session, { lastFile: "/tmp/s.json" }, new SessionStore("/tmp"));
     expect(withFile.entries[0]!.text).toContain("arquivo: /tmp/s.json");
     expect(withFile.entries[0]!.text).toContain("turnos 2");
-    const without = runCommand({ kind: "session" }, session, {});
+    const without = await runCommand({ kind: "session" }, session, {});
     expect(without.entries[0]!.text).toContain("arquivo: sem persistência");
   });
 
   test("save grava sanitizado e devolve o caminho; falha vira erro", async () => {
     const session = new FakeSession();
     const dir = mkdtempSync(join(tmpdir(), "astro-tui-save-"));
-    const ok = runCommand({ kind: "save" }, session, {}, new SessionStore(dir));
+    const ok = await runCommand({ kind: "save" }, session, {}, new SessionStore(dir));
     expect(ok.entries[0]!.text).toMatch(/^sessão salva em /);
     expect(ok.lastFile).toBeDefined();
 
     const blocked = join(dir, "blocked");
     await Bun.write(blocked, "arquivo");
-    const failed = runCommand({ kind: "save" }, session, {}, new SessionStore(blocked));
+    const failed = await runCommand({ kind: "save" }, session, {}, new SessionStore(blocked));
     expect(failed.entries[0]).toMatchObject({ kind: "error" });
     expect(failed.entries[0]!.text).toMatch(/^erro: /);
     expect(failed.lastFile).toBeNull(); // limpa o caminho anterior
   });
 
-  test("falha de save com segredo na mensagem não vaza", () => {
+  test("falha de save com segredo na mensagem não vaza", async () => {
     const session = new FakeSession();
     class Leaky extends SessionStore {
       override write(): string {
         throw new Error("falhou com sk-live-SEGREDO123");
       }
     }
-    const outcome = runCommand({ kind: "save" }, session, {}, new Leaky(mkdtempSync(join(tmpdir(), "astro-tui-leak-"))));
+    const outcome = await runCommand({ kind: "save" }, session, {}, new Leaky(mkdtempSync(join(tmpdir(), "astro-tui-leak-"))));
     expect(outcome.entries[0]!.text).not.toContain("sk-live-SEGREDO123");
     expect(outcome.entries[0]!.text).toMatch(/^erro: /);
   });
 
-  test("comando desconhecido e exit", () => {
+  test("comando desconhecido e exit", async () => {
     const session = new FakeSession();
-    expect(runCommand({ kind: "unknown", raw: "nope" }, session, {}).entries[0]!.text).toBe("comando desconhecido: /nope");
-    expect(runCommand({ kind: "exit" }, session, {}).exit).toBe(true);
+    expect((await runCommand({ kind: "unknown", raw: "nope" }, session, {})).entries[0]!.text).toBe("comando desconhecido: /nope");
+    expect((await runCommand({ kind: "exit" }, session, {})).exit).toBe(true);
   });
 
-  test("sessions lista e resume carrega a sessão pelo número", () => {
+  test("sessions lista e resume carrega a sessão pelo número", async () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-tui-resume-"));
     const store = new SessionStore(dir);
     store.write({
@@ -117,33 +120,33 @@ describe("comandos da TUI (T2, #63)", () => {
     });
     const session = new FakeSession();
     const state: { sessions?: unknown; lastFile?: string } = {};
-    const list = runCommand({ kind: "sessions" }, session, state as never, store);
+    const list = await runCommand({ kind: "sessions" }, session, state as never, store);
     expect(list.entries[0]!.text).toContain("abc");
-    const resumed = runCommand({ kind: "resume", ref: "1" }, session, state as never, store);
+    const resumed = await runCommand({ kind: "resume", ref: "1" }, session, state as never, store);
     expect(resumed.entries[0]!.text).toBe("sessão retomada: abc (1 turnos)");
     expect(resumed.lastFile).toMatch(/\.json$/);
     expect(session.resumed[0]!.id).toBe("abc");
-    const sessionInfo = runCommand({ kind: "session" }, session, state as never, store);
+    const sessionInfo = await runCommand({ kind: "session" }, session, state as never, store);
     expect(sessionInfo.entries[0]!.text).toContain("retomada de abc");
 
-    runCommand({ kind: "clear" }, session, state as never, store);
-    const afterClear = runCommand({ kind: "session" }, session, state as never, store);
+    await runCommand({ kind: "clear" }, session, state as never, store);
+    const afterClear = await runCommand({ kind: "session" }, session, state as never, store);
     expect(afterClear.entries[0]!.text).not.toContain("retomada de");
   });
-  test("sem store, /session mantém a origem e avisa sobre a persistência", () => {
+  test("sem store, /session mantém a origem e avisa sobre a persistência", async () => {
     const session = new FakeSession();
     session.resumedFrom = { id: "abc", startedAt: "2026-10-01T10:00:00.000Z" };
-    const out = runCommand({ kind: "session" }, session, {});
+    const out = await runCommand({ kind: "session" }, session, {});
     expect(out.entries[0]!.text).toContain("retomada de abc");
     expect(out.entries[0]!.text).toContain("arquivo: sem persistência");
   });
 
-  test("/details partilha o formatter com /session", () => {
+  test("/details partilha o formatter com /session", async () => {
     const session = new FakeSession();
     const state = { lastFile: "/tmp/s.json" };
     const store = new SessionStore(mkdtempSync(join(tmpdir(), "astro-tui-details-")));
-    const sessionOut = runCommand({ kind: "session" }, session, state, store);
-    const detailsOut = runCommand({ kind: "details" }, session, state, store);
+    const sessionOut = await runCommand({ kind: "session" }, session, state, store);
+    const detailsOut = await runCommand({ kind: "details" }, session, state, store);
     expect(detailsOut.entries[0]!.text).toBe(sessionOut.entries[0]!.text);
     expect(detailsOut.entries[0]!.text).toContain("uptime");
     expect(detailsOut.entries[0]!.text).toContain("provider: p");
@@ -154,14 +157,14 @@ describe("comandos da TUI (T2, #63)", () => {
     expect(detailsOut.entries[0]!.text).toContain("arquivo: /tmp/s.json");
   });
 
-  test("/details sem store avisa e mantém retomada", () => {
+  test("/details sem store avisa e mantém retomada", async () => {
     const session = new FakeSession();
     session.resumedFrom = { id: "xyz", startedAt: "2026-10-27T10:00:00.000Z" };
-    const out = runCommand({ kind: "details" }, session, {});
+    const out = await runCommand({ kind: "details" }, session, {});
     expect(out.entries[0]!.text).toContain("retomada de xyz");
     expect(out.entries[0]!.text).toContain("arquivo: sem persistência");
   });
-  test("resume sem /sessions recarrega a lista e valida o índice", () => {
+  test("resume sem /sessions recarrega a lista e valida o índice", async () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-tui-resume2-"));
     const store = new SessionStore(dir);
     store.write({
@@ -169,25 +172,25 @@ describe("comandos da TUI (T2, #63)", () => {
       messages: [{ role: "user", content: "guardado" }], turns: 2, tokensIn: 20, tokensOut: 10, costUsd: 0.002,
     });
     const session = new FakeSession();
-    const ok = runCommand({ kind: "resume", ref: "1" }, session, {}, store);
+    const ok = await runCommand({ kind: "resume", ref: "1" }, session, {}, store);
     expect(ok.entries[0]!.text).toBe("sessão retomada: xyz (2 turnos)");
-    const bad = runCommand({ kind: "resume", ref: "9" }, session, {}, store);
+    const bad = await runCommand({ kind: "resume", ref: "9" }, session, {}, store);
     expect(bad.entries[0]!.text).toBe("índice fora da lista; use /sessions");
     expect(session.resumed).toHaveLength(1);
   });
 
-  test("export e init gravam no cwd e recusam escape", () => {
+  test("export e init gravam no cwd e recusam escape", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "astro-tui-export-"));
     const session = new FakeSession();
-    const exported = runCommand({ kind: "export" }, session, {}, undefined, cwd);
+    const exported = await runCommand({ kind: "export" }, session, {}, undefined, cwd);
     expect(exported.entries[0]!.text).toContain("sessão exportada em");
     expect(existsSync(join(cwd, ".astro", "exports"))).toBe(true);
 
-    const escape = runCommand({ kind: "export", path: "../fora.md" }, session, {}, undefined, cwd);
+    const escape = await runCommand({ kind: "export", path: "../fora.md" }, session, {}, undefined, cwd);
     expect(escape.entries[0]).toMatchObject({ kind: "error" });
     expect(escape.entries[0]!.text).toContain("fora do cwd");
 
-    expect(runCommand({ kind: "init" }, session, {}, undefined, cwd).entries[0]!.text).toContain("AGENTS.md criado");
-    expect(runCommand({ kind: "init" }, session, {}, undefined, cwd).entries[0]!.text).toContain("já existe");
+    expect((await runCommand({ kind: "init" }, session, {}, undefined, cwd)).entries[0]!.text).toContain("AGENTS.md criado");
+    expect((await runCommand({ kind: "init" }, session, {}, undefined, cwd)).entries[0]!.text).toContain("já existe");
   });
 });
