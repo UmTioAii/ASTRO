@@ -30,11 +30,13 @@ launcher starts it. You only need Node 18+ (npm already requires it).
 
 ```bash
 npm install -g @umtioai/astro-harness@alpha
-astro --help
+astro
 ```
 
-The CLI reads `astro.config.json` from the directory you run it in; without one, the interactive modes
-start with a read-only baseline.
+Running `astro` in an interactive terminal opens the TUI; without a TTY it prints help. `astro --help`
+shows every command, including `chat` and `tui`.
+The CLI reads `astro.config.json` from the directory you run it in; without one, the TUI starts with a
+read-only baseline.
 
 - Use your own Bun: `ASTRO_BUN_PATH=/path/to/bun astro`.
 - Installed with `--omit=optional`: reinstall without it, or set `ASTRO_BUN_PATH`.
