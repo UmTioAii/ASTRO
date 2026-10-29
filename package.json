@@ -24,7 +24,8 @@
   },
   "scripts": {
     "build": "bun build src/cli.ts --target=bun --external ink --external react --outfile dist/cli.js",
-    "prepublishOnly": "bun run typecheck && bun run build",
+    "prepack": "bun run build",
+    "prepublishOnly": "bun run typecheck",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "eval": "bun src/cli.ts eval",

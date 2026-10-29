@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 test("--help mostra os comandos com o binário astro", async () => {
   const entry = join(import.meta.dir, "..", "src", "cli.ts");
+  expect((await Bun.file(entry).text()).startsWith("#!/usr/bin/env bun")).toBe(true);
   const proc = Bun.spawn([process.execPath, entry, "--help"], { stdout: "pipe", stderr: "pipe" });
   const out = await new Response(proc.stdout).text();
   const code = await proc.exited;

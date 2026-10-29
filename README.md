@@ -90,7 +90,7 @@ Model pool and profiles are implemented — a profile replaces `model` (both tog
 
 ## CLI
 
-All commands run as `bun src/cli.ts <command>`.
+All commands run as `astro <command>`; from a clone, `bun src/cli.ts <command>` is equivalent.
 
 | Command | What it does | Flags |
 |---|---|---|
