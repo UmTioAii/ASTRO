@@ -22,6 +22,11 @@ test("config aceita header de autenticação por referência env", () => {
   expect(config.mcpServers!.api.headers).toEqual({ Authorization: "env:MCP_TOKEN", "X-Trace": "on" });
 });
 
+test("config aceita header de metadado terminado em -key", () => {
+  const config = configWithMcpHeaders({ "Idempotency-Key": "run-1" });
+  expect(config.mcpServers!.api.headers).toEqual({ "Idempotency-Key": "run-1" });
+});
+
 test("config rejeita header de autenticação com valor literal", () => {
   expect(() => configWithMcpHeaders({ Authorization: "Bearer sk-live-do-not-store" }))
     .toThrow(/env:NOME_DA_VARIAVEL/);
