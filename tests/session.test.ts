@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
-import { Ledger } from "../src/ledger";
+import { Ledger, LEDGER_SCHEMA_VERSION } from "../src/ledger";
 import type { CompletionRequest, CompletionResponse, Provider } from "../src/provider/types";
 import type { ModelEntry } from "../src/registry";
 import { MaxStepsError, runSession, type SessionOptions } from "../src/session";
@@ -89,7 +89,7 @@ describe("estado de execução e callHashes no ledger (F-02)", () => {
     s.opts.executor = new ToolExecutor({ tools: [writeFileTool], allow: ["write_file"], audit: s.opts.audit });
     await runSession(s.opts, "crie a.txt");
     const usage = s.ledger.readAll();
-    expect(usage[0].schemaVersion).toBe(1);
+    expect(usage[0].schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(usage[0].callHashes).toHaveLength(1);
     expect(usage[1].callHashes).toEqual([]);
     const st = s.ledger.lastState("r1")!;

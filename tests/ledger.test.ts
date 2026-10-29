@@ -124,9 +124,9 @@ describe("schemaVersion (F-02, ADR-0002)", () => {
   test("record preenche schemaVersion e kind automaticamente", () => {
     const l = new Ledger(join(dir(), "ledger.jsonl"));
     const e = l.record(structuredClone(entry), undefined);
-    expect(e.schemaVersion).toBe(1);
+    expect(e.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(e.kind).toBe("usage");
-    expect(LEDGER_SCHEMA_VERSION).toBe(1);
+    expect(LEDGER_SCHEMA_VERSION).toBe(2);
   });
 
   test("entrada antiga sem schemaVersion ainda soma em total()", () => {
@@ -145,7 +145,7 @@ describe("estado de execução (F-02)", () => {
   test("recordState grava entrada run_state com agent e reason", () => {
     const l = new Ledger(join(dir(), "ledger.jsonl"));
     const s = l.recordState("r1", "interrupted", { agent: "default", reason: "MaxStepsError" });
-    expect(s.schemaVersion).toBe(1);
+    expect(s.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(s.kind).toBe("run_state");
     expect(s.state).toBe("interrupted");
     expect(s.agent).toBe("default");
@@ -234,7 +234,7 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
       expect(e.thinking).toBe("enabled");
       expect(e["param.stripped"]).toEqual(["forbidden_param"]);
       expect(e.kind).toBe("usage");
-      expect(e.schemaVersion).toBe(1);
+      expect(e.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     });
 
     test("campos ausentes em entradas legadas não quebram total()", () => {
@@ -296,7 +296,7 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
       expect(e.model).toBe("gpt-4o-mini");
       expect(e.profile).toBe("premium");
       expect(e.reason).toBe("delegated by planner");
-      expect(e.schemaVersion).toBe(1);
+      expect(e.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
       expect(e.ts).toBeTruthy();
     });
 
@@ -348,7 +348,7 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
       expect(e.kind).toBe("budget");
       expect(e.reserved).toBe(0.50);
       expect(e.detail).toBe("primary + fallback chain");
-      expect(e.schemaVersion).toBe(1);
+      expect(e.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     });
 
     test("recordBudgetReleased grava kind budget com released e actual_cost", () => {
@@ -442,7 +442,7 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
       const newKinds = all.filter((e) => e.kind === "agent" || e.kind === "budget" || e.kind === "compaction");
       expect(newKinds).toHaveLength(3);
       newKinds.forEach((e) => {
-        expect(e.schemaVersion).toBe(1);
+        expect(e.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
         expect(typeof e.seq).toBe("number");
       });
     });

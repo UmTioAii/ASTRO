@@ -443,7 +443,7 @@ function interruptReason(error: unknown, signal?: AbortSignal): string {
   return error instanceof Error ? error.name : String(error);
 }
 
-/** Está ativo? O último evento `agent` do id no run é `created`. */
+/** Está ativo? O último evento `agent` do id no run não é `destroyed` (created/identity contam). */
 function agentActive(ledger: Ledger, run: string, agentId: string): boolean {
   const last = ledger.readAllEntries()
     .filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === run && e.agent_id === agentId)
@@ -457,7 +457,7 @@ export interface AgentIdentity {
   credentialRef?: string;
 }
 
-/** Agente ativo = último evento do id no run não é `destroyed` (created/identity contam). */
+/** Garante um `agent.created` (idempotente; reabre agente já destruído - F-22). */
 function ensureAgentCreated(
   ledger: Ledger,
   audit: Auditor,
@@ -569,7 +569,9 @@ export async function runMultiAgentSession(
   const identityOf = (model: ModelEntry): AgentIdentity =>
     opts.identityFor?.(model) ?? {
       provider: model.provider,
-      ...(opts.credentialRef === undefined ? {} : { credentialRef: opts.credentialRef }),
+      ...(model.provider === opts.baseModel.provider && opts.credentialRef !== undefined
+        ? { credentialRef: opts.credentialRef }
+        : {}),
     };
 
   let currentModel = modelFor(currentAgent);
