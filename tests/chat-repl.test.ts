@@ -127,6 +127,22 @@ describe("REPL do chat (T1, #62)", () => {
     expect(session.closed).toBe(1);
   });
 
+  test("/details mostra id, provider, modelo, uptime, tokens, custo e origem", async () => {
+    const session = new FakeSession();
+    const io = new ScriptedIO(["/details", "/exit"]);
+    await runRepl(session, io);
+    const text = io.outputs.join("\n");
+    expect(text).toContain("sessão s1");
+    expect(text).toContain("início 2026-10-28T12:00:00.000Z");
+    expect(text).toMatch(/uptime \d/);
+    expect(text).toContain("provider: p");
+    expect(text).toContain("modelo p/m1");
+    expect(text).toContain("turnos 0");
+    expect(text).toContain("tokens 10/5");
+    expect(text).toContain("custo US$ 0.001000");
+    expect(text).toContain("arquivo: sem persistência");
+  });
+
   test("/sessions lista e /resume retoma pelo número", async () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-chat-resume-"));
     new SessionStore(dir).write({

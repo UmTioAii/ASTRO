@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HELP_TEXT, parseCommand } from "../src/chat/commands";
+import { detailsLines, formatUptime } from "../src/chat/repl";
+import type { SessionSnapshot } from "../src/chat/agent-session";
 
 describe("comandos do chat (T1, #62)", () => {
   test("texto normal vira prompt; vazio é ignorado", () => {
@@ -41,5 +43,40 @@ describe("comandos do chat (T1, #62)", () => {
 
   test("/new é alias de /clear", () => {
     expect(parseCommand("/new")).toEqual({ kind: "clear" });
+  });
+
+  test("/details é reconhecido (argumentos extra são ignorados)", () => {
+    expect(parseCommand("/details")).toEqual({ kind: "details" });
+    expect(parseCommand("/details x")).toEqual({ kind: "details" });
+  });
+
+  test("detailsLines inclui todos os campos e retoma", () => {
+    const snap: SessionSnapshot = {
+      id: "abc", startedAt: "2026-10-28T12:00:00.000Z", model: "p/m2",
+      messages: [], turns: 3, tokensIn: 30, tokensOut: 15, costUsd: 0.004,
+      resumedFrom: { id: "xyz", startedAt: "2026-10-27T10:00:00.000Z" },
+    };
+    const lines = detailsLines(snap, "/tmp/s.json", new Date("2026-10-28T12:05:00.000Z").getTime());
+    const text = lines.join("\n");
+    expect(text).toContain("sessão abc");
+    expect(text).toContain("uptime 5m");
+    expect(text).toContain("provider: p");
+    expect(text).toContain("modelo p/m2");
+    expect(text).toContain("turnos 3");
+    expect(text).toContain("tokens 30/15");
+    expect(text).toContain("custo US$ 0.004000");
+    expect(text).toContain("retomada de xyz");
+    expect(text).toContain("arquivo: /tmp/s.json");
+  });
+
+  test("formatUptime cobre segundos, minutos, horas", () => {
+    const base = new Date("2026-10-28T12:00:00.000Z").getTime();
+    expect(formatUptime("2026-10-28T12:00:00.000Z", base)).toBe("0s");
+    expect(formatUptime("2026-10-28T11:59:30.000Z", base)).toBe("30s");
+    expect(formatUptime("2026-10-28T11:59:00.000Z", base)).toBe("1m");
+    expect(formatUptime("2026-10-28T11:58:30.000Z", base)).toBe("1m 30s");
+    expect(formatUptime("2026-10-28T11:00:00.000Z", base)).toBe("1h");
+    expect(formatUptime("2026-10-28T10:30:00.000Z", base)).toBe("1h 30m");
+    expect(formatUptime("não-data", base)).toBe("desconhecido");
   });
 });
