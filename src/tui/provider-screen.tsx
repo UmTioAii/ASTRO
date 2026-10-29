@@ -46,13 +46,14 @@ export function ProviderScreen({
     : initialList.find((item) => item.id === initial.target)
       ?? initialList.find((item) => item.name.toLowerCase() === initial.target!.toLowerCase());
   const initialEdit = initial?.mode === "edit" && initialTarget?.source === "global" ? initialTarget : undefined;
+  const initialRemove = initial?.mode === "remove" && initialTarget?.source === "global" ? initialTarget : undefined;
   const [view, setView] = useState<"list" | "form" | "remove">(
     initial?.mode === "add"
       ? "form"
       : initial?.mode === "edit"
         ? initialEdit === undefined ? "list" : "form"
         : initial?.mode === "remove"
-          ? "remove"
+          ? initialRemove === undefined ? "list" : "remove"
           : "list",
   );
   const [selected, setSelected] = useState(() => {
@@ -70,11 +71,15 @@ export function ProviderScreen({
   const [models, setModels] = useState(initialEdit?.models.map((model) => model.id).join(";") ?? "");
   const [credential, setCredential] = useState(initialEdit?.credentialRef ?? "");
   const [message, setMessage] = useState<string | undefined>(() => {
-    if (initial?.mode !== "edit" || initial.target === undefined) return undefined;
+    if (initial?.target === undefined) return undefined;
     if (initialTarget === undefined) return `provider "${initial.target}" não encontrado`;
-    return initialEdit === undefined
-      ? `provider "${initial.target}" é ${initialTarget.source}; edite pelo astro chat`
-      : undefined;
+    if (initial?.mode === "edit" && initialEdit === undefined) {
+      return `provider "${initial.target}" é ${initialTarget.source}; edite pelo astro chat`;
+    }
+    if (initial?.mode === "remove" && initialRemove === undefined) {
+      return `provider "${initial.target}" é ${initialTarget.source}; não removível aqui`;
+    }
+    return undefined;
   });
 
 
@@ -130,7 +135,7 @@ export function ProviderScreen({
         : { credentialsPath: editing?.credentialsPath ?? entry?.credentialsPath }),
       ...(editing?.quotaDomain === undefined && entry === undefined
         ? {}
-        : { quotaDomain: editing?.quotaDomain ?? entry?.key }),
+        : { quotaDomain: editing?.quotaDomain ?? entry?.quotaDomain ?? entry?.key }),
       ...(editing?.headers === undefined ? {} : { headers: editing.headers }),
     };
     try {
@@ -144,7 +149,13 @@ export function ProviderScreen({
         }
       }
       onChanged?.();
-      if (editing === undefined && activationError === undefined) onActivate(saved.id);
+      if (editing === undefined && activationError === undefined) {
+        try {
+          onActivate(saved.id);
+        } catch (error) {
+          activationError = messageOf(error);
+        }
+      }
       setView("list");
       setMessage(activationError === undefined ? `salvo: ${saved.id}` : `salvo: ${saved.id} (não ativado: ${activationError})`);
     } catch (error) {

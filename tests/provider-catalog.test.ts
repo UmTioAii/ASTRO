@@ -45,6 +45,12 @@ test("codex usa credentialsPath e nenhuma chave", () => {
   expect(codex?.credentialRef).toBeUndefined();
 });
 
+test("cada entrada declara o próprio quotaDomain", () => {
+  for (const entry of PROVIDER_CATALOG) {
+    expect(entry.quotaDomain).toBe(entry.key);
+  }
+});
+
 test("buscas por chave inexistente retornam undefined", () => {
   expect(catalogEntry("nao-existe")).toBeUndefined();
 });

@@ -2,8 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { ConfigError } from "../config";
-import { loadConfig } from "../config";
+import { ConfigError, loadConfig } from "../config";
 import { ProfileManager } from "../provider/profile-manager";
 import { redactSecrets } from "../sanitize-external";
 import { createApprovalBridge } from "./approvals";

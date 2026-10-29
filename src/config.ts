@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
+import { isAuthHeader, looksLikeSecret } from "./provider/headers";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
 /** Configuração comum a todos os providers. */
@@ -290,7 +291,14 @@ function validateHeaders(value: unknown, field: string): Record<string, string> 
     if (name.trim().length === 0) {
       fail(`config inválida: "${field}" contém um nome de header vazio`);
     }
-    headers[name] = expectString(headerValue, `${field}.${name}`);
+    if (isAuthHeader(name)) {
+      fail(`config inválida: "${field}.${name}" é header de autenticação; use credentialRef`);
+    }
+    const text = expectString(headerValue, `${field}.${name}`);
+    if (looksLikeSecret(text)) {
+      fail(`config inválida: "${field}.${name}" parece conter uma credencial; use credentialRef`);
+    }
+    headers[name] = text;
   }
   return headers;
 }

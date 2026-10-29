@@ -25,6 +25,8 @@ Perfis vivem em `~/.astro/providers.json` (`ASTRO_HOME` sobrescreve), modo 0600,
 | Provider ativo | `--provider` > `ASTRO_PROVIDER` > `activeProfileId` > provider do `agent.model` |
 | Modelos | união; o projeto vence no mesmo `provider/id` |
 
+`headers` aceitam só metadados (`X-Title`, `HTTP-Referer`): nome ou valor com cara de credencial (`Authorization`, `*api-key`, `*key`, `*secret`, `cookie`, `*token`, prefixos `sk-`/`nvapi-`/…) é recusado no projeto e no store (I-03); use `credentialRef`.
+
 `OPENAI_API_KEY` + `OPENAI_MODEL` (e `OPENAI_BASE_URL` opcional) montam um perfil efêmero `env`, usado só naquela execução e nunca gravado. Sem `astro.config.json`, `chat`/`tui` usam baseline somente leitura (`read_file`, `list_dir`, `grep`); `run` exige config explícita, e escrita/shell exigem config em qualquer caso. Em projeto com `agent.profile`, `--provider` divergente é erro (o profile decide o modelo); `run.started` registra `providerSource` (definição) e `providerSelection` (quem escolheu).
 
 CRUD: `/provider add` (catálogo ou custom), `/provider edit <nome|id>`, `/provider remove <nome|id>` e `/provider use <nome|id>`. Na TUI, `/provider` abre a tela cheia (a adicionar, e editar, d remover, enter ativar, esc voltar); `/provider use <nome>` continua trocando inline. Perfis do projeto e o perfil `env` são somente leitura; remover um perfil referenciado pelo projeto é recusado.

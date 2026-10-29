@@ -8,6 +8,8 @@ export interface CatalogEntry {
   baseUrl?: string;
   credentialRef?: string;
   credentialsPath?: string;
+  /** Domínio de quota do seed; o wizard grava no perfil. */
+  quotaDomain?: string;
   models: ProfileModel[];
 }
 
@@ -18,6 +20,7 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     kind: "openai-compat",
     baseUrl: "https://api.openai.com/v1",
     credentialRef: "OPENAI_API_KEY",
+    quotaDomain: "openai",
     models: [{ id: "gpt-4o", tags: ["writing-code", "tools"], context: 128000 }],
   },
   {
@@ -26,6 +29,7 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     kind: "openai-compat",
     baseUrl: "https://openrouter.ai/api/v1",
     credentialRef: "OPENROUTER_API_KEY",
+    quotaDomain: "openrouter",
     models: [{ id: "openai/gpt-4o-mini", tags: ["writing-code", "tools", "fast"], context: 128000 }],
   },
   {
@@ -34,6 +38,7 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     kind: "openai-compat",
     baseUrl: "https://integrate.api.nvidia.com/v1",
     credentialRef: "NVIDIA_API_KEY",
+    quotaDomain: "nvidia",
     models: [{
       id: "meta/llama-3.3-70b-instruct",
       tags: ["writing-code", "tools", "long-context"],
@@ -45,6 +50,7 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     name: "Ollama",
     kind: "openai-compat",
     baseUrl: "http://localhost:11434/v1",
+    quotaDomain: "ollama",
     models: [{ id: "llama3.1", tags: ["writing-code", "tools"], context: 32768 }],
   },
   {
@@ -52,6 +58,7 @@ export const PROVIDER_CATALOG: readonly CatalogEntry[] = [
     name: "Codex",
     kind: "codex-oauth",
     credentialsPath: "~/.codex/auth.json",
+    quotaDomain: "codex",
     models: [{ id: "gpt-5.5", tags: ["writing-code", "tools", "reasoning"], context: 400000 }],
   },
 ];

@@ -129,6 +129,54 @@ test("edit preserva headers e remove confirma", async () => {
   remove.unmount();
 });
 
+test("falha de ativação aparece na tela", async () => {
+  const instance = render(
+    <ProviderScreen
+      manager={manager()}
+      colors={colors}
+      initial={{ mode: "add" }}
+      onClose={() => undefined}
+      onActivate={() => { throw new Error("boom ativação"); }}
+    />,
+  );
+  await waitFor(() => instance.lastFrame()?.includes("De onde partir?") === true);
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("Nome") === true);
+  instance.stdin.write("Local");
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("Base URL") === true);
+  instance.stdin.write("http://localhost:1/v1");
+  await waitFor(() => instance.lastFrame()?.includes("http://localhost:1/v1") === true);
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("Modelos") === true);
+  instance.stdin.write("m1");
+  await waitFor(() => instance.lastFrame()?.includes("m1") === true);
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("Variável da chave") === true);
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("Confirmar") === true);
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("não ativado") === true);
+  expect(instance.lastFrame()).toContain("boom ativação");
+  instance.unmount();
+});
+
+test("remove com alvo desconhecido abre a lista, não a confirmação", async () => {
+  const instance = render(
+    <ProviderScreen
+      manager={manager()}
+      colors={colors}
+      initial={{ mode: "remove", target: "ghost" }}
+      onClose={() => undefined}
+      onActivate={() => undefined}
+    />,
+  );
+  await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+  expect(instance.lastFrame()).toContain("não encontrado");
+  expect(instance.lastFrame()).not.toContain("Remover");
+  instance.unmount();
+});
+
 test("provider do projeto não é removível pela tela", async () => {
   const instance = render(
     <ProviderScreen manager={manager()} colors={colors} onClose={() => undefined} onActivate={() => undefined} />,
