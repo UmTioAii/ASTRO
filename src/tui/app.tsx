@@ -64,6 +64,29 @@ function EntryLine({ entry, colors }: { entry: Entry; colors: ThemeColors }): Re
   return <Text dimColor>{entry.text}</Text>;
 }
 
+/** Persiste o último modelo sem derrubar a ativação se o arquivo falhar. */
+export function persistLastModel(cwd: string, model: string, onWarning?: (message: string) => void): void {
+  try {
+    saveTuiConfig(cwd, { lastModel: model });
+  } catch {
+    const message = "aviso: não foi possível salvar o último modelo da TUI";
+    if (onWarning === undefined) console.error(message);
+    else onWarning(message);
+  }
+}
+
+/** Ativa o provider na sessão e persiste o último modelo, sem falhar a ativação. */
+export function activateProvider(
+  session: Pick<ChatSession, "reload" | "setProvider" | "snapshot">,
+  cwd: string,
+  id: string,
+  onWarning?: (message: string) => void,
+): void {
+  session.reload?.();
+  session.setProvider(id);
+  persistLastModel(cwd, session.snapshot().model, onWarning);
+}
+
 export function TuiApp({ session, cwd, branch, store, approvals, shell, manager, onExit }: TuiAppProps): ReactElement {
   const [entries, setEntries] = useState<Entry[]>([{ kind: "info", text: WELCOME }]);
   const [question, setQuestion] = useState<string | undefined>(() => approvals?.current()?.text);
@@ -304,16 +327,13 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
       <ProviderScreen
         manager={manager}
         colors={colors}
+        currentModel={session.model}
         initial={screen}
         onClose={() => setScreen(undefined)}
         onActivate={(id) => {
-          session.reload?.();
-          session.setProvider(id);
-          try {
-            saveTuiConfig(cwd, { lastModel: session.snapshot().model });
-          } catch {
-            // falha ao persistir o último modelo não desfaz a ativação em memória
-          }
+          activateProvider(session, cwd, id, (text) => {
+            setEntries((current) => [...current, { kind: "error", text }]);
+          });
           setStatus(statusOf(session.snapshot()));
           setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
         }}
