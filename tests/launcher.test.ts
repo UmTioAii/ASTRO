@@ -121,11 +121,7 @@ test("reconhece o launcher executado por symlink/junction (npm POSIX)", () => {
   const target = join(real, "launcher.js");
   writeFileSync(target, "// launcher", "utf8");
   const link = join(dir, "link");
-  try {
-    symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
-  } catch {
-    return; // ambiente sem permissão para criar link
-  }
+  symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
   expect(isMainEntry(join(link, "launcher.js"), target)).toBe(true);
   expect(isMainEntry(target, target)).toBe(true);
   expect(isMainEntry(join(dir, "outro.js"), target)).toBe(false);

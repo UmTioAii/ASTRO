@@ -55,7 +55,7 @@ function missingRuntime(): MissingBunError {
 
 /**
  * Ordem: ASTRO_BUN_PATH → Bun que está executando → binário da dependência de
- * plataforma → BUN_INSTALL → bun no PATH.
+ * plataforma → bun no PATH.
  */
 export function resolveBun(deps: ResolveDeps = {}): string {
   const env = deps.env ?? process.env;
