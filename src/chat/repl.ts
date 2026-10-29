@@ -53,12 +53,29 @@ function paint(text: string, code: string, style: boolean): string {
   return style ? `${code}${text}${RESET}` : text;
 }
 
-export function sessionLines(snapshot: SessionSnapshot, lastFile: string | undefined): string[] {
-  const line = `sessão ${snapshot.id} · início ${snapshot.startedAt} · modelo ${snapshot.model}`
-    + ` · turnos ${snapshot.turns} · tokens ${snapshot.tokensIn}/${snapshot.tokensOut}`
-    + ` · custo ${fmtCost(snapshot.costUsd)}`;
+/** Duração desde `startedAt`; datas inválidas viram "desconhecido". */
+export function formatUptime(startedAt: string, now = Date.now()): string {
+  const start = Date.parse(startedAt);
+  if (!Number.isFinite(start)) return "desconhecido";
+  const seconds = Math.max(0, Math.floor((now - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 === 0 ? `${minutes}m` : `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
+}
+
+function providerOf(model: string): string {
+  const slash = model.indexOf("/");
+  return slash === -1 ? "desconhecido" : model.slice(0, slash);
+}
+
+/** Metadados da sessão para `/session` e `/details` (mesmo formatter nas duas superfícies). */
+export function detailsLines(snapshot: SessionSnapshot, lastFile: string | undefined, now = Date.now()): string[] {
   return [
-    line,
+    `sessão ${snapshot.id} · início ${snapshot.startedAt} · uptime ${formatUptime(snapshot.startedAt, now)}`,
+    `provider: ${providerOf(snapshot.model)} · modelo ${snapshot.model} · turnos ${snapshot.turns}`
+      + ` · tokens ${snapshot.tokensIn}/${snapshot.tokensOut} · custo ${fmtCost(snapshot.costUsd)}`,
     ...(snapshot.resumedFrom === undefined
       ? []
       : [`retomada de ${snapshot.resumedFrom.id} (início ${snapshot.resumedFrom.startedAt})`]),
@@ -131,9 +148,9 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         }
         continue;
       }
-      if (command.kind === "session") {
-        const lines = sessionLines(session.snapshot(), lastFile);
-        if (opts.store === undefined) lines[1] = "arquivo: sem persistência";
+      if (command.kind === "session" || command.kind === "details") {
+        const lines = detailsLines(session.snapshot(), lastFile);
+        if (opts.store === undefined) lines[lines.length - 1] = "arquivo: sem persistência";
         io.write(lines.join("\n"));
         continue;
       }

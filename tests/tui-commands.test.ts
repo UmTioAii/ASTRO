@@ -137,6 +137,30 @@ describe("comandos da TUI (T2, #63)", () => {
     expect(out.entries[0]!.text).toContain("retomada de abc");
     expect(out.entries[0]!.text).toContain("arquivo: sem persistência");
   });
+
+  test("/details partilha o formatter com /session", () => {
+    const session = new FakeSession();
+    const state = { lastFile: "/tmp/s.json" };
+    const store = new SessionStore(mkdtempSync(join(tmpdir(), "astro-tui-details-")));
+    const sessionOut = runCommand({ kind: "session" }, session, state, store);
+    const detailsOut = runCommand({ kind: "details" }, session, state, store);
+    expect(detailsOut.entries[0]!.text).toBe(sessionOut.entries[0]!.text);
+    expect(detailsOut.entries[0]!.text).toContain("uptime");
+    expect(detailsOut.entries[0]!.text).toContain("provider: p");
+    expect(detailsOut.entries[0]!.text).toContain("modelo p/m1");
+    expect(detailsOut.entries[0]!.text).toContain("turnos 2");
+    expect(detailsOut.entries[0]!.text).toContain("tokens 20/10");
+    expect(detailsOut.entries[0]!.text).toContain("custo US$ 0.500000");
+    expect(detailsOut.entries[0]!.text).toContain("arquivo: /tmp/s.json");
+  });
+
+  test("/details sem store avisa e mantém retomada", () => {
+    const session = new FakeSession();
+    session.resumedFrom = { id: "xyz", startedAt: "2026-10-27T10:00:00.000Z" };
+    const out = runCommand({ kind: "details" }, session, {});
+    expect(out.entries[0]!.text).toContain("retomada de xyz");
+    expect(out.entries[0]!.text).toContain("arquivo: sem persistência");
+  });
   test("resume sem /sessions recarrega a lista e valida o índice", () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-tui-resume2-"));
     const store = new SessionStore(dir);

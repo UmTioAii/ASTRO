@@ -1,6 +1,6 @@
 /** Comandos de barra compartilhados pelo REPL e pela TUI: puro, sem React. */
 import { HELP_TEXT, type ReplCommand } from "../chat/commands";
-import { providerLine, sessionLines, type ChatSession } from "../chat/repl";
+import { detailsLines, providerLine, type ChatSession } from "../chat/repl";
 import { sessionSummaryLine, type SessionStore, type SessionSummary } from "../chat/store";
 import { redactSecrets } from "../sanitize-external";
 import { exportSession } from "../chat/export";
@@ -131,8 +131,9 @@ export function runCommand(
         return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
       }
     }
-    case "session": {
-      const lines = sessionLines(session.snapshot(), state.lastFile);
+    case "session":
+    case "details": {
+      const lines = detailsLines(session.snapshot(), state.lastFile);
       if (store === undefined) lines[lines.length - 1] = "arquivo: sem persistência";
       return { entries: [{ kind: "info", text: lines.join("\n") }] };
     }
