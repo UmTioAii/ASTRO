@@ -146,6 +146,109 @@ test("list mescla projeto, global e env com precedência do projeto", () => {
   expect(list.find((item) => item.id === "env")?.source).toBe("env");
 });
 
+test("list segue ASTRO_PROVIDER, não o activeProfileId", () => {
+  const home = mkdtempSync(join(tmpdir(), "astro-mgr-envprov-"));
+  const base = {
+    id: "openai-work", name: "OpenAI Work", kind: "openai-compat",
+    baseUrl: "https://api.openai.com/v1", credentialRef: "OPENAI_API_KEY",
+    models: [{ id: "gpt-4o", tags: ["writing-code"], context: 128000 }],
+  };
+  saveProfileStore({
+    version: 1,
+    activeProfileId: "outro",
+    profiles: [{ ...base, id: "outro", name: "Outro" }, base],
+  }, join(home, "providers.json"));
+  const m = new ProfileManager({
+    project: project(),
+    env: { ASTRO_HOME: home, ASTRO_PROVIDER: "openai-work" },
+  });
+  const list = m.list();
+  expect(list.find((item) => item.id === "openai-work")?.active).toBe(true);
+  expect(list.find((item) => item.id === "outro")?.active).toBe(false);
+});
+
+test("list marca o provider do projeto quando agent.profile decide", () => {
+  const home = mkdtempSync(join(tmpdir(), "astro-mgr-pool-"));
+  const base = project();
+  const pooled = validateConfig({
+    providers: base.providers,
+    models: base.models,
+    agent: { profile: "fast", maxSteps: 2, tools: ["read_file"] },
+    modelPool: { fast: { model: "p/m1" } },
+    paths: base.paths,
+  });
+  saveProfileStore({
+    version: 1,
+    activeProfileId: "outro",
+    profiles: [{
+      id: "outro", name: "Outro", kind: "openai-compat",
+      baseUrl: "https://o.example/v1", credentialRef: "KEY",
+      models: [{ id: "m1", tags: [], context: 1000 }],
+    }],
+  }, join(home, "providers.json"));
+  const m = new ProfileManager({ project: pooled, env: { ASTRO_HOME: home } });
+  expect(m.list().find((item) => item.id === "p")?.active).toBe(true);
+  expect(m.list().find((item) => item.id === "outro")?.active).toBe(false);
+  expect(() => m.use("outro")).toThrow(/agent\.profile/);
+});
+
+test("add rejeita id reservado env", () => {
+  const { m } = manager();
+  expect(() => m.add(draft({ name: "env" }))).toThrow(/reservado/);
+});
+
+test("add rejeita colisão com provider do projeto em qualquer caixa", () => {
+  const home = mkdtempSync(join(tmpdir(), "astro-mgr-case-"));
+  const base = project();
+  const upper = validateConfig({
+    providers: { P: base.providers.p! },
+    models: base.models.map((model) => ({ ...model, provider: "P" })),
+    agent: { ...base.agent, model: "P/m1" },
+    paths: base.paths,
+  });
+  const m = new ProfileManager({ project: upper, env: { ASTRO_HOME: home } });
+  expect(() => m.add(draft({ name: "p" }))).toThrow(/astro\.config\.json/);
+});
+
+test("list não cria arquivo com perfil de env", () => {
+  const home = mkdtempSync(join(tmpdir(), "astro-mgr-nowrite-"));
+  const m = new ProfileManager({
+    project: project(),
+    env: { ASTRO_HOME: home, OPENAI_API_KEY: "k", OPENAI_MODEL: "gpt-4o" },
+  });
+  expect(m.list().some((item) => item.id === "env")).toBe(true);
+  expect(existsSync(join(home, "providers.json"))).toBe(false);
+});
+
+test("remove de perfil não ativo preserva o ativo", () => {
+  const { home, m } = manager();
+  const a = m.add(draft({ name: "A" }));
+  m.add(draft({ name: "B" }));
+  m.use(a.id);
+  m.remove("b");
+  expect(storeAt(home).activeProfileId).toBe(a.id);
+});
+
+test("remove recusa perfil referenciado pelo projeto", () => {
+  const home = mkdtempSync(join(tmpdir(), "astro-mgr-ref-"));
+  const base = project();
+  const raw = {
+    ...base,
+    models: [...base.models, { provider: "q", id: "m2", tags: [], context: 1000 }],
+    agent: { ...base.agent, model: "q/m2" },
+  } as unknown as AstroConfig;
+  saveProfileStore({
+    version: 1,
+    profiles: [{
+      id: "q", name: "Q", kind: "openai-compat",
+      baseUrl: "https://q.example/v1", credentialRef: "KEY",
+      models: [{ id: "m2", tags: [], context: 1000 }],
+    }],
+  }, join(home, "providers.json"));
+  const m = new ProfileManager({ project: raw, env: { ASTRO_HOME: home } });
+  expect(() => m.remove("q")).toThrow(/usado por astro\.config\.json/);
+});
+
 test("env não é gravado por add/edit", () => {
   const home = mkdtempSync(join(tmpdir(), "astro-mgr-env-"));
   const m = new ProfileManager({

@@ -4,6 +4,7 @@ import {
   loadProfileStore,
   profileFromEnv,
   profilesPath,
+  resolveEffectiveConfig,
   saveProfileStore,
   type ProfileModel,
   type ProviderProfile,
@@ -47,13 +48,14 @@ function providerOfModel(modelRef: string, providers: Record<string, ProviderCon
 }
 
 function projectReferences(project: AstroConfig, id: string): string | undefined {
-  if (providerOfModel(project.agent.model, project.providers) === id) return "agent.model";
+  const uses = (modelRef: string): boolean => modelRef.startsWith(`${id}/`);
+  if (uses(project.agent.model)) return "agent.model";
   for (const [name, agent] of Object.entries(project.agents ?? {})) {
-    if (providerOfModel(agent.model, project.providers) === id) return `agents.${name}.model`;
+    if (uses(agent.model)) return `agents.${name}.model`;
   }
   if (project.models.some((model) => model.provider === id)) return "models[].provider";
   for (const [name, profile] of Object.entries(project.modelPool ?? {})) {
-    if (providerOfModel(profile.model, project.providers) === id) return `modelPool.${name}.model`;
+    if (uses(profile.model)) return `modelPool.${name}.model`;
   }
   for (const [name, provider] of Object.entries(project.providers)) {
     if ((provider.fallback ?? []).includes(id)) return `providers.${name}.fallback`;
@@ -75,11 +77,9 @@ export class ProfileManager {
   }
 
   list(): ProfileView[] {
+    this.#reload();
     const envProfile = profileFromEnv(this.#env);
-    const projectProvider = this.#project === undefined
-      ? undefined
-      : providerOfModel(this.#project.agent.model, this.#project.providers);
-    const activeId = this.#store.activeProfileId ?? projectProvider ?? envProfile?.id;
+    const activeId = this.#activeProvider();
     const view = (profile: ProviderProfile, source: ProviderSource): ProfileView => ({
       ...profile,
       source,
@@ -102,14 +102,11 @@ export class ProfileManager {
   }
 
   add(draft: ProfileDraft): ProfileView {
+    this.#reload();
     const name = draft.name.trim();
-    if (this.#project !== undefined && Object.hasOwn(this.#project.providers, name)) {
-      throw new Error(`provider "${name}" está definido no astro.config.json; edite o arquivo`);
-    }
     const id = slug(name);
-    if (this.#project !== undefined && Object.hasOwn(this.#project.providers, id)) {
-      throw new Error(`provider "${name}" está definido no astro.config.json; edite o arquivo`);
-    }
+    if (id === "env") throw new Error('"env" é reservado para o perfil efêmero');
+    this.#assertNoProjectCollision(name);
     if (this.#store.profiles.some((profile) => profile.id === id)) {
       throw new Error(`já existe um provider com esse nome: "${name}"`);
     }
@@ -119,17 +116,22 @@ export class ProfileManager {
   }
 
   edit(id: string, draft: ProfileDraft): ProfileView {
+    this.#reload();
     this.#requireEditable(id);
     const index = this.#store.profiles.findIndex((profile) => profile.id === id);
     if (index < 0) throw new Error(`provider "${id}" não existe no store`);
-    const profile: ProviderProfile = { ...draft, id, name: draft.name.trim() };
+    const name = draft.name.trim();
+    if (slug(name) === "env") throw new Error('"env" é reservado para o perfil efêmero');
+    this.#assertNoProjectCollision(name);
+    const profile: ProviderProfile = { ...draft, id, name };
     const profiles = [...this.#store.profiles];
     profiles[index] = profile;
     this.#save({ ...this.#store, profiles });
-    return { ...profile, active: this.#store.activeProfileId === id, source: "global" };
+    return { ...profile, active: this.#activeProvider() === id, source: "global" };
   }
 
   remove(id: string): void {
+    this.#reload();
     this.#requireEditable(id);
     const index = this.#store.profiles.findIndex((profile) => profile.id === id);
     if (index < 0) throw new Error(`provider "${id}" não existe no store`);
@@ -143,11 +145,46 @@ export class ProfileManager {
   }
 
   use(id: string): ProviderProfile {
+    this.#reload();
     this.#requireEditable(id);
+    if (this.#project?.agent.profile !== undefined) {
+      throw new Error("agent.profile tem precedência; ajuste o profile no astro.config.json");
+    }
+    if (this.#env.ASTRO_PROVIDER !== undefined && this.#env.ASTRO_PROVIDER !== "") {
+      throw new Error("ASTRO_PROVIDER está definido nesta sessão; remova para salvar o ativo");
+    }
     const profile = this.#store.profiles.find((item) => item.id === id);
     if (profile === undefined) throw new Error(`provider "${id}" não existe no store`);
     this.#save({ ...this.#store, activeProfileId: id });
     return profile;
+  }
+
+  #assertNoProjectCollision(name: string): void {
+    if (this.#project === undefined) return;
+    const wanted = slug(name);
+    for (const key of Object.keys(this.#project.providers)) {
+      if (key === name || slug(key) === wanted) {
+        throw new Error(`provider "${name}" está definido no astro.config.json; edite o arquivo`);
+      }
+    }
+  }
+
+  #activeProvider(): string | undefined {
+    const envProfile = profileFromEnv(this.#env);
+    try {
+      return resolveEffectiveConfig({
+        ...(this.#project === undefined ? {} : { project: this.#project }),
+        store: this.#store,
+        ...(envProfile === undefined ? {} : { envProfile }),
+        env: this.#env,
+      }).activeProvider;
+    } catch {
+      return undefined;
+    }
+  }
+
+  #reload(): void {
+    this.#store = loadProfileStore(this.#storePath);
   }
 
   #requireEditable(id: string): void {
