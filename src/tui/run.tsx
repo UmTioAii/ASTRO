@@ -1,9 +1,11 @@
 /** Bootstrap da TUI: Ink é carregado por import dinâmico só neste comando. */
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { ConfigError } from "../config";
 import { redactSecrets } from "../sanitize-external";
 import { createApprovalBridge } from "./approvals";
 import { createShellRunner } from "./shell";
+import { loadTuiConfig } from "./theme";
 
 export interface RunTuiOptions {
   configPath: string;
@@ -13,6 +15,18 @@ export interface RunTuiOptions {
 
 /** Ink desmontaria no ctrl+c antes do handler da app; a app decide a saída. */
 export const TUI_RENDER_OPTIONS = { exitOnCtrlC: false } as const;
+
+/** Abre a sessão já com o último modelo; modelo removido da config cai no default. */
+export function openSession<T>(create: (model?: string) => T, cwd: string): T {
+  const saved = loadTuiConfig(cwd).lastModel;
+  if (saved === undefined) return create();
+  try {
+    return create(saved);
+  } catch (error) {
+    if (error instanceof ConfigError) return create();
+    throw error;
+  }
+}
 
 /** Branch git do cwd; ausente fora de um repositório. */
 export function gitBranch(cwd: string): string | undefined {
@@ -41,11 +55,12 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
     const cwd = resolve(opts.cwd);
     const approvals = createApprovalBridge();
     const shell = createShellRunner({ configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env });
-    const session = new AgentSession({
+    const session = openSession((model) => new AgentSession({
       configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
       approveSwap: approvals.approveSwap,
       onBudgetExceeded: approvals.onBudgetExceeded,
-    });
+      ...(model === undefined ? {} : { model }),
+    }), cwd);
     const store = new SessionStore(resolve(cwd, ".astro", "sessions"));
     let instance: ReturnType<typeof render> | undefined;
     const branch = gitBranch(cwd);
