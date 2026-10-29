@@ -378,7 +378,7 @@ export function resolveEffectiveConfig(input: {
       activeProvider = requested;
       selection = requestKind ?? "project";
     } else if (requestKind === "store") {
-      warnings.push(`activeProfileId "${requested}" não corresponde a nenhum perfil; usando o projeto`);
+      warnings.push(`activeProfileId "${requested}" não corresponde a nenhum perfil; seleção ignorada`);
     } else {
       throw new Error(`provider "${requested}" não está configurado`);
     }

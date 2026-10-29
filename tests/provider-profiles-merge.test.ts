@@ -7,6 +7,7 @@ import {
   loadEffectiveConfig,
   profileFromEnv,
   resolveEffectiveConfig,
+  saveProfileStore,
   type ProviderProfile,
   type ProviderStore,
 } from "../src/provider/profiles";
@@ -282,19 +283,47 @@ test("--provider desconhecido é erro", () => {
 });
 
 test("modelo disabled não é escolhido", () => {
-  const base = project("p", "old");
-  const withDisabled = validateConfig({
+  const base = project();
+  const withQ = validateConfig({
     ...base,
+    providers: {
+      ...base.providers,
+      q: { kind: "openai-compat", baseUrl: "https://q.example/v1", credentialRef: "KEY" },
+    },
     models: [
-      { provider: "p", id: "old", tags: [], context: 1000, status: "disabled" },
-      { provider: "p", id: "new", tags: [], context: 1000 },
+      { provider: "p", id: "m1", tags: ["writing-code"], context: 8192 },
+      { provider: "q", id: "old", tags: [], context: 1000, status: "disabled" },
+      { provider: "q", id: "new", tags: [], context: 1000 },
     ],
-    agent: { ...base.agent, model: "p/new" },
+    agent: { ...base.agent, model: "p/m1" },
   });
   const result = resolveEffectiveConfig({
-    project: withDisabled,
-    store: store(profile({ id: "p", name: "P", models: [{ id: "old", tags: [], context: 1000 }] })),
+    project: withQ,
+    store: store(),
+    providerFlag: "q",
     env: {},
   });
-  expect(result.config.agent.model).toBe("p/new");
+  expect(result.config.agent.model).toBe("q/new");
+});
+
+test("activeProfileId órfão no disco avisa e cai no projeto", () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-orphan-"));
+  const home = join(dir, "home");
+  const configPath = join(dir, "astro.config.json");
+  writeFileSync(configPath, JSON.stringify({
+    providers: { p: { kind: "openai-compat", baseUrl: "https://p.example/v1", credentialRef: "KEY" } },
+    models: [{ provider: "p", id: "m1", tags: ["writing-code"], context: 8192 }],
+    agent: { model: "p/m1", maxSteps: 2, tools: ["read_file"] },
+    paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+  }));
+  const storePath = join(home, "providers.json");
+  saveProfileStore({
+    version: 1,
+    activeProfileId: "fantasma",
+    profiles: [profile()],
+  }, storePath);
+  const result = loadEffectiveConfig(configPath, { env: { ASTRO_HOME: home } });
+  expect(result.activeProvider).toBe("p");
+  expect(result.providerSelection).toBe("project");
+  expect(result.warnings.join(" ")).toMatch(/activeProfileId/);
 });
