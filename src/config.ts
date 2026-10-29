@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
+import { headerEnvName } from "./mcp/headers";
 import { urlProblem } from "./url-safety";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
@@ -761,6 +762,23 @@ function stringRecord(raw: Record<string, unknown>, field: string): Record<strin
   return out;
 }
 
+/** Headers de MCP: aceita literal não-secreto ou referência `env:NOME` (I-03). */
+function mcpHeaders(raw: Record<string, unknown>, field: string): Record<string, string> {
+  const headers = stringRecord(raw, field);
+  for (const [name, value] of Object.entries(headers)) {
+    if (value.startsWith("env:")) {
+      if (headerEnvName(value) === undefined) {
+        fail(`config inválida: "${field}.${name}" deve usar "env:NOME_DA_VARIAVEL"`);
+      }
+      continue;
+    }
+    if (isAuthHeader(name) || looksLikeSecret(value)) {
+      fail(`config inválida: "${field}.${name}" parece conter credencial; use "env:NOME_DA_VARIAVEL"`);
+    }
+  }
+  return headers;
+}
+
 /** Valida a seção `mcpServers` (C2, #56); defaults timeoutMs 30000 e enabled true. */
 function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
   const raw = expectObject(value, "mcpServers");
@@ -793,7 +811,7 @@ function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
       args = raw2.args as string[];
     }
     const env = raw2.env === undefined ? undefined : stringRecord(expectObject(raw2.env, `${field}.env`), `${field}.env`);
-    const headers = raw2.headers === undefined ? undefined : stringRecord(expectObject(raw2.headers, `${field}.headers`), `${field}.headers`);
+    const headers = raw2.headers === undefined ? undefined : mcpHeaders(expectObject(raw2.headers, `${field}.headers`), `${field}.headers`);
     const timeoutMs = raw2.timeoutMs === undefined ? 30_000 : expectPositiveInteger(raw2.timeoutMs, `${field}.timeoutMs`);
     const retryBackoffMs = raw2.retryBackoffMs === undefined
       ? undefined

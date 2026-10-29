@@ -10,7 +10,7 @@ Cliente MCP (Model Context Protocol) no ASTRO (C2, #56): config `mcpServers`, tr
 |---|---|---|
 | `transport` | `stdio` \| `sse` \| `http` | obrigatório |
 | `command` + `args` + `env` | `command` obrigatório em stdio | `args: []` |
-| `url` + `headers` | `url` obrigatória em sse/http | — |
+| `url` + `headers` | `url` obrigatória em sse/http; header de autenticação só como `env:NOME`; valor literal com cara de credencial é recusado | — |
 | `retryBackoffMs` | inteiro positivo, base do backoff exponencial entre reconexões; teto de 30s | `1000` |
 | `timeoutMs` | inteiro positivo, por requisição | `30000` |
 | `enabled` | booleano; `false` fica fora do registry | `true` |
@@ -51,7 +51,7 @@ Timeout por requisição nos três: aborta só a própria pendência; o transpor
 
 ## Modelo de confiança
 
-Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. `headers` pode carregar credencial literal — violação em aberto na issue #139 (interpolação de env pendente).
+Servidor MCP stdio é **código arbitrário**: roda com env sanitizado e o `command` é responsabilidade de quem escreve a config. Em `headers`, use `"env:NOME_DA_VARIAVEL"`: o valor é resolvido no momento da conexão, só chega ao servidor e nunca entra em config, log, audit ou erro (I-03). Header de autenticação com valor literal é recusado; valor com cara de credencial em header neutro também.
 
 ## CLI (`astro mcp list|test`)
 
@@ -66,4 +66,4 @@ Kill de árvore no win32 e dreno de stderr no stdio (#115); framing SSE CRLF no 
 
 ## Referências
 
-#56, PRs #115/#116/#117/#143/#144 e issue #139; I-01/I-03/I-04 em `docs/invariants.md`; D-02 (zero deps), D-09 (auditoria).
+#56, PRs #115/#116/#117/#143/#144 e issue #139 (headers por `env:NOME`); I-01/I-03/I-04 em `docs/invariants.md`; D-02 (zero deps), D-09 (auditoria).

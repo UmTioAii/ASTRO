@@ -683,7 +683,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   }
   let mcpRegistry: MCPRegistry | undefined;
   if (Object.keys(mcpServers).length > 0) {
-    mcpRegistry = new MCPRegistry({ servers: mcpServers });
+    mcpRegistry = new MCPRegistry({ servers: mcpServers, env });
     await mcpRegistry.connectAll();
     const warn = (message: string) => console.warn(`mcp: ${message}`);
     for (const tool of mcpTools({ registry: mcpRegistry, servers: mcpServers, audit, reserved: toolsByName.keys(), warn })) {

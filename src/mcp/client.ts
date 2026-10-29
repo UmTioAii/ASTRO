@@ -3,6 +3,7 @@ import { MCPError, type MCPServerInfo, type MCPToolDescriptor, type MCPToolResul
 import { StdioTransport } from "./transport/stdio";
 import { HttpTransport } from "./transport/http";
 import { SseTransport } from "./transport/sse";
+import { resolveMcpHeaders } from "./headers";
 
 /** Contrato comum dos transports (C2b): request/notify/close; `closed` diz se o transporte morreu. */
 export interface MCPTransport {
@@ -30,14 +31,16 @@ export class MCPClient {
   get closed(): boolean {
     return this.#transport.closed;
   }
-  static async connect(server: MCPServerConfig): Promise<MCPClient> {
+  static async connect(server: MCPServerConfig, env: NodeJS.ProcessEnv = process.env): Promise<MCPClient> {
+    // Resolve antes de criar transporte/rede: variável ausente falha sem chamada.
+    const headers = server.transport === "stdio" ? undefined : resolveMcpHeaders(server.headers, env);
     let transport: MCPTransport;
     if (server.transport === "stdio") {
       transport = StdioTransport.connect({ command: server.command!, args: server.args ?? [], ...(server.env === undefined ? {} : { env: server.env }), timeoutMs: server.timeoutMs });
     } else if (server.transport === "http") {
-      transport = new HttpTransport({ url: server.url!, ...(server.headers === undefined ? {} : { headers: server.headers }), timeoutMs: server.timeoutMs });
+      transport = new HttpTransport({ url: server.url!, ...(headers === undefined ? {} : { headers }), timeoutMs: server.timeoutMs });
     } else if (server.transport === "sse") {
-      transport = await SseTransport.connect({ url: server.url!, ...(server.headers === undefined ? {} : { headers: server.headers }), timeoutMs: server.timeoutMs });
+      transport = await SseTransport.connect({ url: server.url!, ...(headers === undefined ? {} : { headers }), timeoutMs: server.timeoutMs });
     } else {
       throw new MCPError(`transport "${server.transport}" não suportado`);
     }
