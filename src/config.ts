@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
-import { isAuthHeader, looksLikeSecret } from "./provider/headers";
+import { isAuthHeader, looksLikeSecret } from "./secrets";
+import { urlProblem } from "./url-safety";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
 /** Configuração comum a todos os providers. */
@@ -323,9 +324,12 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
   };
 
   if (kind === "openai-compat") {
+    const baseUrl = expectString(raw.baseUrl, `${field}.baseUrl`);
+    const baseUrlIssue = urlProblem(baseUrl);
+    if (baseUrlIssue !== undefined) fail(`config inválida: "${field}.baseUrl" ${baseUrlIssue}`);
     return {
       kind,
-      baseUrl: expectString(raw.baseUrl, `${field}.baseUrl`),
+      baseUrl,
       ...(raw.credentialRef === undefined
         ? {}
         : { credentialRef: expectString(raw.credentialRef, `${field}.credentialRef`) }),
@@ -337,6 +341,10 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
 
   if (kind === "codex-oauth") {
     const baseUrl = raw.baseUrl === undefined ? undefined : expectString(raw.baseUrl, `${field}.baseUrl`);
+    if (baseUrl !== undefined) {
+      const baseUrlIssue = urlProblem(baseUrl);
+      if (baseUrlIssue !== undefined) fail(`config inválida: "${field}.baseUrl" ${baseUrlIssue}`);
+    }
     return {
       kind,
       credentialsPath: expectString(raw.credentialsPath, `${field}.credentialsPath`),

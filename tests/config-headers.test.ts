@@ -29,6 +29,7 @@ test("config rejeita headers de autenticação", () => {
     { "x-goog-api-key": "sk-live" },
     { Cookie: "session=1" },
     { "X-Client-Secret": "sk-live" },
+    { "X-Auth": "Bearer sk-live" },
   ];
   for (const headers of cases) {
     expect(() => validateConfig(configWithHeaders(headers))).toThrow(/header de autenticação/);
@@ -38,4 +39,19 @@ test("config rejeita headers de autenticação", () => {
 test("config rejeita valor com cara de chave", () => {
   expect(() => validateConfig(configWithHeaders({ "X-Custom": "sk-live-do-not-store" })))
     .toThrow(/credencial/);
+  expect(() => validateConfig(configWithHeaders({ "X-Custom": "Bearer sk-live-do-not-store" })))
+    .toThrow(/credencial/);
+});
+
+test("config rejeita credencial embutida na baseUrl", () => {
+  const raw = configWithHeaders({}) as Record<string, unknown>;
+  const providers = raw.providers as Record<string, Record<string, unknown>>;
+  expect(() => validateConfig({
+    ...raw,
+    providers: { p: { ...providers.p, baseUrl: "https://user:sk-live@proxy.example/v1" } },
+  })).toThrow(/credencial/);
+  expect(() => validateConfig({
+    ...raw,
+    providers: { p: { ...providers.p, baseUrl: "https://proxy.example/v1?api_key=sk-live" } },
+  })).toThrow(/credencial/);
 });

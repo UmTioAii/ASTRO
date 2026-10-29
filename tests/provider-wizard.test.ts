@@ -47,6 +47,13 @@ test("add pelo catálogo grava, ativa e chama onUse", async () => {
   expect(out.join(" ")).toContain("salvo: openai-work");
 });
 
+test("add pelo catálogo persiste o quotaDomain da entrada", async () => {
+  const { manager } = setup();
+  const { io } = fakeIO(["openai", "OpenAI Work", "", "", "", "S", "n"]);
+  await runProviderWizard(io, manager, { mode: "add" });
+  expect(manager.list().find((item) => item.id === "openai-work")?.quotaDomain).toBe("openai");
+});
+
 test("add custom sem chave e sem ativar", async () => {
   const { home, manager } = setup();
   const { io } = fakeIO(["custom", "Ollama", "http://localhost:11434/v1", "", "llama3.1", "S", "n"]);

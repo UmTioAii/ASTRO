@@ -129,6 +129,26 @@ test("edit preserva headers e remove confirma", async () => {
   remove.unmount();
 });
 
+test("add pelo catálogo na TUI persiste quotaDomain", async () => {
+  const m = manager();
+  const instance = render(
+    <ProviderScreen manager={m} colors={colors} initial={{ mode: "add" }} onClose={() => undefined} onActivate={() => undefined} />,
+  );
+  await waitFor(() => instance.lastFrame()?.includes("De onde partir?") === true);
+  instance.stdin.write("\u001B[B");
+  await waitFor(() => instance.lastFrame()?.includes("> openai") === true);
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("Nome") === true);
+  for (const label of ["Base URL", "Modelos", "Variável da chave", "Confirmar"]) {
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes(label) === true);
+  }
+  instance.stdin.write("\r");
+  await waitFor(() => instance.lastFrame()?.includes("salvo: openai") === true);
+  expect(m.list().find((item) => item.id === "openai")?.quotaDomain).toBe("openai");
+  instance.unmount();
+});
+
 test("falha de ativação aparece na tela", async () => {
   const instance = render(
     <ProviderScreen

@@ -5,7 +5,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ConfigError, loadConfig, validateConfig, type AstroConfig, type ModelConfig, type ProviderConfig } from "../config";
 import { isKnownTag } from "../tags";
-import { isAuthHeader, looksLikeSecret } from "./headers";
+import { isAuthHeader, looksLikeSecret } from "../secrets";
+import { urlProblem } from "../url-safety";
 
 export interface ProfileModel {
   id: string;
@@ -36,7 +37,6 @@ const ROOT_KEYS = new Set(["version", "activeProfileId", "profiles"]);
 const PROFILE_KEYS = new Set([
   "id", "name", "kind", "baseUrl", "credentialRef", "credentialsPath", "quotaDomain", "headers", "models",
 ]);
-const SENSITIVE_QUERY = /^(api[-_]?key|key|token|access[-_]?token|secret)$/i;
 const PROFILE_ID = /^[a-z0-9][a-z0-9-]*$/;
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -99,23 +99,8 @@ function validateModel(raw: unknown, field: string): ProfileModel {
 
 function validateBaseUrl(value: unknown, field: string): string {
   const raw = asString(value, field);
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    fail(`"${field}" deve ser uma URL http(s) válida`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    fail(`"${field}" deve ser uma URL http(s) válida`);
-  }
-  if (url.username !== "" || url.password !== "") {
-    fail(`"${field}" não pode embutir credencial; use credentialRef`);
-  }
-  for (const key of url.searchParams.keys()) {
-    if (SENSITIVE_QUERY.test(key)) {
-      fail(`"${field}" não pode levar credencial na query (${key}); use credentialRef`);
-    }
-  }
+  const problem = urlProblem(raw);
+  if (problem !== undefined) fail(`"${field}" ${problem}`);
   return raw;
 }
 
