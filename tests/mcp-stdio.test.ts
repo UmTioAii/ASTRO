@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateConfig } from "../src/config";
@@ -40,22 +40,39 @@ function mockServerPath(): string {
   return path;
 }
 
-/** Servidor que registra o próprio pid e nunca responde: para pinnar vazamento de processo. */
+/**
+ * Servidor que registra o próprio pid e nunca responde: para pinnar vazamento
+ * de processo. O pid é gravado no startup, não no primeiro `data`: sob carga,
+ * o timeout de handshake pode vencer antes de o filho ler o stdin, e o teste
+ * falharia por ENOENT em vez de provar o vazamento.
+ */
 const SILENT_INIT_SRC = `
 import { writeFileSync } from "node:fs";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", () => { writeFileSync(process.env.PID_FILE, String(process.pid)); });
+writeFileSync(process.env.PID_FILE, String(process.pid));
+process.stdin.resume();
 `;
 
 async function waitUntilDead(pid: number): Promise<boolean> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 50; attempt++) {
     try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 100)); } catch { return true; }
   }
   return false;
 }
 
+/** Espera o arquivo aparecer; startup do bun sob carga não é instantâneo. */
+async function waitForFile(path: string, timeoutMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return existsSync(path);
+}
+
+// Handshake de processos reais precisa de folga sob carga; testes de timeout
+// usam valores explícitos e curtos no próprio caso.
 const stdioServer = (script: string, extra: Partial<MCPServerConfig> = {}): MCPServerConfig => ({
-  transport: "stdio", command: "bun", args: [script], timeoutMs: 2000, enabled: true, ...extra,
+  transport: "stdio", command: "bun", args: [script], timeoutMs: 5000, enabled: true, ...extra,
 });
 
 test("config valida mcpServers com defaults e rejeita por transport", () => {
@@ -107,16 +124,17 @@ test("connect com handshake travado não vaza o processo filho", async () => {
   const script = join(dir, "silent-init.js");
   writeFileSync(script, SILENT_INIT_SRC.trim());
   const pidFile = join(dir, "pid");
-  const server = stdioServer(script, { timeoutMs: 400, env: { PID_FILE: pidFile } });
+  const server = stdioServer(script, { timeoutMs: 3000, env: { PID_FILE: pidFile } });
 
   await expect(MCPClient.connect(server)).rejects.toThrow(/timeout/);
+  expect(await waitForFile(pidFile)).toBe(true);
   const pid = Number(readFileSync(pidFile, "utf8"));
   expect(await waitUntilDead(pid)).toBe(true); // rejeição sem handle não pode deixar órfão
-});
+}, 15_000);
 
 test("client stdio aplica timeout por requisição e fecha limpo", async () => {
   const script = mockServerPath();
-  const silent = await MCPClient.connect(stdioServer(script, { env: { MOCK_SILENT: "1" }, timeoutMs: 500 }));
+  const silent = await MCPClient.connect(stdioServer(script, { env: { MOCK_SILENT: "1" }, timeoutMs: 3000 }));
   await expect(silent.callTool("echo", { text: "x" })).rejects.toThrow(/timeout/);
   silent.close();
 
@@ -126,4 +144,4 @@ test("client stdio aplica timeout por requisição e fecha limpo", async () => {
 
   const httpish = stdioServer(script, { transport: "http", url: "http://mcp" });
   await expect(MCPClient.connect(httpish)).rejects.toThrow(/falha|timeout/);
-});
+}, 15_000);
