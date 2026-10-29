@@ -203,11 +203,9 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         || (command.kind === "provider" && command.action === "use" && command.target !== undefined)
         || (command.kind === "resume" && command.ref !== undefined && !outcome.entries.some((entry) => entry.kind === "error"));
       if (modelChanged) {
-        try {
-          saveTuiConfig(cwd, { lastModel: session.snapshot().model });
-        } catch (error) {
-          added.push({ kind: "error", text: `erro: ${messageOf(error)}` });
-        }
+        persistLastModel(cwd, session.snapshot().model, (text) => {
+          added.push({ kind: "error", text });
+        });
       }
       setEntries((current) => [...current, ...added]);
       setStatus(statusOf(session.snapshot()));
@@ -330,13 +328,9 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         currentModel={session.model}
         initial={screen}
         onClose={() => setScreen(undefined)}
-        onActivate={(id) => {
-          session.reload?.();
-          session.setProvider(id);
-          try {
-            saveTuiConfig(cwd, { lastModel: session.snapshot().model });
-          } catch {
-            // falha ao persistir o último modelo não desfaz a ativação em memória
+          activateProvider(session, cwd, id, (text) => {
+            setEntries((current) => [...current, { kind: "error", text }]);
+          });
           }
           setStatus(statusOf(session.snapshot()));
           setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
