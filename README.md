@@ -57,6 +57,23 @@ bun src/cli.ts run "create a hello.ts that exports hello()"
 
 Secrets never live in config files and are never logged: `openai-compat` keys come only from environment variables named by `credentialRef`; `codex-oauth` reads a local credentials file (`credentialsPath`). The full three-provider example lives in `astro.config.example.json`; the provider guide is `docs/providers.md`.
 
+## Local development
+
+No publish needed for day-to-day changes:
+
+```bash
+bun run cli -- --help        # source, no build
+bun run cli -- run "..."     # source task
+bun run tui                  # TUI in a real terminal
+bun run build                # dist/cli.js + dist/launcher.js
+bun run dev:launcher -- --help
+bun run smoke                # build + launcher with Bun removed from PATH
+bun link                     # after build: global `astro` points to this checkout
+```
+
+`bun run smoke` checks the generated artifact (Node launcher resolving the bundled Bun) without
+touching npm. After changing source, `bun run build` refreshes `dist`; `bun link` is needed only once.
+
 ## Configuration (`astro.config.json`)
 
 | Key | Shape | Default | Where |
