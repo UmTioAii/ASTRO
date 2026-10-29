@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   bunArgs,
+  isMainEntry,
   MissingBunError,
   platformPackages,
   resolveBun,
@@ -110,4 +112,22 @@ test("resolve o binário da dependência de plataforma realmente instalada", () 
   const bun = resolveBun({ env: {}, runningUnderBun: false });
   expect(existsSync(bun)).toBe(true);
   expect(bun.replaceAll("\\", "/")).toContain("@oven/bun-");
+});
+
+test("reconhece o launcher executado por symlink/junction (npm POSIX)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-launcher-link-"));
+  const real = join(dir, "real");
+  mkdirSync(real);
+  const target = join(real, "launcher.js");
+  writeFileSync(target, "// launcher", "utf8");
+  const link = join(dir, "link");
+  try {
+    symlinkSync(real, link, process.platform === "win32" ? "junction" : "dir");
+  } catch {
+    return; // ambiente sem permissão para criar link
+  }
+  expect(isMainEntry(join(link, "launcher.js"), target)).toBe(true);
+  expect(isMainEntry(target, target)).toBe(true);
+  expect(isMainEntry(join(dir, "outro.js"), target)).toBe(false);
+  expect(isMainEntry(undefined, target)).toBe(false);
 });

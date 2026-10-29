@@ -18,7 +18,7 @@ Bun manualmente, o que quebra a promessa de instalação em um comando.
 - O Bun vai como `optionalDependencies` de plataforma, fixado em 1.4.2:
   `@oven/bun-<os>-<arch>` (com variantes `-musl` e `-android`). O npm instala só a compatível.
 - O launcher resolve, nesta ordem: `ASTRO_BUN_PATH` → Bun que está executando (`bun add -g`) →
-  binário da dependência de plataforma → `BUN_INSTALL/bin/bun` → `bun` no `PATH`.
+  binário da dependência de plataforma → `bun` no `PATH`.
 - O launcher executa `bun dist/cli.js <args>` com `stdio` herdado e propaga código de saída/sinal.
 - Sem argumentos em TTY, o CLI roda `tui`; sem TTY, imprime o help.
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 /** Erro de runtime ausente; a mensagem é a instrução para o usuário. */
 export class MissingBunError extends Error {
@@ -87,12 +87,6 @@ export function resolveBun(deps: ResolveDeps = {}): string {
     }
   }
 
-  const installDir = env.BUN_INSTALL;
-  if (installDir !== undefined && installDir !== "") {
-    const candidate = join(installDir, "bin", binName);
-    if (exists(candidate)) return candidate;
-  }
-
   const onPath = (deps.which ?? ((name) => whichFromPath(name, env)))(binName);
   if (onPath !== undefined) return onPath;
 
@@ -104,14 +98,25 @@ export function bunArgs(cliPath: string, argv: readonly string[]): string[] {
   return [cliPath, ...argv];
 }
 
-function isMain(): boolean {
-  const entry = process.argv[1];
+/**
+ * Compara o entrypoint com o módulo resolvendo symlinks/junctions: no npm POSIX
+ * o bin global é um link para `dist/launcher.js`, e `argv[1]` guarda o link.
+ */
+export function isMainEntry(
+  entry: string | undefined,
+  modulePath: string,
+  realpath: (path: string) => string = realpathSync.native,
+): boolean {
   if (entry === undefined) return false;
   try {
-    return pathToFileURL(entry).href === import.meta.url;
+    return realpath(entry) === realpath(modulePath);
   } catch {
     return false;
   }
+}
+
+function isMain(): boolean {
+  return isMainEntry(process.argv[1], fileURLToPath(import.meta.url));
 }
 
 function main(): void {
