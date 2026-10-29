@@ -11,6 +11,8 @@ export interface RunTuiOptions {
   configPath: string;
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  provider?: string;
+  allowMissingConfig?: boolean;
 }
 
 /** Ink desmontaria no ctrl+c antes do handler da app; a app decide a saída. */
@@ -54,13 +56,21 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
     ]);
     const cwd = resolve(opts.cwd);
     const approvals = createApprovalBridge();
-    const shell = createShellRunner({ configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env });
-    const session = openSession((model) => new AgentSession({
+    const shell = createShellRunner({
       configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
+      allowMissingConfig: opts.allowMissingConfig === true,
+    });
+    const createSession = (model?: string) => new AgentSession({
+      configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
+      ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+      allowMissingConfig: opts.allowMissingConfig === true,
       approveSwap: approvals.approveSwap,
       onBudgetExceeded: approvals.onBudgetExceeded,
       ...(model === undefined ? {} : { model }),
-    }), cwd);
+    });
+    // `--provider` explícito vence o último modelo salvo em .astro/tui.json.
+    const session = opts.provider === undefined ? openSession(createSession, cwd) : createSession();
+    for (const warning of session.warnings) console.error(`aviso: ${warning}`);
     const store = new SessionStore(resolve(cwd, ".astro", "sessions"));
     let instance: ReturnType<typeof render> | undefined;
     const branch = gitBranch(cwd);

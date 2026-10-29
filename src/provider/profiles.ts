@@ -266,7 +266,35 @@ export interface EffectiveConfig {
   providerSource: ProviderSource;
   /** Origem da escolha do provider ativo. */
   providerSelection: ProviderSelection;
+  /** Providers declarados no projeto (para atribuir a origem de modelos de agentes). */
+  projectProviders: string[];
+  /** Id do perfil efêmero de env, quando existe. */
+  envProviderId?: string;
   warnings: string[];
+}
+
+/**
+ * Origem de um provider qualquer (não só o ativo), para o audit não mentir quando
+ * o modelo usado vem de agente nomeado, `opts.model` ou último modelo salvo.
+ */
+export function providerIdentityFor(
+  effective: EffectiveConfig,
+  provider: string,
+): { providerSource: ProviderSource; providerSelection: ProviderSelection } {
+  const providerSource: ProviderSource = effective.projectProviders.includes(provider)
+    ? "project"
+    : provider === effective.envProviderId
+      ? "env"
+      : "global";
+  if (provider === effective.activeProvider) {
+    return { providerSource, providerSelection: effective.providerSelection };
+  }
+  const providerSelection: ProviderSelection = providerSource === "project"
+    ? "project"
+    : providerSource === "env"
+      ? "env"
+      : "store";
+  return { providerSource, providerSelection };
 }
 
 /** Primeiro run sem config é somente leitura; escrita/shell exigem config explícita. */
@@ -330,6 +358,8 @@ export function resolveEffectiveConfig(input: {
   envProfile?: ProviderProfile;
   providerFlag?: string;
   env?: NodeJS.ProcessEnv;
+  /** Resume/replay: não trocar provider por store/env sem pedido explícito. */
+  ignoreStoredSelection?: boolean;
 }): EffectiveConfig {
   const env = input.env ?? process.env;
   const warnings: string[] = [];
@@ -359,12 +389,20 @@ export function resolveEffectiveConfig(input: {
   let requested: string | undefined;
   let requestKind: ProviderSelection | undefined;
   if (input.providerFlag !== undefined) { requested = input.providerFlag; requestKind = "flag"; }
-  else if (env.ASTRO_PROVIDER !== undefined && env.ASTRO_PROVIDER !== "") { requested = env.ASTRO_PROVIDER; requestKind = "env"; }
-  else if (input.store.activeProfileId !== undefined) { requested = input.store.activeProfileId; requestKind = "store"; }
+  else if (!input.ignoreStoredSelection && env.ASTRO_PROVIDER !== undefined && env.ASTRO_PROVIDER !== "") {
+    requested = env.ASTRO_PROVIDER;
+    requestKind = "env";
+  } else if (!input.ignoreStoredSelection && input.store.activeProfileId !== undefined) {
+    requested = input.store.activeProfileId;
+    requestKind = "store";
+  }
 
   const pooled = project?.agent.profile !== undefined;
   if (pooled) {
     if (requested !== undefined && requested !== projectProvider) {
+      if (requestKind === "flag") {
+        throw new Error(`provider "${requested}" não pode ser aplicado: agent.profile tem precedência`);
+      }
       warnings.push("agent.profile tem precedência sobre a troca de provider");
     }
     requested = undefined;
@@ -424,11 +462,20 @@ export function resolveEffectiveConfig(input: {
   }
 
   const { model: _resolvedModel, ...agentSansModel } = base.agent;
+  // `validateConfig` devolve agents com `model` resolvido + `profile`; revalidar os dois falha.
+  const agentsSansModel = base.agents === undefined
+    ? undefined
+    : Object.fromEntries(Object.entries(base.agents).map(([name, entry]) => {
+        if (entry.profile === undefined) return [name, entry];
+        const { model: _resolved, ...rest } = entry;
+        return [name, rest];
+      }));
   const config = validateConfig({
     ...base,
     providers,
     models,
     agent: pooled ? agentSansModel : { ...base.agent, model: modelRef },
+    ...(agentsSansModel === undefined ? {} : { agents: agentsSansModel }),
   });
   const providerSource: ProviderSource = project !== undefined && Object.hasOwn(project.providers, activeProvider)
     ? "project"
@@ -436,13 +483,27 @@ export function resolveEffectiveConfig(input: {
       ? "env"
       : "global";
 
-  return { config, activeProvider, providerSource, providerSelection: selection, warnings };
+  return {
+    config,
+    activeProvider,
+    providerSource,
+    providerSelection: selection,
+    projectProviders: Object.keys(project?.providers ?? {}),
+    ...(input.envProfile === undefined ? {} : { envProviderId: input.envProfile.id }),
+    warnings,
+  };
 }
 
 /** Carrega o projeto, o store global e o perfil de env, e resolve. */
 export function loadEffectiveConfig(
   configPath: string,
-  opts: { env?: NodeJS.ProcessEnv; provider?: string; storePath?: string; allowMissing?: boolean } = {},
+  opts: {
+    env?: NodeJS.ProcessEnv;
+    provider?: string;
+    storePath?: string;
+    allowMissing?: boolean;
+    ignoreStoredSelection?: boolean;
+  } = {},
 ): EffectiveConfig {
   const env = opts.env ?? process.env;
   const exists = existsSync(configPath);
@@ -457,6 +518,7 @@ export function loadEffectiveConfig(
     store,
     ...(envProfile === undefined ? {} : { envProfile }),
     ...(opts.provider === undefined ? {} : { providerFlag: opts.provider }),
+    ...(opts.ignoreStoredSelection === true ? { ignoreStoredSelection: true } : {}),
     env,
   });
 }

@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Auditor } from "../audit";
-import { loadConfig } from "../config";
+import { loadEffectiveConfig } from "../provider/profiles";
 import { redactSecrets } from "../sanitize-external";
 import { ToolExecutor } from "../tools/executor";
 import { configureRunCommand, runCommandTool } from "../tools/run-command";
@@ -21,6 +21,7 @@ export interface ShellOptions {
   configPath: string;
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  allowMissingConfig?: boolean;
 }
 
 /** Variáveis que o shell precisa manter mesmo se um MCP declarar o mesmo nome. */
@@ -34,7 +35,10 @@ const SYSTEM_ENV = new Set([
  * desabilitado (I-01); sandbox e timeout vêm da config e da manifest.
  */
 export function createShellRunner(opts: ShellOptions): ShellRunner {
-  const config = loadConfig(opts.configPath);
+  const config = loadEffectiveConfig(opts.configPath, {
+    allowMissing: opts.allowMissingConfig === true,
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+  }).config;
   if (!config.agent.tools.includes("run_command")) {
     return {
       enabled: false,

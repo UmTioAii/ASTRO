@@ -5,7 +5,8 @@ import { Auditor } from "./audit";
 import { isAbortError } from "./abort";
 import { SwapDeniedError, swapDelta, type SwapApprover, type SwapRequest } from "./approval";
 import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
-import { ConfigError, loadConfig } from "./config";
+import { ConfigError } from "./config";
+import { loadEffectiveConfig, providerIdentityFor } from "./provider/profiles";
 import { Ledger } from "./ledger";
 import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
@@ -46,6 +47,12 @@ export interface RunOptions {
   task: string;
   cwd?: string;
   env?: Record<string, string | undefined>;
+  /** Provider ativo (`--provider`); ausente usa store/env/agent.model. */
+  provider?: string;
+  /** Tolerar config ausente (baseline somente leitura) — chat/TUI. */
+  allowMissingConfig?: boolean;
+  /** Resume/replay: não trocar provider por store/env sem pedido explícito. */
+  ignoreStoredSelection?: boolean;
   /** Registro de métricas Prometheus (F6-1); quando presente, alimentado pelo run. */
   metrics?: Metrics;
   /** Raiz de skills do usuário (C1c); default `~/.astro/skills`. Injetável para teste. */
@@ -433,7 +440,13 @@ function resolveTools(
 export async function runTask(opts: RunOptions): Promise<RunReport> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
-  const config = loadConfig(opts.configPath);
+  const effective = loadEffectiveConfig(opts.configPath, {
+    env,
+    ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+    ...(opts.allowMissingConfig === true ? { allowMissing: true } : {}),
+    ...(opts.ignoreStoredSelection === true || opts.resume !== undefined ? { ignoreStoredSelection: true } : {}),
+  });
+  const config = effective.config;
   /** Teto global de turnos (Q-01/L2): `run.maxTurns` só **capa**, nunca eleva
    * `agent.maxSteps`; "unlimited" fica limitado ao agente até o corte físico (B10). */
   const sessionMaxSteps = config.run?.maxTurns !== undefined && config.run.maxTurns !== "unlimited"
@@ -528,6 +541,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   }
   const baseModel = resumedModel ?? model;
   const baseProfile = resumedProfile ?? (opts.model === undefined ? config.agent.profile : undefined);
+  const usedProvider = baseModel.provider;
+  const { providerSource: usedSource, providerSelection: usedSelection } = providerIdentityFor(effective, usedProvider);
   if (opts.suppressRunEvents !== true) audit.append({
     run,
     agent: AGENT_NAME,
@@ -535,6 +550,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     payload: {
       taskHash: shortTaskHash(opts.task),
       model: `${baseModel.provider}/${baseModel.id}`,
+      providerSource: usedSource,
+      providerSelection: usedSelection,
       ...(baseProfile === undefined ? {} : { profile: baseProfile }),
       ...(resumed === undefined ? {} : { resumedFrom: resumed.agent.agent_id }),
     },

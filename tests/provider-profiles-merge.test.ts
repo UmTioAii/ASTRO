@@ -6,6 +6,7 @@ import { validateConfig, type AstroConfig } from "../src/config";
 import {
   loadEffectiveConfig,
   profileFromEnv,
+  providerIdentityFor,
   resolveEffectiveConfig,
   saveProfileStore,
   type ProviderProfile,
@@ -271,6 +272,65 @@ test("perfil salvo com id env colide e avisa", () => {
     env: {},
   });
   expect(result.warnings.join(" ")).toMatch(/env.*ignorado/);
+});
+
+test("agents nomeados com profile sobrevivem à revalidação", () => {
+  const base = project();
+  const withAgents = validateConfig({
+    ...base,
+    modelPool: { fast: { model: "p/m1" } },
+    agents: { coder: { profile: "fast" } },
+  });
+  const result = resolveEffectiveConfig({
+    project: withAgents,
+    store: store(profile()),
+    env: {},
+  });
+  expect(result.config.agents?.coder?.model).toBe("p/m1");
+  expect(result.config.agents?.coder?.profile).toBe("fast");
+});
+
+test("ignoreStoredSelection mantém o provider do projeto (resume/replay)", () => {
+  const result = resolveEffectiveConfig({
+    project: project(),
+    store: store(profile()),
+    ignoreStoredSelection: true,
+    env: {},
+  });
+  expect(result.activeProvider).toBe("p");
+  expect(result.providerSelection).toBe("project");
+});
+
+test("--provider em projeto com agent.profile é erro explícito", () => {
+  const base = project();
+  const pooled = validateConfig({
+    providers: base.providers,
+    models: base.models,
+    agent: { profile: "fast", maxSteps: 2, tools: ["read_file"] },
+    modelPool: { fast: { model: "p/m1" } },
+    paths: base.paths,
+  });
+  expect(() => resolveEffectiveConfig({
+    project: pooled,
+    store: store(profile({ id: "q", name: "Q", models: [{ id: "m2", tags: [], context: 1000 }] })),
+    providerFlag: "q",
+    env: {},
+  })).toThrow(/agent\.profile tem precedência/);
+});
+
+test("origem de provider não ativo reflete o store, não o projeto", () => {
+  const effective = resolveEffectiveConfig({
+    project: project(),
+    store: store(profile({ id: "x", name: "X" }), profile({ id: "y", name: "Y" })),
+    env: {},
+  });
+  expect(effective.activeProvider).toBe("x");
+  const fromStore = providerIdentityFor(effective, "y");
+  expect(fromStore.providerSource).toBe("global");
+  expect(fromStore.providerSelection).toBe("store");
+  const fromProject = providerIdentityFor(effective, "p");
+  expect(fromProject.providerSource).toBe("project");
+  expect(fromProject.providerSelection).toBe("project");
 });
 
 test("--provider desconhecido é erro", () => {

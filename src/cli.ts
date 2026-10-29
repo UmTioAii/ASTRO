@@ -1,5 +1,6 @@
 import { runTask, type RunReport, createProvider } from "./app";
-import { loadConfig, validateConfig } from "./config";
+import { validateConfig } from "./config";
+import { loadEffectiveConfig } from "./provider/profiles";
 import { Ledger } from "./ledger";
 import { formatHandoffShow } from "./handoff/lifecycle";
 import { formatCostByAgent } from "./team";
@@ -74,13 +75,13 @@ function ttyBudgetDecider(): BudgetDecider | undefined {
 }
 
 const USAGE = `Uso:
-  bun src/cli.ts run "<pedido>" [--config <path>] [--cwd <dir>]
+  bun src/cli.ts run "<pedido>" [--config <path>] [--cwd <dir>] [--provider <name>]
   bun src/cli.ts eval [--threshold <0..1>] [--golden <dir>] [--report <path>] [--baseline <path>] [--write-baseline]
   bun src/cli.ts bench [--config <path>] [--models <filtro>] [--runs <n>] [--out <dir>]
   bun src/cli.ts serve [--port <n>]
   bun src/cli.ts replay <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
-  bun src/cli.ts chat [--config <path>] [--cwd <dir>]
-  bun src/cli.ts tui [--config <path>] [--cwd <dir>]
+  bun src/cli.ts chat [--config <path>] [--cwd <dir>] [--provider <name>]
+  bun src/cli.ts tui [--config <path>] [--cwd <dir>] [--provider <name>]
   bun src/cli.ts resume <run-id> --task "<pedido>" [--config <path>] [--cwd <dir>]
   bun src/cli.ts health [--config <path>]
   bun src/cli.ts providers <health|list|test> [--config <path>]
@@ -95,6 +96,7 @@ const USAGE = `Uso:
 
 Opções:
   --config <path>  configuração do Astro (default: astro.config.json)
+  --provider <name> provider ativo (default: store/env/agent.model)
   --cwd <dir>      diretório de trabalho do agente (default: diretório atual)
   --help           mostra este texto
 
@@ -121,6 +123,7 @@ interface RunCommand {
   task: string;
   configPath: string;
   cwd?: string;
+  provider?: string;
 }
 
 interface EvalCommand {
@@ -154,11 +157,15 @@ interface ResumeCommand extends ReplayCommand {}
 interface ChatCommand {
   configPath: string;
   cwd?: string;
+  provider?: string;
+  configExplicit: boolean;
 }
 
 interface TuiCommand {
   configPath: string;
   cwd?: string;
+  provider?: string;
+  configExplicit: boolean;
 }
 
 interface HealthCommand {
@@ -488,19 +495,27 @@ function parseArgs(argv: string[]): ParsedCommand {
   if (command === "chat" || command === "tui") {
     let configPath = "astro.config.json";
     let cwd: string | undefined;
+    let provider: string | undefined;
+    let configExplicit = false;
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i] as string;
-      if (arg === "--config" || arg === "--cwd") {
+      if (arg === "--config" || arg === "--cwd" || arg === "--provider") {
         const value = rest.at(i + 1);
         if (value === undefined || value.startsWith("-")) throw new UsageError(`falta o valor de ${arg}`);
         i++;
-        if (arg === "--config") configPath = value;
-        else cwd = value;
+        if (arg === "--config") { configPath = value; configExplicit = true; }
+        else if (arg === "--cwd") cwd = value;
+        else provider = value;
         continue;
       }
       throw new UsageError(`opção desconhecida: "${arg}"`);
     }
-    const options = { configPath, ...(cwd === undefined ? {} : { cwd }) };
+    const options = {
+      configPath,
+      configExplicit,
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(provider === undefined ? {} : { provider }),
+    };
     return command === "chat" ? { kind: "chat", options } : { kind: "tui", options };
   }
 
@@ -559,6 +574,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   let configPath = "astro.config.json";
   let cwd: string | undefined;
   let task: string | undefined;
+  let provider: string | undefined;
 
   if (command === "eval") {
     let threshold = 0.85;
@@ -604,7 +620,7 @@ function parseArgs(argv: string[]): ParsedCommand {
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i] as string;
 
-    if (arg === "--config" || arg === "--cwd") {
+    if (arg === "--config" || arg === "--cwd" || arg === "--provider") {
       const value = rest.at(i + 1);
       if (value === undefined || value.startsWith("-")) {
         throw new UsageError(`falta o valor de ${arg}`);
@@ -612,8 +628,10 @@ function parseArgs(argv: string[]): ParsedCommand {
       i++;
       if (arg === "--config") {
         configPath = value;
-      } else {
+      } else if (arg === "--cwd") {
         cwd = value;
+      } else {
+        provider = value;
       }
       continue;
     }
@@ -632,7 +650,15 @@ function parseArgs(argv: string[]): ParsedCommand {
     throw new UsageError('falta o pedido; use: run "<pedido>"');
   }
 
-  return { kind: "run", options: { task, configPath, ...(cwd === undefined ? {} : { cwd }) } };
+  return {
+    kind: "run",
+    options: {
+      task,
+      configPath,
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(provider === undefined ? {} : { provider }),
+    },
+  };
 }
 
 function formatCost(costUsd: number | null): string {
@@ -727,7 +753,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "bench") {
     const o = parsed.options;
-    const config = loadConfig(resolve(o.configPath));
+    const config = loadEffectiveConfig(resolve(o.configPath)).config;
     const registry = new Registry(config);
     const all = registry.list();
     const models = o.models === undefined
@@ -750,7 +776,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "replay") {
     const o = parsed.options;
-    const config = loadConfig(resolve(o.configPath));
+    const config = loadEffectiveConfig(resolve(o.configPath)).config;
     const base = o.cwd ?? process.cwd();
     const auditPath = resolve(base, config.paths.audit);
     try {
@@ -801,7 +827,12 @@ async function main(argv: string[]): Promise<number> {
   if (parsed.kind === "tui") {
     const o = parsed.options;
     const { runTui } = await import("./tui/run");
-    return await runTui({ configPath: resolve(o.configPath), cwd: o.cwd ?? process.cwd() });
+    return await runTui({
+      configPath: resolve(o.configPath),
+      cwd: o.cwd ?? process.cwd(),
+      ...(o.provider === undefined ? {} : { provider: o.provider }),
+      allowMissingConfig: !o.configExplicit,
+    });
   }
 
   if (parsed.kind === "chat") {
@@ -812,8 +843,11 @@ async function main(argv: string[]): Promise<number> {
       const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
       const session = new AgentSession({
         configPath: resolve(o.configPath), cwd: base, env: process.env,
+        ...(o.provider === undefined ? {} : { provider: o.provider }),
+        allowMissingConfig: !o.configExplicit,
         ...chatApprovers(io, interactive),
       });
+      for (const warning of session.warnings) console.error(`aviso: ${warning}`);
       const store = new SessionStore(resolve(base, ".astro", "sessions"));
       await runRepl(session, io, { store, signal: io.signal, style: interactive, cwd: base });
       return 0;
@@ -828,7 +862,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "cost") {
     const o = parsed.options;
-    const config = loadConfig(resolve(o.configPath));
+    const config = loadEffectiveConfig(resolve(o.configPath)).config;
     const ledger = new Ledger(resolve(process.cwd(), config.paths.ledger));
     console.log(formatCostByAgent(ledger));
     return 0;
@@ -837,7 +871,7 @@ async function main(argv: string[]): Promise<number> {
   if (parsed.kind === "handoff") {
     const o = parsed.options;
     try {
-      const config = loadConfig(resolve(o.configPath));
+      const config = loadEffectiveConfig(resolve(o.configPath)).config;
       const ledger = new Ledger(resolve(process.cwd(), config.paths.ledger));
       console.log(formatHandoffShow(ledger, o.handoffId));
       return 0;
@@ -898,7 +932,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "agents") {
     try {
-      const config = loadConfig(resolve(parsed.options.configPath));
+      const config = loadEffectiveConfig(resolve(parsed.options.configPath)).config;
       console.log(formatAgentsList(config));
       return 0;
     } catch (error) {
@@ -910,7 +944,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "pool") {
     try {
-      const config = loadConfig(resolve(parsed.options.configPath));
+      const config = loadEffectiveConfig(resolve(parsed.options.configPath)).config;
       if (parsed.options.action === "health") {
         const report = await runPoolHealthCheck(config, process.env);
         console.log(JSON.stringify(report, null, 2));
@@ -927,7 +961,7 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "health") {
     try {
-      const config = loadConfig(resolve(parsed.options.configPath));
+      const config = loadEffectiveConfig(resolve(parsed.options.configPath)).config;
       const report = await runHealthCheck(config, process.env);
       console.log(JSON.stringify(report, null, 2));
       return report.status === "ok" ? 0 : 1;
@@ -941,7 +975,7 @@ async function main(argv: string[]): Promise<number> {
   if (parsed.kind === "providers") {
     const o = parsed.options;
     try {
-      const config = loadConfig(resolve(o.configPath));
+      const config = loadEffectiveConfig(resolve(o.configPath)).config;
       if (o.action === "list") {
         console.log(formatProvidersList(config));
         return 0;
