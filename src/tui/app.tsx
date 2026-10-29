@@ -15,6 +15,8 @@ import { indexFiles } from "./files";
 import { Markdown } from "./markdown";
 import { loadTuiConfig, saveTuiConfig, getThemeColors, type Theme, type ThemeColors } from "./theme";
 import { LEADER, runKeybind } from "./keybinds";
+import { ProviderScreen } from "./provider-screen";
+import type { ProfileManager } from "../provider/profile-manager";
 
 export interface TuiAppProps {
   session: ChatSession;
@@ -23,6 +25,7 @@ export interface TuiAppProps {
   store?: SessionStore;
   approvals?: ApprovalBridge;
   shell?: ShellRunner;
+  manager?: ProfileManager;
   onExit?: () => void;
 }
 
@@ -61,7 +64,7 @@ function EntryLine({ entry, colors }: { entry: Entry; colors: ThemeColors }): Re
   return <Text dimColor>{entry.text}</Text>;
 }
 
-export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }: TuiAppProps): ReactElement {
+export function TuiApp({ session, cwd, branch, store, approvals, shell, manager, onExit }: TuiAppProps): ReactElement {
   const [entries, setEntries] = useState<Entry[]>([{ kind: "info", text: WELCOME }]);
   const [question, setQuestion] = useState<string | undefined>(() => approvals?.current()?.text);
   const [files, setFiles] = useState<string[]>([]);
@@ -85,6 +88,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
+  const [screen, setScreen] = useState<{ mode: "list" | "add" | "edit" | "remove"; target?: string } | undefined>(undefined);
   const commandState = useRef<CommandState>({});
   const exited = useRef(false);
 
@@ -161,6 +165,15 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
     }
     if (command.kind !== "prompt") {
       const outcome = await runCommand(command, session, commandState.current, store, cwd);
+      if (outcome.openProviders !== undefined) {
+        if (manager === undefined) {
+          setEntries((current) => [...current, { kind: "error", text: "tela de providers indisponível" }]);
+          return;
+        }
+        setEntries((current) => [...current, ...outcome.entries]);
+        setScreen(outcome.openProviders);
+        return;
+      }
       if (outcome.lastFile !== undefined) commandState.current.lastFile = outcome.lastFile ?? undefined;
       const added = [...outcome.entries];
       const modelChanged = (command.kind === "model" && command.model !== undefined)
@@ -211,7 +224,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
     }
   };
 
-  useInput((value, key) => {    const ctrl = key.ctrl === true;
+  useInput((value, key) => {    if (screen !== undefined) return; const ctrl = key.ctrl === true;
     if (ctrl && (value === "c" || value === "d")) {
       approvals?.answer("");
       finish();
@@ -285,6 +298,36 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       }
     }
   });
+
+  if (screen !== undefined && manager !== undefined) {
+    return (
+      <ProviderScreen
+        manager={manager}
+        colors={colors}
+        initial={screen}
+        onClose={() => setScreen(undefined)}
+        onActivate={(id) => {
+          try {
+            session.reload?.();
+            session.setProvider(id);
+            saveTuiConfig(cwd, { lastModel: session.snapshot().model });
+            setStatus(statusOf(session.snapshot()));
+            setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
+          } catch (error) {
+            setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
+          }
+        }}
+        onChanged={() => {
+          try {
+            session.reload?.();
+            setStatus(statusOf(session.snapshot()));
+          } catch (error) {
+            setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
+          }
+        }}
+      />
+    );
+  }
 
   const place = branch === undefined ? cwd : `${cwd} (${branch})`;
   const suggestions = question === undefined ? completionItems(input, COMMANDS, files) : [];
