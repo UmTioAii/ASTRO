@@ -53,6 +53,25 @@ test("lista providers com marcador e origem", async () => {
   instance.unmount();
 });
 
+test("ctrl+c fecha a tela de providers", async () => {
+  let closed = 0;
+  const instance = render(
+    <ProviderScreen
+      manager={manager()}
+      colors={colors}
+      onClose={() => { closed++; }}
+      onActivate={() => undefined}
+    />,
+  );
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    instance.stdin.write("\u0003");
+    await waitFor(() => closed === 1);
+  } finally {
+    instance.unmount();
+  }
+});
+
 test("a abre o formulário e salva um provider custom", async () => {
   const m = manager();
   const activated: string[] = [];

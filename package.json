@@ -1,6 +1,6 @@
 {
   "name": "@umtioai/astro-harness",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Harness single-agent em Bun/TypeScript com ledger de uso e auditoria append-only.",
   "license": "MIT",
   "type": "module",

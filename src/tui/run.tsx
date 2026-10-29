@@ -4,10 +4,11 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { ConfigError, loadConfig } from "../config";
 import { ProfileManager } from "../provider/profile-manager";
+import { NoProviderError, NO_PROVIDER_MESSAGE } from "../provider/profiles";
 import { redactSecrets } from "../sanitize-external";
 import { createApprovalBridge } from "./approvals";
 import { createShellRunner } from "./shell";
-import { loadTuiConfig } from "./theme";
+import { getThemeColors, loadTuiConfig } from "./theme";
 
 export interface RunTuiOptions {
   configPath: string;
@@ -44,6 +45,53 @@ export function gitBranch(cwd: string): string | undefined {
   }
 }
 
+/**
+ * Primeiro run: tenta criar a sessão. Só quando falta provider e a config é
+ * implícita abre o setup; qualquer outro erro segue o caminho normal.
+ */
+export async function withProviderSetup<T>(
+  create: () => T,
+  setup: () => Promise<boolean>,
+  allowMissingConfig: boolean,
+): Promise<T | undefined> {
+  try {
+    return create();
+  } catch (error) {
+    if (!allowMissingConfig || !(error instanceof NoProviderError)) throw error;
+    if (!(await setup())) return undefined;
+    return create();
+  }
+}
+
+/** Tela de providers standalone; resolve true quando um perfil foi ativado. */
+export async function setupProvider(manager: ProfileManager, cwd: string): Promise<boolean> {
+  const [{ render }, { ProviderScreen }] = await Promise.all([
+    import("ink"),
+    import("./provider-screen"),
+  ]);
+  const colors = getThemeColors(loadTuiConfig(cwd).theme);
+  return await new Promise<boolean>((resolveSetup) => {
+    let instance: ReturnType<typeof render> | undefined;
+    let settled = false;
+    const finish = (configured: boolean): void => {
+      if (settled) return;
+      settled = true;
+      instance?.unmount();
+      resolveSetup(configured);
+    };
+    instance = render(
+      <ProviderScreen
+        manager={manager}
+        colors={colors}
+        onClose={() => finish(false)}
+        onActivate={() => finish(true)}
+        onChanged={() => undefined}
+      />,
+      TUI_RENDER_OPTIONS,
+    );
+  });
+}
+
 export async function runTui(opts: RunTuiOptions): Promise<number> {
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
     console.error("erro: tui precisa de um terminal interativo; use `chat` para stdin em pipe");
@@ -62,18 +110,6 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
       configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
       allowMissingConfig: opts.allowMissingConfig === true,
     });
-    const createSession = (model?: string) => new AgentSession({
-      configPath: resolve(opts.configPath), cwd, env: opts.env ?? process.env,
-      ...(opts.provider === undefined ? {} : { provider: opts.provider }),
-      allowMissingConfig: opts.allowMissingConfig === true,
-      approveSwap: approvals.approveSwap,
-      onBudgetExceeded: approvals.onBudgetExceeded,
-      ...(model === undefined ? {} : { model }),
-    });
-    // `--provider` explícito vence o último modelo salvo em .astro/tui.json.
-    const session = opts.provider === undefined ? openSession(createSession, cwd) : createSession();
-    for (const warning of session.warnings) console.error(`aviso: ${warning}`);
-    const store = new SessionStore(resolve(cwd, ".astro", "sessions"));
     const configPath = resolve(opts.configPath);
     const project = existsSync(configPath) ? loadConfig(configPath) : undefined;
     const manager = new ProfileManager({
@@ -81,6 +117,26 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
       env: opts.env ?? process.env,
       ...(opts.provider === undefined ? {} : { provider: opts.provider }),
     });
+    const createSession = (model?: string) => new AgentSession({
+      configPath, cwd, env: opts.env ?? process.env,
+      ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+      allowMissingConfig: opts.allowMissingConfig === true,
+      approveSwap: approvals.approveSwap,
+      onBudgetExceeded: approvals.onBudgetExceeded,
+      ...(model === undefined ? {} : { model }),
+    });
+    // `--provider` explícito vence o último modelo salvo em .astro/tui.json.
+    const session = await withProviderSetup(
+      () => (opts.provider === undefined ? openSession(createSession, cwd) : createSession()),
+      () => setupProvider(manager, cwd),
+      opts.allowMissingConfig === true,
+    );
+    if (session === undefined) {
+      console.error(`erro: ${NO_PROVIDER_MESSAGE}`);
+      return 1;
+    }
+    for (const warning of session.warnings) console.error(`aviso: ${warning}`);
+    const store = new SessionStore(resolve(cwd, ".astro", "sessions"));
     let instance: ReturnType<typeof render> | undefined;
     const branch = gitBranch(cwd);
     try {
