@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateConfig } from "../src/config";
@@ -54,23 +54,37 @@ process.stdin.resume();
 
 async function waitUntilDead(pid: number): Promise<boolean> {
   for (let attempt = 0; attempt < 50; attempt++) {
-    try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 100)); } catch { return true; }
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
+      throw error;
+    }
   }
   return false;
 }
 
-/** Espera o arquivo aparecer; startup do bun sob carga não é instantâneo. */
-async function waitForFile(path: string, timeoutMs = 5000): Promise<boolean> {
+/** Espera o PID aparecer com conteúdo válido; startup do bun sob carga não é instantâneo. */
+async function waitForPid(path: string, timeoutMs = 5000): Promise<number | undefined> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (existsSync(path)) return true;
+    try {
+      const text = readFileSync(path, "utf8").trim();
+      if (/^\d+$/.test(text)) {
+        const pid = Number(text);
+        if (pid > 0) return pid;
+      }
+    } catch {
+      // arquivo ainda não existe: continua a espera
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return existsSync(path);
+  return undefined;
 }
 
 // Handshake de processos reais precisa de folga sob carga; testes de timeout
-// usam valores explícitos e curtos no próprio caso.
+// usam valores explícitos no próprio caso.
 const stdioServer = (script: string, extra: Partial<MCPServerConfig> = {}): MCPServerConfig => ({
   transport: "stdio", command: "bun", args: [script], timeoutMs: 5000, enabled: true, ...extra,
 });
@@ -117,7 +131,7 @@ test("client stdio conecta, lista e chama tools com env sanitizado", async () =>
     delete process.env.ASTRO_TEST_API_KEY;
     client.close();
   }
-});
+}, 15_000);
 
 test("connect com handshake travado não vaza o processo filho", async () => {
   const dir = mkdtempSync(join(tmpdir(), "astro-mcp-leak-"));
@@ -127,15 +141,15 @@ test("connect com handshake travado não vaza o processo filho", async () => {
   const server = stdioServer(script, { timeoutMs: 3000, env: { PID_FILE: pidFile } });
 
   await expect(MCPClient.connect(server)).rejects.toThrow(/timeout/);
-  expect(await waitForFile(pidFile)).toBe(true);
-  const pid = Number(readFileSync(pidFile, "utf8"));
+  const pid = await waitForPid(pidFile);
+  if (pid === undefined) throw new Error(`mock pid file ${pidFile} never appeared with a valid pid`);
   expect(await waitUntilDead(pid)).toBe(true); // rejeição sem handle não pode deixar órfão
 }, 15_000);
 
 test("client stdio aplica timeout por requisição e fecha limpo", async () => {
   const script = mockServerPath();
   const silent = await MCPClient.connect(stdioServer(script, { env: { MOCK_SILENT: "1" }, timeoutMs: 3000 }));
-  await expect(silent.callTool("echo", { text: "x" })).rejects.toThrow(/timeout/);
+  await expect(silent.callTool("echo", { text: "x" })).rejects.toThrow(/timeout de 3000ms no MCP tools\/call/);
   silent.close();
 
   const client = await MCPClient.connect(stdioServer(script));
