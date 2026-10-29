@@ -97,22 +97,28 @@ const sse = (server: { port?: number }, timeoutMs: number) =>
   MCPClient.connect({ transport: "sse", url: `http://127.0.0.1:${server.port}/sse`, timeoutMs, enabled: true });
 
 /**
- * Contrato de ordem dos POSTs: `initialize` primeiro, `tools/call` por último e
- * a notificação `notifications/initialized` (fire-and-forget) em qualquer
- * posição entre os dois. Quatro POSTs exatos: nada de retry ou chamada extra.
+ * Contrato de ordem dos POSTs: `initialize` primeiro; os POSTs com id seguem
+ * `initialize` -> `tools/list` -> `tools/call`; a notificação
+ * `notifications/initialized` (fire-and-forget) aparece exatamente uma vez em
+ * qualquer posição, inclusive depois de `tools/call`, porque a gravação no mock
+ * depende do parse concorrente. Quatro POSTs exatos: nada de retry.
  */
 function expectValidPostOrder(methods: string[]): void {
   expect(methods).toHaveLength(4);
-  expect(methods[0]).toBe("initialize");
-  expect(methods.at(-1)).toBe("tools/call");
-  expect([...methods.slice(1, -1)].sort()).toEqual(["notifications/initialized", "tools/list"]);
+  expect(methods.filter((method) => method !== "notifications/initialized"))
+    .toEqual(["initialize", "tools/list", "tools/call"]);
+  expect(methods.filter((method) => method === "notifications/initialized")).toHaveLength(1);
 }
 
-test("ordem dos POSTs aceita notificação fire-and-forget entre initialize e tools/call", () => {
+test("ordem dos POSTs aceita notificação fire-and-forget em qualquer posição", () => {
   expect(() => expectValidPostOrder(["initialize", "tools/list", "notifications/initialized", "tools/call"])).not.toThrow();
   expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "tools/list", "tools/call"])).not.toThrow();
+  expect(() => expectValidPostOrder(["initialize", "tools/list", "tools/call", "notifications/initialized"])).not.toThrow();
   expect(() => expectValidPostOrder(["initialize", "tools/list", "tools/call"])).toThrow();
   expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "tools/list", "tools/call", "tools/call"])).toThrow();
+  expect(() => expectValidPostOrder(["initialize", "tools/call", "notifications/initialized", "tools/list"])).toThrow();
+  expect(() => expectValidPostOrder(["tools/list", "initialize", "notifications/initialized", "tools/call"])).toThrow();
+  expect(() => expectValidPostOrder(["initialize", "notifications/initialized", "notifications/initialized", "tools/call"])).toThrow();
 });
 
 test("transport http conecta, mantém sessão e chama tools", async () => {
