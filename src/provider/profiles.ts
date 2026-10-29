@@ -335,6 +335,9 @@ export class NoProviderError extends Error {
   override name = "NoProviderError";
 }
 
+export const NO_PROVIDER_MESSAGE =
+  "nenhum provider configurado: rode /provider add ou defina OPENAI_API_KEY e OPENAI_MODEL";
+
 /** Mescla perfis globais com o projeto e resolve o provider ativo. */
 export function resolveEffectiveConfig(input: {
   project?: AstroConfig;
@@ -410,9 +413,7 @@ export function resolveEffectiveConfig(input: {
     else if (input.envProfile !== undefined) { activeProvider = input.envProfile.id; selection = "env"; }
     else if (input.store.profiles[0] !== undefined) { activeProvider = input.store.profiles[0].id; selection = "store"; }
     else {
-      throw new NoProviderError(
-        "nenhum provider configurado: rode /provider add ou defina OPENAI_API_KEY e OPENAI_MODEL",
-      );
+      throw new NoProviderError(NO_PROVIDER_MESSAGE);
     }
   }
 

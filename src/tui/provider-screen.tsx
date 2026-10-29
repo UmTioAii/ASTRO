@@ -166,6 +166,10 @@ export function ProviderScreen({
   };
 
   useInput((input, key) => {
+    if (key.ctrl && (input === "c" || input === "d")) {
+      onClose();
+      return;
+    }
     if (view === "list") {
       if (key.escape) { onClose(); return; }
       if (key.upArrow) { setSelected((value) => Math.max(0, value - 1)); return; }

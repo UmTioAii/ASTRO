@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { ConfigError, loadConfig } from "../config";
 import { ProfileManager } from "../provider/profile-manager";
-import { NoProviderError } from "../provider/profiles";
+import { NoProviderError, NO_PROVIDER_MESSAGE } from "../provider/profiles";
 import { redactSecrets } from "../sanitize-external";
 import { createApprovalBridge } from "./approvals";
 import { createShellRunner } from "./shell";
@@ -132,7 +132,7 @@ export async function runTui(opts: RunTuiOptions): Promise<number> {
       opts.allowMissingConfig === true,
     );
     if (session === undefined) {
-      console.error("erro: nenhum provider configurado: rode /provider add ou defina OPENAI_API_KEY e OPENAI_MODEL");
+      console.error(`erro: ${NO_PROVIDER_MESSAGE}`);
       return 1;
     }
     for (const warning of session.warnings) console.error(`aviso: ${warning}`);
