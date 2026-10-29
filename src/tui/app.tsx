@@ -164,7 +164,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, onExit }
       if (outcome.lastFile !== undefined) commandState.current.lastFile = outcome.lastFile ?? undefined;
       const added = [...outcome.entries];
       const modelChanged = (command.kind === "model" && command.model !== undefined)
-        || (command.kind === "provider" && command.provider !== undefined)
+        || (command.kind === "provider" && command.action === "use" && command.target !== undefined)
         || (command.kind === "resume" && command.ref !== undefined && !outcome.entries.some((entry) => entry.kind === "error"));
       if (modelChanged) {
         try {

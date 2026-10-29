@@ -62,14 +62,23 @@ export async function runCommand(
     case "providers":
       return { entries: [{ kind: "info", text: providerLines(session) }] };
     case "provider": {
-      if (command.provider === undefined) {
+      if (command.action === "list") {
         return { entries: [{ kind: "info", text: providerLines(session) }] };
       }
-      try {
-        return { entries: [{ kind: "info", text: `provider: ${session.setProvider(command.provider)}` }] };
-      } catch (error) {
-        return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
+      if (command.action === "use") {
+        if (command.target === undefined) return { entries: [{ kind: "info", text: providerLines(session) }] };
+        try {
+          return { entries: [{ kind: "info", text: `provider: ${session.setProvider(command.target)}` }] };
+        } catch (error) {
+          return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };
+        }
       }
+      return {
+        entries: [{
+          kind: "info",
+          text: `/provider ${command.action} está disponível no astro chat; a tela da TUI entra na próxima fatia`,
+        }],
+      };
     }
     case "sessions": {
       if (store === undefined) {

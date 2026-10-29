@@ -1,6 +1,8 @@
 import { runTask, type RunReport, createProvider } from "./app";
-import { validateConfig } from "./config";
+import { existsSync } from "node:fs";
+import { loadConfig, validateConfig } from "./config";
 import { loadEffectiveConfig } from "./provider/profiles";
+import { ProfileManager } from "./provider/profile-manager";
 import { Ledger } from "./ledger";
 import { formatHandoffShow } from "./handoff/lifecycle";
 import { formatCostByAgent } from "./team";
@@ -841,15 +843,18 @@ async function main(argv: string[]): Promise<number> {
     const io = nodeReplIO();
     try {
       const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+      const configPath = resolve(o.configPath);
+      const project = existsSync(configPath) ? loadConfig(configPath) : undefined;
+      const manager = new ProfileManager({ project, env: process.env });
       const session = new AgentSession({
-        configPath: resolve(o.configPath), cwd: base, env: process.env,
+        configPath, cwd: base, env: process.env,
         ...(o.provider === undefined ? {} : { provider: o.provider }),
         allowMissingConfig: !o.configExplicit,
         ...chatApprovers(io, interactive),
       });
       for (const warning of session.warnings) console.error(`aviso: ${warning}`);
       const store = new SessionStore(resolve(base, ".astro", "sessions"));
-      await runRepl(session, io, { store, signal: io.signal, style: interactive, cwd: base });
+      await runRepl(session, io, { store, signal: io.signal, style: interactive, cwd: base, manager });
       return 0;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

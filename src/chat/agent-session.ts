@@ -79,12 +79,12 @@ export class AgentSession {
   readonly #configPath: string;
   readonly #cwd: string;
   readonly #env: Record<string, string | undefined> | undefined;
-  readonly #config: AstroConfig;
-  readonly #providerSource: ProviderSource;
-  readonly #providerSelection: ProviderSelection;
+  #config: AstroConfig;
+  #providerSource: ProviderSource;
+  #providerSelection: ProviderSelection;
   readonly #allowMissing: boolean;
   readonly #warnings: string[];
-  readonly #registry: Registry;
+  #registry: Registry;
   readonly #auditPath: string;
   readonly #ledger: Ledger;
   readonly #systemPrompt: string;
@@ -159,6 +159,20 @@ export class AgentSession {
   /** Avisos do load efetivo (ex.: baseline somente leitura). */
   get warnings(): readonly string[] {
     return this.#warnings;
+  }
+
+  /** Recarrega config/perfis do disco; mantém o modelo atual se ainda existir. */
+  reload(): void {
+    const effective = loadEffectiveConfig(this.#configPath, {
+      ...(this.#env === undefined ? {} : { env: this.#env }),
+      allowMissing: this.#allowMissing,
+    });
+    this.#config = effective.config;
+    this.#registry = new Registry(this.#config);
+    if (!this.#registry.get(this.#modelRef)) this.#modelRef = this.#config.agent.model;
+    const identity = providerIdentityFor(effective, this.#registry.require(this.#modelRef).provider);
+    this.#providerSource = identity.providerSource;
+    this.#providerSelection = identity.providerSelection;
   }
 
   /** Nome `provider/id` do modelo atual. */

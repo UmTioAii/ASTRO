@@ -20,8 +20,24 @@ describe("comandos do chat (T1, #62)", () => {
   });
   test("/providers e /provider", () => {
     expect(parseCommand("/providers")).toEqual({ kind: "providers" });
-    expect(parseCommand("/provider")).toEqual({ kind: "provider" });
-    expect(parseCommand("/provider q")).toEqual({ kind: "provider", provider: "q" });
+    expect(parseCommand("/provider")).toEqual({ kind: "provider", action: "list" });
+    expect(parseCommand("/provider list")).toEqual({ kind: "provider", action: "list" });
+    expect(parseCommand("/provider add")).toEqual({ kind: "provider", action: "add" });
+    expect(parseCommand("/provider add OpenAI Work")).toEqual({
+      kind: "provider", action: "add", target: "OpenAI Work",
+    });
+    expect(parseCommand("/provider edit openai-work")).toEqual({
+      kind: "provider", action: "edit", target: "openai-work",
+    });
+    expect(parseCommand("/provider remove openai-work")).toEqual({
+      kind: "provider", action: "remove", target: "openai-work",
+    });
+    expect(parseCommand("/provider use openai-work")).toEqual({
+      kind: "provider", action: "use", target: "openai-work",
+    });
+    expect(parseCommand("/provider q")).toEqual({ kind: "provider", action: "use", target: "q" });
+    expect(parseCommand("/provider use")).toEqual({ kind: "unknown", raw: "provider use" });
+    expect(parseCommand("/provider edit")).toEqual({ kind: "unknown", raw: "provider edit" });
   });
   test("ajuda lista os quatro comandos", () => {
     for (const command of ["/help", "/model", "/clear", "/exit"]) expect(HELP_TEXT).toContain(command);
