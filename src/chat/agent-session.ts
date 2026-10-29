@@ -79,12 +79,13 @@ export class AgentSession {
   readonly #configPath: string;
   readonly #cwd: string;
   readonly #env: Record<string, string | undefined> | undefined;
-  readonly #config: AstroConfig;
-  readonly #providerSource: ProviderSource;
-  readonly #providerSelection: ProviderSelection;
+  #config: AstroConfig;
+  #providerSource: ProviderSource;
+  #providerSelection: ProviderSelection;
   readonly #allowMissing: boolean;
+  readonly #providerFlag: string | undefined;
   readonly #warnings: string[];
-  readonly #registry: Registry;
+  #registry: Registry;
   readonly #auditPath: string;
   readonly #ledger: Ledger;
   readonly #systemPrompt: string;
@@ -115,6 +116,7 @@ export class AgentSession {
     this.#config = effective.config;
     this.#warnings = effective.warnings;
     this.#allowMissing = opts.allowMissingConfig === true;
+    this.#providerFlag = opts.provider;
     this.#registry = new Registry(this.#config);
     this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
     this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
@@ -159,6 +161,21 @@ export class AgentSession {
   /** Avisos do load efetivo (ex.: baseline somente leitura). */
   get warnings(): readonly string[] {
     return this.#warnings;
+  }
+
+  /** Recarrega config/perfis do disco; com followActive adota o provider ativo. */
+  reload(followActive = false): void {
+    const effective = loadEffectiveConfig(this.#configPath, {
+      ...(this.#env === undefined ? {} : { env: this.#env }),
+      ...(this.#providerFlag === undefined ? {} : { provider: this.#providerFlag }),
+      allowMissing: this.#allowMissing,
+    });
+    this.#config = effective.config;
+    this.#registry = new Registry(this.#config);
+    if (!this.#registry.get(this.#modelRef)) this.#modelRef = this.#config.agent.model;
+    const identity = providerIdentityFor(effective, this.#registry.require(this.#modelRef).provider);
+    this.#providerSource = identity.providerSource;
+    this.#providerSelection = identity.providerSelection;
   }
 
   /** Nome `provider/id` do modelo atual. */

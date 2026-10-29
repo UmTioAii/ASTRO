@@ -1,4 +1,6 @@
 /** Comandos de barra do REPL do chat (T1): parser puro, sem I/O. */
+export type ProviderAction = "list" | "add" | "edit" | "remove" | "use";
+
 export type ReplCommand =
   | { kind: "prompt"; text: string }
   | { kind: "empty" }
@@ -7,7 +9,7 @@ export type ReplCommand =
   | { kind: "clear" }
   | { kind: "model"; model?: string }
   | { kind: "providers" }
-  | { kind: "provider"; provider?: string }
+  | { kind: "provider"; action: ProviderAction; target?: string }
   | { kind: "session" }
   | { kind: "details" }
   | { kind: "compact" }
@@ -23,7 +25,11 @@ export const HELP_TEXT = [
   "  /help           esta ajuda",
   "  /model [alvo]   lista modelos ou troca (provider/id)",
   "  /providers      lista providers (kind, credencial, quota, modelos)",
-  "  /provider [nome]  lista ou troca de provider",
+  "  /provider       lista perfis (projeto, globais, env) e o ativo",
+  "  /provider add   cria um perfil (catálogo ou custom)",
+  "  /provider edit <nome|id>   edita um perfil global",
+  "  /provider remove <nome|id> remove um perfil global",
+  "  /provider use <nome|id>    ativa um perfil global",
   "  /session        id, início, modelo, turnos, tokens, custo e arquivo",
   "  /details        id, provider, modelo, uptime, turnos, tokens, custo e origem",
   "  /compact        resume o histórico (sem tools) e substitui por sumário",
@@ -36,6 +42,26 @@ export const HELP_TEXT = [
   "  /clear | /new   limpa o histórico (mantém o system)",
   "  /exit | /quit | /q  encerra a sessão",
 ].join("\n");
+
+function parseProvider(arg: string): ReplCommand {
+  const [sub, ...rest] = arg.split(/\s+/).filter((part) => part !== "");
+  if (sub === undefined) return { kind: "provider", action: "list" };
+  const target = rest.join(" ").trim();
+  switch (sub.toLowerCase()) {
+    case "list":
+      return { kind: "provider", action: "list" };
+    case "add":
+      return { kind: "provider", action: "add", ...(target === "" ? {} : { target }) };
+    case "edit":
+    case "remove":
+    case "use":
+      if (target === "") return { kind: "provider", action: sub.toLowerCase() as ProviderAction };
+      return { kind: "provider", action: sub.toLowerCase() as ProviderAction, target };
+    default:
+      // Compatibilidade: /provider <nome> equivale a /provider use <nome>.
+      return { kind: "provider", action: "use", target: arg.trim() };
+  }
+}
 
 export function parseCommand(line: string): ReplCommand {
   const text = line.trim();
@@ -58,7 +84,7 @@ export function parseCommand(line: string): ReplCommand {
     case "providers":
       return { kind: "providers" };
     case "provider":
-      return { kind: "provider", ...(arg === "" ? {} : { provider: arg }) };
+      return parseProvider(arg);
     case "session":
       return { kind: "session" };
     case "details":

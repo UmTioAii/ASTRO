@@ -1,5 +1,7 @@
 /** REPL mínimo do chat (T1): I/O injetável e comandos; a UI só fala com a sessão. */
 import { HELP_TEXT, parseCommand } from "./commands";
+import { runProviderWizard } from "./provider-wizard";
+import type { ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
 import type { SessionStore } from "./store";
 import { sessionSummaryLine } from "./store";
@@ -25,6 +27,8 @@ export interface ChatSession {
   listModels(): string[];
   listProviders(): ProviderInfo[];
   setProvider(name: string): string;
+  /** Recarrega config/perfis do disco (após /provider add|edit|remove). */
+  reload?(): void;
   snapshot(): SessionSnapshot;
   close(): void;
 }
@@ -36,6 +40,8 @@ export interface ReplOptions {
   style?: boolean;
   /** Diretório para `/export` e `/init` (I-11); default é o processo. */
   cwd?: string;
+  /** Gerenciador de perfis globais; ausente mantém só a lista da config. */
+  manager?: ProfileManager;
 }
 
 function messageOf(error: unknown): string {
@@ -82,6 +88,20 @@ export function detailsLines(snapshot: SessionSnapshot, lastFile: string | undef
       : [`retomada de ${snapshot.resumedFrom.id} (início ${snapshot.resumedFrom.startedAt})`]),
     `arquivo: ${lastFile ?? "ainda não salvo"}`,
   ];
+}
+
+export function profileListLine(view: ProfileView): string {
+  const mark = view.source === "env" ? "◐" : view.active ? "●" : "○";
+  const endpoint = view.baseUrl ?? view.credentialsPath ?? "-";
+  const models = view.models.map((model) => model.id).join(",") || "-";
+  const cred = view.credentialRef ?? "sem chave";
+  return `${mark} ${view.name} (${view.id})  ${view.kind}  ${endpoint}  ${models}  cred=${cred}  [${view.source}]`;
+}
+
+function findProfile(manager: ProfileManager, target: string): ProfileView | undefined {
+  const list = manager.list();
+  return list.find((view) => view.id === target)
+    ?? list.find((view) => view.name.toLowerCase() === target.toLowerCase());
 }
 
 export function providerLine(provider: ProviderInfo): string {
@@ -138,14 +158,86 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         continue;
       }
       if (command.kind === "provider") {
-        if (command.provider === undefined) {
-          io.write(session.listProviders().map(providerLine).join("\n"));
+        const manager = opts.manager;
+        if (manager === undefined) {
+          if (command.action === "use" && command.target !== undefined) {
+            try {
+              io.write(`provider: ${session.setProvider(command.target)}`);
+            } catch (error) {
+              io.write(`erro: ${messageOf(error)}`);
+            }
+          } else {
+            io.write(session.listProviders().map(providerLine).join("\n"));
+          }
           continue;
         }
-        try {
-          io.write(`provider: ${session.setProvider(command.provider)}`);
-        } catch (error) {
-          io.write(`erro: ${messageOf(error)}`);
+        const listText = (): string => manager.list().map(profileListLine).join("\n");
+        const reloadSession = (): void => {
+          try {
+            session.reload?.();
+          } catch (error) {
+            io.write(`erro ao recarregar a config: ${messageOf(error)}`);
+          }
+        };
+        if (command.action === "list") {
+          io.write(listText());
+          continue;
+        }
+        if (command.action === "add") {
+          const saved = await runProviderWizard(io, manager, {
+            mode: "add",
+            ...(command.target === undefined ? {} : { initialName: command.target }),
+            onUse: (id) => {
+              reloadSession();
+              session.setProvider(id);
+            },
+          });
+          if (saved !== undefined) {
+            reloadSession();
+            io.write(listText());
+          }
+          continue;
+        }
+        if (command.target === undefined) {
+          io.write(`uso: /provider ${command.action} <nome|id>`);
+          continue;
+        }
+        const target = findProfile(manager, command.target);
+        if (target === undefined) {
+          io.write(`provider "${command.target}" não encontrado`);
+          continue;
+        }
+        if (command.action === "use") {
+          try {
+            if (target.source === "project") {
+              io.write(`provider: ${session.setProvider(target.id)} (definido no projeto; não persistido)`);
+            } else if (target.source === "env") {
+              io.write(`provider: ${session.setProvider(target.id)} (env; só nesta sessão)`);
+            } else {
+              manager.use(target.id);
+              reloadSession();
+              session.setProvider(target.id);
+              io.write(`provider: ${session.model}`);
+            }
+          } catch (error) {
+            io.write(`erro: ${messageOf(error)}`);
+          }
+          continue;
+        }
+        if (command.action === "remove") {
+          try {
+            manager.remove(target.id);
+            io.write(`removido: ${target.id}`);
+            reloadSession();
+          } catch (error) {
+            io.write(`erro: ${messageOf(error)}`);
+          }
+          continue;
+        }
+        const saved = await runProviderWizard(io, manager, { mode: "edit", profile: target });
+        if (saved !== undefined) {
+          reloadSession();
+          io.write(listText());
         }
         continue;
       }
