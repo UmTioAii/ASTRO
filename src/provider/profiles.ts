@@ -330,6 +330,11 @@ function mergeModels(global: ModelConfig[], project: ModelConfig[]): ModelConfig
   return [...merged.values()];
 }
 
+/** Estado inicial sem nenhum provider: a TUI abre a tela de providers. */
+export class NoProviderError extends Error {
+  override name = "NoProviderError";
+}
+
 /** Mescla perfis globais com o projeto e resolve o provider ativo. */
 export function resolveEffectiveConfig(input: {
   project?: AstroConfig;
@@ -405,7 +410,7 @@ export function resolveEffectiveConfig(input: {
     else if (input.envProfile !== undefined) { activeProvider = input.envProfile.id; selection = "env"; }
     else if (input.store.profiles[0] !== undefined) { activeProvider = input.store.profiles[0].id; selection = "store"; }
     else {
-      throw new Error(
+      throw new NoProviderError(
         "nenhum provider configurado: rode /provider add ou defina OPENAI_API_KEY e OPENAI_MODEL",
       );
     }

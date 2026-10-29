@@ -34,7 +34,8 @@ astro
 ```
 
 Running `astro` in an interactive terminal opens the TUI; without a TTY it prints help. `astro --help`
-shows every command, including `chat` and `tui`.
+shows every command, including `chat` and `tui`. With no config and no provider, `astro` opens the
+provider setup first; after adding one, the TUI starts on the read-only baseline.
 The CLI reads `astro.config.json` from the directory you run it in; without one, the TUI starts with a
 read-only baseline.
 
