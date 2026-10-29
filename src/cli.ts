@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { runTask, type RunReport, createProvider } from "./app";
+import { defaultArgs } from "./cli-default";
 import { existsSync } from "node:fs";
 import { loadConfig, validateConfig } from "./config";
 import { loadEffectiveConfig } from "./provider/profiles";
@@ -1017,4 +1018,5 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-process.exitCode = await main(process.argv.slice(2));
+const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+process.exitCode = await main(defaultArgs(process.argv.slice(2), interactive));
