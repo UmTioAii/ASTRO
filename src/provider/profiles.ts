@@ -1,4 +1,7 @@
 /** Perfis de provider persistidos fora do projeto (~/.astro/providers.json). Sem segredo. */
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { isKnownTag } from "../tags";
 
 export interface ProfileModel {
@@ -160,4 +163,42 @@ export function validateProfileStore(raw: unknown): ProviderStore {
     ...(activeProfileId === undefined ? {} : { activeProfileId }),
     profiles,
   };
+}
+
+/** Caminho do store: `$ASTRO_HOME/providers.json` ou `~/.astro/providers.json`. */
+export function profilesPath(env: NodeJS.ProcessEnv = process.env): string {
+  const home = env.ASTRO_HOME?.trim();
+  const base = home === undefined || home === "" ? join(homedir(), ".astro") : home;
+  return join(base, "providers.json");
+}
+
+/** Store ausente é um store vazio; JSON corrompido é erro com o caminho. */
+export function loadProfileStore(path: string = profilesPath()): ProviderStore {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { version: 1, profiles: [] };
+    throw new Error(`store de perfis inválido em "${path}": ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    return validateProfileStore(JSON.parse(text));
+  } catch (error) {
+    throw new Error(`store de perfis inválido em "${path}": ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/** Valida antes de gravar; escrita atômica com modo 0600 no POSIX. */
+export function saveProfileStore(store: ProviderStore, path: string = profilesPath()): void {
+  const valid = validateProfileStore(store);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(valid, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    renameSync(tmp, path);
+  } catch (error) {
+    try { unlinkSync(tmp); } catch { /* tmp já não existe */ }
+    throw error;
+  }
 }
