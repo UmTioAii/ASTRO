@@ -22,8 +22,8 @@ interface ProviderConfigBase {
 export interface OpenAICompatProviderConfig extends ProviderConfigBase {
   kind: "openai-compat";
   baseUrl: string;
-  /** Nome da variável de ambiente que guarda a chave. Nunca o valor. */
-  credentialRef: string;
+  /** Nome da variável de ambiente que guarda a chave. Nunca o valor. Ausente = provider sem chave. */
+  credentialRef?: string;
 }
 
 /** Provider Codex via OAuth (Responses API). */
@@ -318,7 +318,9 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
     return {
       kind,
       baseUrl: expectString(raw.baseUrl, `${field}.baseUrl`),
-      credentialRef: expectString(raw.credentialRef, `${field}.credentialRef`),
+      ...(raw.credentialRef === undefined
+        ? {}
+        : { credentialRef: expectString(raw.credentialRef, `${field}.credentialRef`) }),
       quotaDomain,
       ...(headers === undefined ? {} : { headers }),
       ...fallbackFields,

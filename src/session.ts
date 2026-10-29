@@ -23,7 +23,7 @@ import { assertAgentQuota, assertProjectBudget } from "./team";
 export interface EffectiveIdentity {
   provider: string;
   model: string;
-  credentialRef: string;
+  credentialRef?: string;
   quotaDomain: string;
   price?: PriceConfig;
 }
@@ -34,7 +34,7 @@ export type IdentityResolver = (provider: string, model: string) => EffectiveIde
 export interface SessionOptions {
   run: string;
   agent: string;
-  credentialRef: string;
+  credentialRef?: string;
   quotaDomain: string;
   cwd: string;
   provider: Provider;
@@ -99,7 +99,7 @@ function effectiveIdentityFor(
   resolve: IdentityResolver | undefined,
   response: CompletionResponse,
   fallbackModel: ModelEntry,
-  credentialRef: string,
+  credentialRef: string | undefined,
   quotaDomain: string,
 ): EffectiveIdentity {
   const provider = response.provider ?? fallbackModel.provider;
@@ -475,7 +475,7 @@ function ensureAgentDestroyed(ledger: Ledger, audit: Auditor, run: string, agent
 /** Opções para sessão multi-agent. */
 export interface MultiAgentSessionOptions {
   run: string;
-  credentialRef: string;
+  credentialRef?: string;
   quotaDomain: string;
   cwd: string;
   provider: Provider;
