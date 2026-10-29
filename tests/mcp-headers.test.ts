@@ -84,6 +84,11 @@ test("client envia o header resolvido e nunca o nome da variável", async () => 
   }
 });
 
+test("resolveMcpHeaders rejeita credencial literal mesmo fora da config", () => {
+  expect(() => resolveMcpHeaders({ Authorization: "Bearer sk-live" }, {}))
+    .toThrow(/env:NOME_DA_VARIAVEL/);
+});
+
 test("client falha antes de chamar a rede quando a variável do header falta", async () => {
   await expect(MCPClient.connect({
     transport: "http",

@@ -1,4 +1,5 @@
 /** Headers de MCP: referência `env:NOME` mantém o segredo fora da config (I-03). */
+import { isAuthHeader, looksLikeSecret } from "../secrets";
 import { MCPError } from "./types";
 
 const ENV_REF = /^env:([A-Z_][A-Z0-9_]*)$/;
@@ -20,6 +21,9 @@ export function resolveMcpHeaders(
   const resolved: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [name, value] of Object.entries(headers)) {
     if (!value.startsWith("env:")) {
+      if (isAuthHeader(name) || looksLikeSecret(value)) {
+        throw new MCPError(`header "${name}" parece conter credencial; use "env:NOME_DA_VARIAVEL"`);
+      }
       resolved[name] = value;
       continue;
     }
