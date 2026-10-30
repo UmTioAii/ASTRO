@@ -21,19 +21,6 @@ export interface ResolveDeps {
   which?: (name: string) => string | undefined;
 }
 
-/** Nome dos pacotes de binário do Bun para a plataforma (arm64 vira aarch64). */
-export function platformPackages(platform: string, arch: string): string[] {
-  const cpu = arch === "arm64" ? "aarch64" : arch;
-  switch (platform) {
-    case "win32": return [`@oven/bun-windows-${cpu}`];
-    case "darwin": return [`@oven/bun-darwin-${cpu}`];
-    case "linux": return [`@oven/bun-linux-${cpu}`, `@oven/bun-linux-${cpu}-musl`];
-    case "android": return [`@oven/bun-linux-${cpu}-android`];
-    case "freebsd": return [`@oven/bun-freebsd-${cpu}`];
-    default: return [];
-  }
-}
-
 function whichFromPath(name: string, env: Record<string, string | undefined>): string | undefined {
   const path = env.PATH ?? env.Path ?? "";
   for (const dir of path.split(delimiter)) {
@@ -46,20 +33,25 @@ function whichFromPath(name: string, env: Record<string, string | undefined>): s
 
 function missingRuntime(): MissingBunError {
   return new MissingBunError(
-    "runtime Bun não encontrado. Reinstale sem --omit=optional:\n" +
+    "runtime Bun não encontrado. Reinstale o pacote para baixar as dependências corretamente:\n" +
     "  npm install -g @umtioai/astro-harness@alpha\n" +
-    "ou aponte para um Bun existente:\n" +
+    "ou aponte para um Bun existente no seu sistema:\n" +
     "  ASTRO_BUN_PATH=/caminho/para/bun astro --help",
   );
 }
 
 /**
- * Ordem: ASTRO_BUN_PATH → Bun que está executando → binário da dependência de
- * plataforma → bun no PATH.
+ * Ordem de resolução: 
+ * 1. ASTRO_BUN_PATH (variável de ambiente)
+ * 2. Bun que está executando o script (se rodando via bun run)
+ * 3. binário dentro do pacote npm "bun" (nossa nova dependência)
+ * 4. bun no PATH global do sistema
  */
 export function resolveBun(deps: ResolveDeps = {}): string {
   const env = deps.env ?? process.env;
   const exists = deps.exists ?? existsSync;
+  
+  // 1. Override manual
   const explicit = env.ASTRO_BUN_PATH;
   if (explicit !== undefined && explicit !== "") {
     if (!exists(explicit)) {
@@ -68,25 +60,26 @@ export function resolveBun(deps: ResolveDeps = {}): string {
     return explicit;
   }
 
+  // 2. Já estamos rodando dentro do Bun?
   const runningUnderBun = deps.runningUnderBun
     ?? typeof (process.versions as Record<string, string | undefined>).bun === "string";
   if (runningUnderBun) return deps.execPath ?? process.execPath;
 
+  // 3. Busca no pacote npm "bun" (nossa dependência)
   const platform = deps.platform ?? process.platform;
-  const arch = deps.arch ?? process.arch;
   const resolve = deps.resolve ?? createRequire(import.meta.url).resolve;
   const binName = platform === "win32" ? "bun.exe" : "bun";
 
-  for (const pkg of platformPackages(platform, arch)) {
-    try {
-      const manifest = resolve(`${pkg}/package.json`);
-      const candidate = join(dirname(manifest), "bin", binName);
-      if (exists(candidate)) return candidate;
-    } catch {
-      // pacote opcional não instalado para esta plataforma/libc
-    }
+  try {
+    // Resolve o caminho do package.json do pacote "bun" e monta o caminho do binário
+    const manifest = resolve("bun/package.json");
+    const candidate = join(dirname(manifest), "bin", binName);
+    if (exists(candidate)) return candidate;
+  } catch {
+    // O pacote bun não foi encontrado no node_modules (pode ter sido omitido)
   }
 
+  // 4. Fallback: Busca no PATH do sistema
   const onPath = (deps.which ?? ((name) => whichFromPath(name, env)))(binName);
   if (onPath !== undefined) return onPath;
 
@@ -131,10 +124,12 @@ function main(): void {
 
   const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
   const child = spawn(bun, bunArgs(cli, process.argv.slice(2)), { stdio: "inherit", env: process.env });
+  
   child.on("error", (error) => {
     console.error(`astro: falha ao executar o Bun: ${error.message}`);
     process.exit(1);
   });
+  
   child.on("exit", (code, signal) => {
     if (signal !== null) {
       process.kill(process.pid, signal);

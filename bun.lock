@@ -5,6 +5,7 @@
     "": {
       "name": "astro",
       "dependencies": {
+        "bun": "1.4.2",
         "ink": "8.0.0",
         "react": "19.3.1",
       },
@@ -13,20 +14,6 @@
         "@types/react": "19.3.0",
         "ink-testing-library": "4.0.0",
         "typescript": "latest",
-      },
-      "optionalDependencies": {
-        "@oven/bun-darwin-aarch64": "1.4.2",
-        "@oven/bun-darwin-x64": "1.4.2",
-        "@oven/bun-freebsd-aarch64": "1.4.2",
-        "@oven/bun-freebsd-x64": "1.4.2",
-        "@oven/bun-linux-aarch64": "1.4.2",
-        "@oven/bun-linux-aarch64-android": "1.4.2",
-        "@oven/bun-linux-aarch64-musl": "1.4.2",
-        "@oven/bun-linux-x64": "1.4.2",
-        "@oven/bun-linux-x64-android": "1.4.2",
-        "@oven/bun-linux-x64-musl": "1.4.2",
-        "@oven/bun-windows-aarch64": "1.4.2",
-        "@oven/bun-windows-x64": "1.4.2",
       },
     },
   },
@@ -110,6 +97,8 @@
     "ansi-styles": ["ansi-styles@7.0.0", "", {}, "sha512-kKvt3m4uwzqL0wlkPd09CmljPJGOZZ4D0fP65sqFSvPkMRKhNi+74MgIJ5QxE6SxqB4t4KyUFGg8+n5zjo6hew=="],
 
     "auto-bind": ["auto-bind@5.0.1", "", {}, "sha512-ooviqdwwgfIfNmDwo94wlshcdzfO64XV0Cg6oDsDYBJfITDz1EngD2z7DkbvCWn+XIMsIqW27sEVF6qcpJrRcg=="],
+
+    "bun": ["bun@1.4.2", "", { "optionalDependencies": { "@oven/bun-darwin-aarch64": "1.4.2", "@oven/bun-darwin-x64": "1.4.2", "@oven/bun-freebsd-aarch64": "1.4.2", "@oven/bun-freebsd-x64": "1.4.2", "@oven/bun-linux-aarch64": "1.4.2", "@oven/bun-linux-aarch64-android": "1.4.2", "@oven/bun-linux-aarch64-musl": "1.4.2", "@oven/bun-linux-x64": "1.4.2", "@oven/bun-linux-x64-android": "1.4.2", "@oven/bun-linux-x64-musl": "1.4.2", "@oven/bun-windows-aarch64": "1.4.2", "@oven/bun-windows-x64": "1.4.2" }, "os": [ "!aix", "!sunos", "!openbsd", ], "cpu": [ "x64", "arm64", ], "bin": { "bun": "bin/bun.exe", "bunx": "bin/bunx.exe" } }, "sha512-TrSXo6HJfIEaczpb3kjX82I2pL47vK1QUNmHRCUdz9IzaOwa9lzOXSWwu2l18YHE3sNfGRapVLd4nNm+22vVVA=="],
 
     "bun-types": ["bun-types@1.4.4", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-yjrJh5oGX7mMPKGd19YXyIjmEuj4G4zNC30bs7PM9Az7NQ3ndF3j6hbeRdvJTRQEhJ/FYQwW0a2moweEi2hMxQ=="],
 

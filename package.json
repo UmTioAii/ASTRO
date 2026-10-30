@@ -1,7 +1,7 @@
 {
   "name": "@umtioai/astro-harness",
   "version": "0.1.0-alpha.2",
-  "description": "Harness single-agent em Bun/TypeScript com ledger de uso e auditoria append-only.",
+  "description": "Multi-agent coding harness for AI agents. Features deterministic model routing, append-only audit ledgers, cost governance, and durable handoffs. Built with Bun & TypeScript.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -18,7 +18,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/UmTioAii/ASTRO.git"
+    "url": "git+https://github.com/UmTioAii/ASTRO-Harness.git"
   },
   "publishConfig": {
     "access": "public"
@@ -43,21 +43,8 @@
     "typescript": "latest"
   },
   "dependencies": {
+    "bun": "1.4.2",
     "ink": "8.0.0",
     "react": "19.3.1"
-  },
-  "optionalDependencies": {
-    "@oven/bun-darwin-aarch64": "1.4.2",
-    "@oven/bun-darwin-x64": "1.4.2",
-    "@oven/bun-freebsd-aarch64": "1.4.2",
-    "@oven/bun-freebsd-x64": "1.4.2",
-    "@oven/bun-linux-aarch64": "1.4.2",
-    "@oven/bun-linux-aarch64-android": "1.4.2",
-    "@oven/bun-linux-aarch64-musl": "1.4.2",
-    "@oven/bun-linux-x64": "1.4.2",
-    "@oven/bun-linux-x64-android": "1.4.2",
-    "@oven/bun-linux-x64-musl": "1.4.2",
-    "@oven/bun-windows-aarch64": "1.4.2",
-    "@oven/bun-windows-x64": "1.4.2"
   }
 }
