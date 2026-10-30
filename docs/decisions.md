@@ -51,6 +51,7 @@ A trilha de planejamento usa numeração própria de decisões. Pares e colisõe
 | D-13 (worktrees no fluxo de dev) | D-13 | Tema distinto: na trilha, D-13 é workspace de agentes |
 | D-16 (squash merge) | D-16 | Colisão: na trilha, D-16 é aprovação bloqueante |
 | D-19 (ciclo de vida de modelo) | D-19 | Colisão: na trilha, D-19 é classe de equivalência |
+| D-22 (contagem de tokens por provider) | D-22 (Bun + TypeScript strict) | Colisão: mesmo número, decisões distintas |
 
 Decisões novas da trilha (escada de troca, classe de equivalência, aprovação bloqueante) entram nesta tabela a partir de D-21, com a origem registrada. Renumerar os IDs atuais exige ADR, porque quebra referências em issues e PRs.
 

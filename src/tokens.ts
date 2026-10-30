@@ -36,11 +36,19 @@ function providerKey(provider: string): string {
   return provider.trim();
 }
 
-/** Registra o tokenizer nativo de um provider (idempotente). */
-export function registerTokenizer(provider: string, tokenizer: Tokenizer, name = provider): void {
+/**
+ * Registra o tokenizer nativo de um provider (idempotente). Chaves são
+ * case-sensitive (nome de provider na config) e normalizadas só por `trim`.
+ * Erros aqui são de programação/config, não da taxonomia de provider (D-18).
+ */
+export function registerTokenizer(provider: string, tokenizer: Tokenizer, name?: string): void {
   const key = providerKey(provider);
   if (key.length === 0) throw new Error("provider vazio no registro de tokenizer");
-  TOKENIZERS.set(key, { fn: tokenizer, name });
+  if (typeof tokenizer !== "function") {
+    throw new Error(`tokenizer do provider "${key}" deve ser uma função`);
+  }
+  const label = name === undefined || name.trim().length === 0 ? key : name;
+  TOKENIZERS.set(key, { fn: tokenizer, name: label });
 }
 
 /** Remove o tokenizer de um provider (testes/plugins). */
@@ -92,8 +100,17 @@ function messagePieces(message: ChatMessage): string[] {
   return pieces;
 }
 
+/** Serializa parâmetros de tool; entrada malformada não derruba a contagem. */
+function parametersText(parameters: object): string {
+  try {
+    return JSON.stringify(parameters) ?? "null";
+  } catch {
+    return "[unserializable]";
+  }
+}
+
 function toolPieces(tool: ToolDef): string[] {
-  return [tool.name, tool.description, JSON.stringify(tool.parameters)];
+  return [tool.name, tool.description, parametersText(tool.parameters)];
 }
 
 /** Conta uma lista de mensagens para o provider/model ativo. */

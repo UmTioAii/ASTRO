@@ -108,6 +108,28 @@ describe("contagem de tokens por provider (S-19, D-22)", () => {
       .toEqual({ tokens: 1, source: "estimate" });
   });
 
+  test("registro rejeita tokenizer que não é função e nome vazio usa a chave", () => {
+    expect(() => registerTokenizer("native", undefined as unknown as (text: string) => number))
+      .toThrow(/deve ser uma função/);
+    expect(hasTokenizer("native")).toBe(false);
+
+    registerTokenizer(" native ", (text) => text.length);
+    expect(countMessageTokens([user("abcd")], { provider: "native" }))
+      .toEqual({ tokens: 4, source: "measured", tokenizer: "native" });
+  });
+
+  test("parâmetros de tool não serializáveis não derrubam a contagem", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const pieces = countRequestTokens({
+      model: "m1",
+      messages: [user("oi")],
+      tools: [{ name: "t", description: "d", parameters: circular }],
+    });
+    expect(pieces.tokens).toBeGreaterThan(0);
+    expect(pieces.source).toBe("estimate");
+  });
+
   test("troca de tokenizer entre providers não afeta os demais", () => {
     registerTokenizer("native", (text) => text.length, "a");
     registerTokenizer("native-2", (text) => text.length * 2, "b");
