@@ -95,6 +95,8 @@ export class CandidateSetChangedError extends ModelChoiceError {
 }
 
 const SNAPSHOT_TTL_MS = 5 * 60_000;
+/** Carência após o TTL para um id expirado ainda re-listar (`candidate_set_changed`). */
+const SNAPSHOT_GRACE_MS = SNAPSHOT_TTL_MS;
 const REASON_LIMIT = 200;
 
 interface StoredSnapshot {
@@ -165,15 +167,14 @@ function passesFilter(
   if (deps.budget !== undefined && (deps.budget.limitUsd !== null || deps.budget.hardCeilingUsd !== undefined)) {
     const cost = callCost(deps.config, deps.registry, model, profile);
     const status = budgetStatus(deps.budget, deps.ledger, now);
-    // Gasto desconhecido (custo n/d no ledger) não prova que cabe (B6).
-    if (status.spentUsd === null) return false;
+    // Teto físico sem prova de custo não pode ser afirmado abaixo do limite (B6).
     if (deps.budget.hardCeilingUsd !== undefined) {
-      // Teto físico com preço desconhecido não pode ser provado abaixo do limite.
-      if (!cost.complete) return false;
+      if (status.spentUsd === null || !cost.complete) return false;
       if (status.spentUsd + cost.usd >= deps.budget.hardCeilingUsd) return false;
     }
-    if (deps.budget.limitUsd !== null) {
-      if (status.remainingUsd === null || cost.usd > status.remainingUsd) return false;
+    // Limite sem gasto conhecido continua como o runtime (não bloqueia; B6).
+    if (deps.budget.limitUsd !== null && status.remainingUsd !== null && cost.usd >= status.remainingUsd) {
+      return false;
     }
   }
   return true;
@@ -239,9 +240,10 @@ export function listModelCandidates(query: CandidateQuery, deps: CandidateDeps):
   });
 
   const now = deps.now?.() ?? Date.now();
-  // Expurga snapshots vencidos: store de processo não cresce sem limite.
+  // Expurga snapshots vencidos há mais de uma carência: o id expirado ainda
+  // precisa re-listar e devolver `candidate_set_changed` (golden §11.13).
   for (const [id, stored] of SNAPSHOTS) {
-    if (now >= stored.expiresAtMs) SNAPSHOTS.delete(id);
+    if (now >= stored.expiresAtMs + SNAPSHOT_GRACE_MS) SNAPSHOTS.delete(id);
   }
   const revision = providerHealthRevision();
   const snapshot: CandidateSnapshot = {

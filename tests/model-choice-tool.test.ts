@@ -1,8 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runTask } from "../src/app";
+import { resetCandidateSnapshots } from "../src/model-choice";
+
+beforeEach(() => resetCandidateSnapshots());
 
 describe("tool list_model_candidates no run (S-09)", () => {
   test("a tool é exposta pela allowlist e devolve o snapshot ao modelo", async () => {

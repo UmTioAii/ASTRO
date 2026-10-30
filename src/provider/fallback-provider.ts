@@ -86,7 +86,6 @@ export class FallbackProvider implements Provider {
         // vira evento de falha e o próximo provider saudável é tentado
         lastError = error;
         this.#log("provider.failure", { provider: entry.name, errorClass: "invalid_request", attempt: 1 });
-        markProviderFailure(entry.name, "auth");
         previous = entry.name;
         previousReason = "invalid_request";
         continue;
@@ -104,8 +103,10 @@ export class FallbackProvider implements Provider {
           // Negação de troca é terminal (I-08): não tenta o próximo provider
           if (error instanceof SwapDeniedError) throw error;
           const errorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
-          markProviderFailure(entry.name, errorClass);
-          if (streamStarted.has(req)) throw error;
+          if (streamStarted.has(req)) {
+            markProviderFailure(entry.name, errorClass);
+            throw error;
+          }
           lastError = error;
           lastClass = errorClass;
           this.#log("provider.failure", { provider: entry.name, errorClass, attempt });

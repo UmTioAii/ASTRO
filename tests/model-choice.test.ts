@@ -141,12 +141,38 @@ describe("pipeline de candidatos (S-09, ADR-0011)", () => {
     expect(snapshot.candidates.map((c) => c.profile)).toEqual(["tiny"]);
   });
 
-  test("gasto desconhecido no ledger nega o candidato (B6)", () => {
-    const deps = setup(config({ budget: { scope: "day", limitUsd: 0.01, warnAt: 0.8, onExceed: "stop" } }));
+  test("gasto desconhecido no ledger nega o candidato sob teto físico (B6)", () => {
+    const deps = setup(config({
+      budget: { scope: "use-as-you-go", limitUsd: null, warnAt: 0.8, onExceed: "stop", hardCeilingUsd: 0.01 },
+    }));
     deps.ledger.record({
       run: "r0", agent: "a", provider: "p1", model: "m", quotaDomain: "default", tokensIn: 1, tokensOut: 1,
     });
     expect(listModelCandidates({ need: "writing-code", requires: ["tools"] }, deps).candidates).toEqual([]);
+  });
+
+  test("snapshot expirado ainda devolve candidate_set_changed antes da carência", () => {
+    let now = 1_000_000;
+    const deps = { ...setup(), now: () => now };
+    const snapshot = listModelCandidates({ need: "writing-code" }, deps);
+    now += 6 * 60_000; // vencido
+    // outra listagem dispara a poda, mas a carência preserva o id antigo
+    listModelCandidates({ need: "analysis" }, deps);
+    expect(() => resolveModelChoice(snapshot.snapshot_id, undefined, deps)).toThrow(CandidateSetChangedError);
+  });
+
+  test("snapshot vazio usa no_candidates e ranking empty", () => {
+    const deps = setup();
+    const snapshot = listModelCandidates({ need: "writing-code", requires: ["vision"] }, deps);
+    expect(snapshot.candidates).toEqual([]);
+    expect(snapshot.ranking).toBe("empty");
+    let caught: unknown;
+    try {
+      resolveModelChoice(snapshot.snapshot_id, undefined, deps);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "no_candidates" });
   });
 
   test("cooldown real do provider exclui e health invalida snapshot", () => {
