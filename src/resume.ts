@@ -3,6 +3,7 @@
  * audit nunca é lido. Lacuna ou árvore quebrada vira `replay_incomplete`.
  */
 import type { Ledger, LedgerAgentEntry, RunState } from "./ledger";
+import { assertAccountAvailable, accountRefOf, findAgentLock } from "./agent-lock";
 
 /** Replay incompleto: árvore quebrada ou evento ausente (nunca resume parcial). */
 export class ReplayIncompleteError extends Error {
@@ -107,14 +108,17 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
   return { run, nodes: ordered, roots, active: active[0] };
 }
 
-/** Plano determinístico de retomada: último `run_state` + agente ativo, sem recalcular escolhas. */
+/** Plano determinístico de retomada: último `run_state` + agente a retomar, sem recalcular escolhas. */
 export function planResume(ledger: Ledger, run: string): ResumePlan {
-  const state = ledger.lastState(run);
-  if (state === undefined) throw new ReplayIncompleteError(`run "${run}" sem run_state; replay incompleto`);
-  if (state.state === "completed") throw new ReplayIncompleteError(`run "${run}" já concluído; nada a retomar`);
+  const last = ledger.lastState(run);
+  if (last?.state === "completed") throw new ReplayIncompleteError(`run "${run}" já concluído; nada a retomar`);
   const tree = rebuildAgentTree(ledger, run);
-  if (tree.active === undefined) throw new ReplayIncompleteError(`run "${run}" sem agente ativo; replay incompleto`);
-  return { run, state: state.state, tree, agent: tree.active };
+  // Run interrompido por erro/cancelamento já liberou o lock e fechou o agente;
+  // nesse caso a retomada recria o último agente da árvore. Crash duro sem
+  // `run_state` também cai aqui (estado tratado como interrupted).
+  const agent = tree.active ?? tree.nodes.at(-1);
+  if (agent === undefined) throw new ReplayIncompleteError(`run "${run}" sem agente para retomar; replay incompleto`);
+  return { run, state: last?.state ?? "interrupted", tree, agent };
 }
 
 /**
@@ -146,6 +150,15 @@ export function assertResumeIdentity(
     return;
   }
 
+  // O agente legado não gravou provider. Se o run já liberou o lock (erro ou
+  // crash recuperado), não há evento a gravar: a recriação adquire a conta
+  // pelo caminho normal. Ativo, a conta de destino não pode estar cativa (A4).
+  if (findAgentLock(ledger, run, agent.agent_id) === undefined) {
+    agent.provider = expected.provider;
+    agent.credentialRef = expected.credentialRef;
+    return;
+  }
+  assertAccountAvailable(ledger, accountRefOf(expected), { run, agent_id: agent.agent_id });
   ledger.recordAgentIdentity({
     run,
     agent_id: agent.agent_id,

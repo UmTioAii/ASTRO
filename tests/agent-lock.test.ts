@@ -8,6 +8,7 @@ import {
   acquireAgentLock,
   activeLocks,
   recoverCrashedAgents,
+  recoverDeadAgentLocks,
   releaseAgentLock,
 } from "../src/agent-lock";
 import { Auditor } from "../src/audit";
@@ -44,11 +45,12 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
 
     const acquired = audit.readAll().filter((e) => e.tipo === "agent.lock.acquired");
     expect(acquired).toHaveLength(1);
-    expect(acquired[0]!.payload).toEqual({
+    expect(acquired[0]!.payload).toMatchObject({
       agent_id: "planner",
       accountRef: "NVIDIA_API_KEY",
       provider: "nvidia",
       model: "m1",
+      pid: process.pid,
     });
     expect(JSON.stringify(audit.readAll())).not.toContain("sk-");
   });
@@ -81,6 +83,13 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
     expect((error as Error).message).toContain("planner");
     expect((error as Error).message).toContain("r1");
     expect(ledger.readAllEntries().filter((e) => e.kind === "agent")).toHaveLength(1);
+    const denied = audit.readAll().filter((e) => e.tipo === "agent.lock.denied");
+    expect(denied).toHaveLength(1);
+    expect(denied[0]!.payload).toMatchObject({
+      agent_id: "coder",
+      accountRef: "NVIDIA_API_KEY",
+      holder: { run: "r1", agent_id: "planner" },
+    });
   });
 
   test("o mesmo agente no mesmo run é idempotente e não duplica o created", () => {
@@ -169,6 +178,14 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
 
     expect(ledger.total().tokensIn).toBe(90);
     expect(ledger.total().tokensOut).toBe(10);
+    // A conta liberada pode ser reusada, mas a quota continua consumida (I-07).
+    acquireAgentLock(ledger, audit, {
+      run: "r2",
+      agent_id: "coder",
+      session_id: "r2",
+      provider: "nvidia",
+      credentialRef: "NVIDIA_API_KEY",
+    });
     expect(() => assertWithinQuota(ledger, { nvidia: { dailyTokens: 100 } }, "nvidia")).toThrow(/quota excedida/);
   });
 
@@ -210,5 +227,68 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
     expect(released).toHaveLength(2);
     expect(released.every((e) => e.payload.reason === "crash_recovered")).toBe(true);
     expect(recoverCrashedAgents(ledger, audit, "r1")).toEqual([]);
+  });
+
+  test("retomada não derruba lock de outro processo vivo", () => {
+    const { ledger, audit } = setup();
+    acquireAgentLock(ledger, audit, {
+      run: "r1",
+      agent_id: "planner",
+      session_id: "r1",
+      provider: "nvidia",
+      credentialRef: "A_KEY",
+      pid: 4242,
+    });
+
+    expect(() => recoverCrashedAgents(ledger, audit, "r1", () => true)).toThrow(AccountLockedError);
+    expect(activeLocks(ledger)).toHaveLength(1);
+    expect(ledger.readAllEntries().some((e) => e.kind === "agent" && e.event === "destroyed")).toBe(false);
+  });
+
+  test("varredura de órfãos libera só PID morto e preserva processo vivo", () => {
+    const { ledger, audit } = setup();
+    acquireAgentLock(ledger, audit, {
+      run: "dead",
+      agent_id: "planner",
+      session_id: "dead",
+      provider: "nvidia",
+      credentialRef: "A_KEY",
+      pid: 6001,
+    });
+    acquireAgentLock(ledger, audit, {
+      run: "live",
+      agent_id: "coder",
+      session_id: "live",
+      provider: "openrouter",
+      credentialRef: "B_KEY",
+      pid: 6002,
+    });
+
+    const recovered = recoverDeadAgentLocks(ledger, audit, (pid) => pid === 6002);
+
+    expect(recovered.map((l) => l.run)).toEqual(["dead"]);
+    expect(activeLocks(ledger).map((l) => l.run)).toEqual(["live"]);
+  });
+
+  test("reentrada com outra conta não devolve o lock antigo em silêncio", () => {
+    const { ledger, audit } = setup();
+    acquireAgentLock(ledger, audit, {
+      run: "r1",
+      agent_id: "planner",
+      session_id: "r1",
+      provider: "nvidia",
+      credentialRef: "A_KEY",
+    });
+
+    expect(() =>
+      acquireAgentLock(ledger, audit, {
+        run: "r1",
+        agent_id: "planner",
+        session_id: "r1",
+        provider: "openrouter",
+        credentialRef: "B_KEY",
+      }),
+    ).toThrow(AccountLockedError);
+    expect(activeLocks(ledger)[0]!.accountRef).toBe("A_KEY");
   });
 });

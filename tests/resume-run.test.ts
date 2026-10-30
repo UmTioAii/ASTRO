@@ -5,10 +5,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Auditor } from "../src/audit";
 import { runTask } from "../src/app";
-import { Ledger } from "../src/ledger";
+import { Ledger, processAlive } from "../src/ledger";
 import { rebuildAgentTree } from "../src/resume";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** PID comprovadamente livre (não pode ser dono vivo de um lock). */
+function deadPid(): number {
+  let pid = 999_999;
+  while (processAlive(pid)) pid -= 1;
+  return pid;
+}
 
 /** Config com agents planner/coder e servidor HTTP que registra os modelos chamados. */
 function setup(coderModel = "m2") {
@@ -44,12 +51,12 @@ function setup(coderModel = "m2") {
 }
 
 /** Semeia run interrompido com planner já destruído (handoff) e coder ativo. */
-function seedInterrupted(cwd: string, run = "r1", coderModel = "m2"): Ledger {
+function seedInterrupted(cwd: string, run = "r1", coderModel = "m2", pid = process.pid): Ledger {
   mkdirSync(join(cwd, ".astro"), { recursive: true });
   const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
-  ledger.recordAgentCreated({ run, agent_id: "planner", session_id: run, model: "m1" });
+  ledger.recordAgentCreated({ run, agent_id: "planner", session_id: run, model: "m1", pid });
   ledger.recordAgentDestroyed({ run, agent_id: "planner", session_id: run, reason: "handoff" });
-  ledger.recordAgentCreated({ run, agent_id: "coder", parent_agent_id: "planner", session_id: run, model: coderModel });
+  ledger.recordAgentCreated({ run, agent_id: "coder", parent_agent_id: "planner", session_id: run, model: coderModel, pid });
   ledger.recordState(run, "interrupted", { agent: "coder", reason: "cancelled" });
   return ledger;
 }
@@ -103,6 +110,42 @@ describe("execução de resume (F-22, #131)", () => {
         .filter((e) => e.tipo === "agent.lock.released" && e.payload.reason === "crash_recovered");
       expect(released).toHaveLength(1);
       expect(released[0]!.payload).toMatchObject({ agent_id: "coder" });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("resume recupera crash duro sem run_state e libera a conta antes de recriar", async () => {
+    const { cwd, configPath, seen, server } = setup();
+    try {
+      mkdirSync(join(cwd, ".astro"), { recursive: true });
+      const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
+      ledger.recordAgentCreated({ run: "r1", agent_id: "planner", session_id: "r1", model: "m1", pid: deadPid() });
+
+      const report = await runTask({ configPath, task: "continue", cwd, env: { TEST_KEY: "x" }, resume: "r1" });
+
+      expect(report.resumedFrom).toBe("planner");
+      expect(seen).toEqual(["m1"]);
+      const recovered = ledger.readAllEntries().find(
+        (e) => e.kind === "agent" && e.event === "destroyed" && (e as { reason?: string }).reason === "crash_recovered",
+      );
+      expect(recovered).toMatchObject({ agent_id: "planner" });
+      expect(rebuildAgentTree(ledger, "r1").nodes[0]!.reason).toBe("completed");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("resume com identidade divergente falha sem gravar crash_recovered", async () => {
+    const { cwd, configPath, server } = setup("m3");
+    try {
+      const ledger = seedInterrupted(cwd, "r1", "m2");
+
+      await expect(runTask({ configPath, task: "continue", cwd, env: { TEST_KEY: "x" }, resume: "r1" }))
+        .rejects.toThrow(/modelo do agente "coder" mudou/);
+
+      const events = ledger.readAllEntries().filter((e) => e.kind === "agent" && e.run === "r1");
+      expect(events.some((e) => (e as { reason?: string }).reason === "crash_recovered")).toBe(false);
     } finally {
       server.stop(true);
     }
@@ -183,7 +226,7 @@ describe("execução de resume (F-22, #131)", () => {
   test("bun src/cli.ts resume retoma o run e imprime o agente", async () => {
     const { cwd, configPath, seen, server } = setup();
     try {
-      seedInterrupted(cwd);
+      seedInterrupted(cwd, "r1", "m2", deadPid());
       const proc = Bun.spawn(["bun", "src/cli.ts", "resume", "r1", "--task", "continue", "--config", configPath, "--cwd", cwd], {
         cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, TEST_KEY: "x" },
       });

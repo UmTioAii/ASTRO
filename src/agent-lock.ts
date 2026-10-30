@@ -4,7 +4,7 @@
  * libera, `identity` atualiza a conta. Sem arquivo de lock separado.
  */
 import type { Auditor } from "./audit";
-import type { Ledger, LedgerAgentEntry } from "./ledger";
+import { processAlive, type Ledger, type LedgerAgentEntry } from "./ledger";
 import { redactSecrets } from "./sanitize-external";
 
 /** Conta presa por um agente ativo, reconstruída do ledger. */
@@ -17,8 +17,13 @@ export interface AgentLock {
   provider?: string;
   model?: string;
   profile?: string;
+  /** PID dono do lock; ausente em ledger legado. */
+  pid?: number;
   seq: number;
 }
+
+/** Sonda de vida de um PID (injetável nos testes). */
+export type PidProbe = (pid: number) => boolean;
 
 /** Segunda aquisição da mesma conta: falha explícita, sem valor de segredo. */
 export class AccountLockedError extends Error {
@@ -45,6 +50,8 @@ export interface AcquireAgentLockOptions {
   credentialRef?: string;
   profile?: string;
   parent_agent_id?: string;
+  /** PID dono do lock; default o processo atual. */
+  pid?: number;
 }
 
 export interface ReleaseAgentLockOptions {
@@ -80,7 +87,8 @@ export function activeLocks(ledger: Ledger): AgentLock[] {
   const locks = new Map<string, AgentLock>();
   for (const entry of ledger.readAllEntries()) {
     if (entry.kind !== "agent") continue;
-    const key = agentKey(entry.session_id, entry.agent_id);
+    // A vida do lock é por run+agente (session_id pode divergir em ledger antigo).
+    const key = agentKey(entry.run, entry.agent_id);
     if (entry.event === "created") {
       locks.set(key, lockFrom(entry));
       continue;
@@ -110,64 +118,115 @@ function lockFrom(entry: LedgerAgentEntry): AgentLock {
     ...(entry.provider === undefined ? {} : { provider: entry.provider }),
     ...(entry.model === undefined ? {} : { model: entry.model }),
     ...(entry.profile === undefined ? {} : { profile: entry.profile }),
+    ...(entry.pid === undefined ? {} : { pid: entry.pid }),
     seq: entry.seq,
   };
+}
+
+/** Lock do agente no run, se ativo. */
+export function findAgentLock(ledger: Ledger, run: string, agentId: string): AgentLock | undefined {
+  return activeLocks(ledger).find((lock) => sameAgent(lock, run, agentId));
+}
+
+/** Falha se outra execução ativa já detém a conta (usado antes de um `identity`). */
+export function assertAccountAvailable(
+  ledger: Ledger,
+  accountRef: string,
+  self: { run: string; agent_id: string },
+): void {
+  const holder = activeLocks(ledger).find(
+    (lock) => lock.accountRef === accountRef && !sameAgent(lock, self.run, self.agent_id),
+  );
+  if (holder !== undefined) throw new AccountLockedError(accountRef, holder);
+}
+
+/** Evento de negação (I-04), sem valor de segredo (I-03). */
+function auditDenied(audit: Auditor, opts: AcquireAgentLockOptions, accountRef: string, holder: AgentLock): void {
+  audit.append({
+    run: opts.run,
+    agent: opts.agent_id,
+    tipo: "agent.lock.denied",
+    payload: {
+      agent_id: opts.agent_id,
+      accountRef,
+      holder: {
+        run: holder.run,
+        agent_id: holder.agent_id,
+        ...(holder.pid === undefined ? {} : { pid: holder.pid }),
+      },
+    },
+  });
 }
 
 /**
  * Adquire a conta do agente; falha se outro agente ativo já a detém.
  * A checagem e a escrita de `agent.created` são serializadas no arquivo do
- * ledger, então dois processos não adquirem a mesma conta ao mesmo tempo.
+ * ledger com falha fechada: sem o lock, dois processos poderiam adquirir a
+ * mesma conta ao mesmo tempo.
  */
 export function acquireAgentLock(
   ledger: Ledger,
   audit: Auditor,
   opts: AcquireAgentLockOptions,
 ): AgentLock {
-  return ledger.withFileLock(() => {
-    const accountRef = accountRefOf(opts);
-    const locks = activeLocks(ledger);
-    const self = locks.find((l) => sameAgent(l, opts.run, opts.agent_id));
-    if (self !== undefined) return self;
-    const holder = locks.find((l) => l.accountRef === accountRef);
-    if (holder !== undefined) throw new AccountLockedError(accountRef, holder);
+  return ledger.withFileLock(
+    () => {
+      const accountRef = accountRefOf(opts);
+      const locks = activeLocks(ledger);
+      const self = locks.find((l) => sameAgent(l, opts.run, opts.agent_id));
+      if (self !== undefined) {
+        // Reentrada idempotente só vale para a mesma conta; trocar de conta com
+        // o agente ativo é bypass de exclusividade, não sucesso silencioso.
+        if (self.accountRef === accountRef) return self;
+        auditDenied(audit, opts, accountRef, self);
+        throw new AccountLockedError(accountRef, self);
+      }
+      const holder = locks.find((l) => l.accountRef === accountRef);
+      if (holder !== undefined) {
+        auditDenied(audit, opts, accountRef, holder);
+        throw new AccountLockedError(accountRef, holder);
+      }
 
-    const entry = ledger.recordAgentCreated({
-      run: opts.run,
-      agent_id: opts.agent_id,
-      session_id: opts.session_id,
-      ...(opts.model === undefined ? {} : { model: opts.model }),
-      ...(opts.provider === undefined ? {} : { provider: opts.provider }),
-      ...(opts.credentialRef === undefined ? {} : { credentialRef: opts.credentialRef }),
-      ...(opts.profile === undefined ? {} : { profile: opts.profile }),
-      ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: opts.parent_agent_id }),
-    });
-    audit.append({
-      run: opts.run,
-      agent: opts.agent_id,
-      tipo: "agent.created",
-      payload: {
+      const entry = ledger.recordAgentCreated({
+        run: opts.run,
         agent_id: opts.agent_id,
+        session_id: opts.session_id,
         ...(opts.model === undefined ? {} : { model: opts.model }),
         ...(opts.provider === undefined ? {} : { provider: opts.provider }),
         ...(opts.credentialRef === undefined ? {} : { credentialRef: opts.credentialRef }),
-        ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: opts.parent_agent_id }),
-      },
-    });
-    audit.append({
-      run: opts.run,
-      agent: opts.agent_id,
-      tipo: "agent.lock.acquired",
-      payload: {
-        agent_id: opts.agent_id,
-        accountRef,
-        ...(opts.provider === undefined ? {} : { provider: opts.provider }),
-        ...(opts.model === undefined ? {} : { model: opts.model }),
         ...(opts.profile === undefined ? {} : { profile: opts.profile }),
-      },
-    });
-    return lockFrom(entry);
-  });
+        ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: opts.parent_agent_id }),
+        ...(opts.pid === undefined ? {} : { pid: opts.pid }),
+      });
+      audit.append({
+        run: opts.run,
+        agent: opts.agent_id,
+        tipo: "agent.created",
+        payload: {
+          agent_id: opts.agent_id,
+          ...(opts.model === undefined ? {} : { model: opts.model }),
+          ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+          ...(opts.credentialRef === undefined ? {} : { credentialRef: opts.credentialRef }),
+          ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: opts.parent_agent_id }),
+        },
+      });
+      audit.append({
+        run: opts.run,
+        agent: opts.agent_id,
+        tipo: "agent.lock.acquired",
+        payload: {
+          agent_id: opts.agent_id,
+          accountRef,
+          pid: entry.pid,
+          ...(opts.provider === undefined ? {} : { provider: opts.provider }),
+          ...(opts.model === undefined ? {} : { model: opts.model }),
+          ...(opts.profile === undefined ? {} : { profile: opts.profile }),
+        },
+      });
+      return lockFrom(entry);
+    },
+    { failClosed: true },
+  );
 }
 
 /** Libera a conta do agente; `false` quando o agente já não está ativo. */
@@ -201,9 +260,47 @@ export function releaseAgentLock(
   });
 }
 
-/** Recuperação de crash (A4, §11.5): destrói órfãos do run e libera as contas. */
-export function recoverCrashedAgents(ledger: Ledger, audit: Auditor, run: string): AgentLock[] {
+/**
+ * Varre o ledger inteiro e libera locks cujo processo dono morreu (A4). Chamado
+ * no início de todo run: um crash duro do processo anterior não pode deixar a
+ * conta cativa para sempre. Locks de processo vivo nunca são tocados.
+ */
+export function recoverDeadAgentLocks(
+  ledger: Ledger,
+  audit: Auditor,
+  probe: PidProbe = processAlive,
+): AgentLock[] {
+  const dead = activeLocks(ledger).filter(
+    (lock) => lock.pid !== undefined && lock.pid !== process.pid && !probe(lock.pid),
+  );
+  for (const lock of dead) {
+    releaseAgentLock(ledger, audit, {
+      run: lock.run,
+      agent_id: lock.agent_id,
+      session_id: lock.session_id,
+      reason: "crash_recovered",
+    });
+  }
+  return dead;
+}
+
+/**
+ * Recuperação de crash na retomada (A4, §11.5): destrói os órfãos do run e
+ * libera as contas. Um lock de outro processo vivo não é órfão — a retomada
+ * falha com `account_locked` em vez de derrubar um run em execução.
+ */
+export function recoverCrashedAgents(
+  ledger: Ledger,
+  audit: Auditor,
+  run: string,
+  probe: PidProbe = processAlive,
+): AgentLock[] {
   const orphans = activeLocks(ledger).filter((lock) => lock.run === redactSecrets(run));
+  for (const lock of orphans) {
+    if (lock.pid !== undefined && lock.pid !== process.pid && probe(lock.pid)) {
+      throw new AccountLockedError(lock.accountRef, lock);
+    }
+  }
   for (const lock of orphans) {
     releaseAgentLock(ledger, audit, {
       run: lock.run,

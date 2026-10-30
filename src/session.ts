@@ -2,7 +2,7 @@ import type { Auditor } from "./audit";
 import { isAbortError, throwIfAborted } from "./abort";
 import { SwapDeniedError, type SwapApprover, type SwapRequest } from "./approval";
 import { CallJournal } from "./call-id";
-import { hashToolCalls, type HandoffEventKind, type Ledger, type LedgerAgentEntry } from "./ledger";
+import { hashToolCalls, type HandoffEventKind, type Ledger } from "./ledger";
 import { buildHandoffArtifact, HandoffError, handoffId, sanitizeHandoffArtifact, taskHash, type HandoffArtifactV1, type HandoffDraft } from "./handoff/types";
 import { ackHandoff, scanHandoffs, readSourceRefs, type HandoffStatus } from "./handoff/lifecycle";
 import { verifyHandoffIdentity } from "./handoff/verifier";
@@ -18,7 +18,7 @@ import { redactSecrets } from "./sanitize-external";
 import type { SpanHandle, TracerLike } from "./tracing";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
-import { acquireAgentLock, releaseAgentLock } from "./agent-lock";
+import { acquireAgentLock, findAgentLock, releaseAgentLock } from "./agent-lock";
 
 /** Identidade efetiva de quem atendeu o completion (F-31d). */
 export interface EffectiveIdentity {
@@ -413,10 +413,15 @@ export async function runSession(
     // HandoffSignal transfere o controle ao caller e não grava run_state:
     // single+handoff não é retomável por planResume (multi-agent tem loop próprio).
     if (!errorHasHandoffName(error)) {
-      opts.ledger.recordState(opts.run, "interrupted", {
-        agent: opts.agent,
-        reason: interruptReason(error, opts.signal),
-      });
+      const reason = interruptReason(error, opts.signal);
+      try {
+        opts.ledger.recordState(opts.run, "interrupted", {
+          agent: opts.agent,
+          reason,
+        });
+      } finally {
+        releaseOnFailure(opts.ledger, opts.audit, opts.run, opts.agent, lockReason(error, opts.signal));
+      }
     }
     if (rootSpan !== undefined && !errorHasHandoffName(error)) {
       tracer?.end(rootSpan, {
@@ -444,14 +449,34 @@ function interruptReason(error: unknown, signal?: AbortSignal): string {
   return error instanceof Error ? error.name : String(error);
 }
 
-/** Está ativo? O último evento `agent` do id no run não é `destroyed` (created/identity contam). */
+/** Razão do `agent.destroyed` ao liberar a conta; MaxSteps tem nome estável. */
+function lockReason(error: unknown, signal?: AbortSignal): string {
+  if (error instanceof MaxStepsError) return "max_steps";
+  return interruptReason(error, signal);
+}
+
+/**
+ * Libera a conta do agente quando o run termina em erro (A4): sem isso o
+ * `agent.created` fica sem `destroyed` e o próximo run falha `account_locked`.
+ * Falha na liberação não mascara o erro original; a varredura de órfãos cobre.
+ */
+function releaseOnFailure(
+  ledger: Ledger,
+  audit: Auditor,
+  run: string,
+  agentId: string,
+  reason: string,
+): void {
+  try {
+    ensureAgentDestroyed(ledger, audit, run, agentId, reason);
+  } catch {
+    // Ledger indisponível: preserva o erro que interrompeu o run.
+  }
+}
+
+/** Está ativo? Mesma reconstrução usada pelo lock (identity não reativa destruído). */
 function agentActive(ledger: Ledger, run: string, agentId: string): boolean {
-  const targetRun = redactSecrets(run);
-  const targetAgent = redactSecrets(agentId);
-  const last = ledger.readAllEntries()
-    .filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === targetRun && e.agent_id === targetAgent)
-    .at(-1);
-  return last !== undefined && last.event !== "destroyed";
+  return findAgentLock(ledger, run, agentId) !== undefined;
 }
 
 export interface AgentIdentity {
@@ -906,10 +931,15 @@ export async function runMultiAgentSession(
         reason: error instanceof Error ? error.name : String(error),
       });
     }
-    opts.ledger.recordState(opts.run, "interrupted", {
-      agent: currentAgentName,
-      reason: interruptReason(error, opts.signal),
-    });
+    const reason = interruptReason(error, opts.signal);
+    try {
+      opts.ledger.recordState(opts.run, "interrupted", {
+        agent: currentAgentName,
+        reason,
+      });
+    } finally {
+      releaseOnFailure(opts.ledger, opts.audit, opts.run, currentAgentName, lockReason(error, opts.signal));
+    }
     if (rootSpan !== undefined) {
       tracer?.end(rootSpan, {
         status: "error",

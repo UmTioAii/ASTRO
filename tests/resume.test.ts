@@ -78,13 +78,16 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(result.steps).toBe(2);
   });
 
-  test("planResume: interrupted devolve agente ativo; completed e ausência de estado falham", () => {
+  test("planResume: sem run_state retoma o último agente; completed falha", () => {
     const ledger = newLedger();
     ledger.recordAgentCreated({ run: "r1", agent_id: "coder", session_id: "r1", model: "m2", profile: "p" });
-    ledger.recordState("r1", "interrupted", { agent: "coder", reason: "cancelled" });
     const plan = planResume(ledger, "r1");
     expect(plan.agent).toMatchObject({ agent_id: "coder", model: "m2", profile: "p" });
-    expect(plan.state).toBe("interrupted");
+    expect(plan.state).toBe("interrupted"); // crash duro: estado implícito
+
+    // Interrupção já liberou o lock e fechou o agente: ainda retoma o último nó.
+    ledger.recordAgentDestroyed({ run: "r1", agent_id: "coder", session_id: "r1", reason: "cancelled" });
+    expect(planResume(ledger, "r1").agent.agent_id).toBe("coder");
 
     const done = newLedger();
     seedChain(done);
@@ -92,7 +95,7 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(() => planResume(newLedger(), "r1")).toThrow(ReplayIncompleteError);
   });
 
-  test("cancelamento deixa o agente ativo para retomada (F-06 + F-22)", async () => {
+  test("cancelamento libera a conta; planResume retoma o último agente (F-06 + F-22)", async () => {
     const controller = new AbortController();
     const provider: Provider = { complete: async () => {
       controller.abort(new Error("cancelado"));
@@ -100,7 +103,9 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     } };
     const { opts, ledger } = single("r-abort", provider, { signal: controller.signal });
     await expect(runSession(opts, "tarefa")).rejects.toBeDefined();
-    expect(rebuildAgentTree(ledger, "r-abort").active).toMatchObject({ agent_id: "default" });
+    const tree = rebuildAgentTree(ledger, "r-abort");
+    expect(tree.active).toBeUndefined();
+    expect(tree.nodes[0]!.reason).toBe("cancelled");
     expect(planResume(ledger, "r-abort").agent.agent_id).toBe("default");
   });
   test("single-agent concluído: created + destroyed(completed) no ledger e audit", async () => {
@@ -115,11 +120,14 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(tipos).toContain("agent.created");
     expect(tipos).toContain("agent.destroyed");
   });
-  test("MaxSteps deixa o agente ativo (interrompível/retomável)", async () => {
+  test("MaxSteps libera a conta e mantém o run retomável", async () => {
     const provider: Provider = { complete: async () => resp({ toolCalls: [{ id: "c1", name: "ghost", arguments: "{}" }] }) };
     const { opts, ledger } = single("r-max", provider, { maxSteps: 1 });
     await expect(runSession(opts, "tarefa")).rejects.toBeDefined();
-    expect(rebuildAgentTree(ledger, "r-max").active?.agent_id).toBe("default");
+    const tree = rebuildAgentTree(ledger, "r-max");
+    expect(tree.active).toBeUndefined();
+    expect(tree.nodes[0]!.reason).toBe("max_steps");
+    expect(planResume(ledger, "r-max").agent.agent_id).toBe("default");
   });
   test("reabertura: handoff de volta a agente já usado o deixa ativo (sem duplicar nó)", () => {
     const ledger = newLedger();

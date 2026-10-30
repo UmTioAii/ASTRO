@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
@@ -289,21 +291,31 @@ function expectBoolean(value: unknown, field: string): boolean {
 }
 
 /**
- * Conta de um provider (A2/A4): a credencial nomeada, o arquivo OAuth ou o
- * próprio provider quando não há chave. Dois providers com a mesma credencial
- * compartilham a mesma conta.
+ * Conta de um provider (A2/A4), na mesma forma que o runtime usa em
+ * `providerIdentity`: a credencial nomeada, o arquivo OAuth expandido ou o
+ * `kind` para provider de plugin. Sem chave, o próprio provider é a conta.
  */
 function providerAccountRef(name: string, provider: ProviderConfig): string {
   const raw = provider as { kind: string; credentialRef?: unknown; credentialsPath?: unknown };
   if (raw.kind === "openai-compat") {
-    return typeof raw.credentialRef === "string" ? raw.credentialRef : `provider:${name}`;
+    return typeof raw.credentialRef === "string" && raw.credentialRef.length > 0
+      ? raw.credentialRef
+      : `provider:${name}`;
   }
   if (raw.kind === "codex-oauth") {
-    return typeof raw.credentialsPath === "string" ? raw.credentialsPath : `provider:${name}`;
+    return typeof raw.credentialsPath === "string"
+      ? expandHome(raw.credentialsPath)
+      : `provider:${name}`;
   }
-  return typeof raw.credentialRef === "string" && raw.credentialRef.length > 0
-    ? raw.credentialRef
-    : `provider:${name}`;
+  if (typeof raw.credentialRef === "string") return raw.credentialRef;
+  return raw.kind;
+}
+
+/** Mesma expansão de `~` usada pelo runtime para o caminho de credenciais. */
+function expandHome(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(2));
+  return path;
 }
 
 function validateHeaders(value: unknown, field: string): Record<string, string> {

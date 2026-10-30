@@ -53,6 +53,11 @@ describe("teto de agentes ativos vs contas declaradas (A2, ADR-0008)", () => {
     expect(() => validateConfig(keyless)).not.toThrow();
   });
 
+  test("maxActive=2 com duas contas passa (teto efetivo da v1)", () => {
+    const parsed = validateConfig(cfg({ agents: { maxActive: 2, planner: { model: "p1/m1" } } }));
+    expect(parsed.maxActive).toBe(2);
+  });
+
   test("maxActive declarado é validado contra as contas (v2: 4)", () => {
     const three = cfg({
       providers: {

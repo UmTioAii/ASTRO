@@ -117,7 +117,7 @@ Model pool and profiles are implemented — a profile replaces `model` (both tog
 }
 ```
 
-Every active agent (orchestrator included) holds one account exclusively. The lock is the `agent.created`/`agent.destroyed` pair in the ledger — no separate lock file — and `astro resume` releases orphaned agents as `crash_recovered` before recreating them. With named agents, `loadConfig` requires at least two declared accounts (credentials, or one per keyless provider) and fails with `max_active_exceeds_accounts` otherwise; `agents.maxActive` (v2 ceiling, `4`) is validated against that count. Locks never touch quota: usage stays aggregated per `quotaDomain`.
+Every active agent (orchestrator included) holds one account exclusively. The lock is the `agent.created`/`agent.destroyed` pair in the ledger — no separate lock file; `created` records the owner `pid`. A failing run releases its account with a stable reason (`max_steps`, `cancelled`, `budget_exceeded`, `swap_denied`, error class) and stays resumable. Every run first frees locks whose `pid` is dead; `astro resume` releases that run's orphans as `crash_recovered`, but refuses (`account_locked`) when the owner process is still alive. Acquisition is fail-closed if the ledger file lock cannot be taken. With named agents, `loadConfig` requires at least two declared accounts (credentials, or one per keyless provider) and fails with `max_active_exceeds_accounts` otherwise; `agents.maxActive` (v2 ceiling, `4`) is validated against that count. Locks never touch quota: usage stays aggregated per `quotaDomain`.
 
 ## CLI
 
