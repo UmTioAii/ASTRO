@@ -35,7 +35,7 @@ describe("grep tool (F4-1)", () => {
     const cwd = setupWorkspace();
     const result = await grepTool.execute({ pattern: "hello" }, ctx(cwd));
     expect(result.isError).toBeFalsy();
-    const matches = JSON.parse(result.output) as Array<{ file: string; line: number; match: string }>;
+    const matches = (JSON.parse(result.output) as { results: Array<{ file: string; line: number; match: string }> }).results;
     expect(matches.length).toBeGreaterThanOrEqual(2);
     expect(matches.some((m) => m.file.includes("hello.ts"))).toBe(true);
     expect(matches.some((m) => m.file.includes("readme.md"))).toBe(true);
@@ -45,7 +45,7 @@ describe("grep tool (F4-1)", () => {
     const cwd = setupWorkspace();
     const result = await grepTool.execute({ pattern: "HELLO" }, ctx(cwd));
     expect(result.isError).toBeFalsy();
-    const matches = JSON.parse(result.output) as Array<{ file: string; line: number; match: string }>;
+    const matches = (JSON.parse(result.output) as { results: Array<{ file: string; line: number; match: string }> }).results;
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -53,7 +53,7 @@ describe("grep tool (F4-1)", () => {
     const cwd = setupWorkspace();
     const result = await grepTool.execute({ pattern: "HELLO", flags: "" }, ctx(cwd));
     expect(result.isError).toBeFalsy();
-    const matches = JSON.parse(result.output) as Array<{ file: string; line: number; match: string }>;
+    const matches = (JSON.parse(result.output) as { results: Array<{ file: string; line: number; match: string }> }).results;
     expect(matches).toHaveLength(0);
   });
 
@@ -65,7 +65,7 @@ describe("grep tool (F4-1)", () => {
     }
     const result = await grepTool.execute({ pattern: "needle" }, ctx(cwd));
     expect(result.isError).toBeFalsy();
-    const matches = JSON.parse(result.output) as unknown[];
+    const matches = (JSON.parse(result.output) as { results: unknown[] }).results;
     expect(matches).toHaveLength(100);
   });
 
@@ -73,7 +73,7 @@ describe("grep tool (F4-1)", () => {
     const cwd = setupWorkspace();
     const result = await grepTool.execute({ pattern: "hello", path: "src" }, ctx(cwd));
     expect(result.isError).toBeFalsy();
-    const matches = JSON.parse(result.output) as Array<{ file: string; line: number; match: string }>;
+    const matches = (JSON.parse(result.output) as { results: Array<{ file: string; line: number; match: string }> }).results;
     expect(matches.every((m) => m.file.includes(join(cwd, "src")))).toBe(true);
     expect(matches.some((m) => m.file.includes("readme.md"))).toBe(false);
   });
@@ -104,7 +104,7 @@ describe("grep tool (F4-1)", () => {
     const elapsed = Date.now() - start;
     expect(result.isError).toBeFalsy();
     expect(elapsed).toBeLessThan(500);
-    const matches = JSON.parse(result.output) as unknown[];
+    const matches = (JSON.parse(result.output) as { results: unknown[] }).results;
     expect(matches).toHaveLength(100); // limitado a 100
   });
 });

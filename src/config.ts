@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { PROTECTED_FORBIDDEN_ROOTS, type CallConfig, type EffortLevel, type ThinkingMode } from "./call-profile";
+import type { OutputLimitConfig } from "./output-limit";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
 import { urlProblem } from "./url-safety";
@@ -225,6 +226,8 @@ export interface AstroConfig {
   pricing?: Record<string, PriceConfig>;
   /** Servidores MCP (C2, #56): key é o nome usado no namespace mcp__<server>__<tool>. */
   mcpServers?: Record<string, MCPServerConfig>;
+  /** Limite de saída por tool (S-16, CMP-10); default 8000 tokens / 5% da janela. */
+  outputLimit?: OutputLimitConfig;
   paths: PathsConfig;
 }
 
