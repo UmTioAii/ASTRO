@@ -8,7 +8,7 @@ import { MCPError } from "../types";
  * o mesmo sanitizado do run_command (I-03): nada de chaves do host, só o `env`
  * explícito da config.
  */
-export interface StdioTransportOptions { command: string; args: string[]; env?: Record<string, string>; timeoutMs: number }
+export interface StdioTransportOptions { command: string; args: string[]; env?: Record<string, string>; timeoutMs: number; secretEnvNames?: readonly string[] }
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
@@ -28,7 +28,7 @@ export class StdioTransport {
     const transport = new StdioTransport(opts.timeoutMs);
     transport.#proc = spawn(opts.command, opts.args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...sanitizedEnv(process.env), ...(opts.env ?? {}) },
+      env: { ...sanitizedEnv(process.env, opts.secretEnvNames ?? []), ...(opts.env ?? {}) },
       windowsHide: true,
     });
     transport.#proc.stdout!.setEncoding("utf8");

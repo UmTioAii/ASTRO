@@ -51,7 +51,7 @@ export class HttpTransport {
       if (error instanceof MCPError) throw error;
       if (this.#closed) throw new MCPError("transport MCP fechado");
       if (requestAbort.signal.aborted) throw new MCPError(`timeout de ${this.#timeoutMs}ms no MCP ${method}`);
-      throw new MCPError(`falha ao conectar no MCP: ${error instanceof Error ? error.message : String(error)}`);
+      throw new MCPError(`falha de rede no MCP ${method}`);
     } finally {
       clearTimeout(timer);
       this.#closeController.signal.removeEventListener("abort", onClose);
