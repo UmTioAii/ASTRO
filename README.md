@@ -2,218 +2,197 @@
 
 # ASTRO
 
-**Multi-agent coding harness with deterministic model routing, append-only audit, and cost governance.**
+**A multi-agent coding harness with deterministic model routing, append-only audit, and cost governance.**
 
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-black)](https://bun.sh)
+[![Language: TypeScript](https://img.shields.io/badge/language-TypeScript-007ACC)](https://www.typescriptlang.org)
+[![npm: alpha](https://img.shields.io/npm/v/@umtioai/astro-harness/alpha?color=blue)](https://www.npmjs.com/package/@umtioai/astro-harness)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
-## What is ASTRO
+ASTRO is a local, terminal-first harness for AI coding agents. It turns every request into an auditable session that plans, reads, writes and runs code inside a declared scope, with cost metered on every call.
 
-ASTRO is a local, terminal-first harness for AI coding agents. A request becomes a session that plans, reads, writes and executes inside a declared scope, with cost metered per call and an append-only audit trail.
+Running agents in real projects raises three questions: *which model ran this step*, *what did it cost*, and *can I reproduce this run*. ASTRO answers all three by design, not as an afterthought.
 
-Multiple named agents, each bound to a model or profile, communicate through durable handoffs. The LLM never chooses its own model — the config does. That is the difference between a demo and a system you can audit.
+## Why ASTRO
 
-| Concern | How ASTRO handles it |
+| Question | How ASTRO handles it |
 |---|---|
-| Which model ran this step? | Every completion is recorded in the ledger: agent, provider (the real one, not the wrapper), model, tokens, cost. |
-| How much did this task cost? | Attributed per agent (and profile), per provider, per quota domain; checked before the call. |
-| Can I reproduce a failed run? | Handoffs are durable artifacts (ack, CAS, idempotent); the ledger is append-only and replayable. |
-| Can a subagent escalate privileges? | No — each agent has its own tool allowlist; denied calls are audited. |
-| Can a provider outage kill a run? | No — fallback chain by priority, retrying only transient errors. |
+| Which model ran this step? | Every completion is recorded in an append-only ledger: agent, real provider, model, tokens and cost. |
+| Who chooses the model? | The configuration does. The LLM never picks its own model, so behavior is predictable. |
+| How much did a task cost? | Costs are attributed per agent, per provider and per quota domain, and checked *before* each call. |
+| Can I reproduce a failed run? | Handoffs are durable artifacts (ack, compare-and-swap, idempotent) and the ledger can be replayed. |
+| Can a subagent escalate privileges? | No. Each agent has its own tool allowlist, and denied calls are audited. |
+| Can a provider outage kill a run? | No. A priority fallback chain retries transient errors and moves to the next provider. |
 
-## Install
+## Key features
 
-No global Bun required: the pinned Bun runtime ships as a platform dependency and a small Node
-launcher starts it. You only need Node 18+ (npm already requires it).
+- **Multi-agent with durable handoffs.** Named agents, each bound to a model or a profile, pass work to each other through idempotent, verifiable handoffs.
+- **Deterministic model routing.** Model pools and profiles let you assign the right model to each role, with the choice fixed by configuration.
+- **Append-only audit.** An immutable, replayable ledger of every action, tool call and model response, with secrets redacted.
+- **Cost governance.** Per-agent, per-provider and per-domain accounting, quota and budget controls that block before spending.
+- **Least-privilege tools.** Per-agent tool allowlists. Subagents cannot escalate privileges.
+- **Provider fallback.** Priority-based chains across OpenAI-compatible providers (NVIDIA, OpenRouter, and others) and Codex OAuth.
+- **Terminal-first UX.** A non-interactive `run` command, an interactive `chat` REPL and a full-screen `tui`.
+
+## Installation
+
+**Requirements:** Node.js 18 or newer. The pinned Bun runtime ships as a platform dependency, so you do not need a global Bun installation.
 
 ```bash
 npm install -g @umtioai/astro-harness@alpha
 astro
 ```
 
-Running `astro` in an interactive terminal opens the TUI; without a TTY it prints help. `astro --help`
-shows every command, including `chat` and `tui`. With no config and no provider, `astro` opens the
-provider setup first; after adding one, the TUI starts on the read-only baseline.
-The CLI reads `astro.config.json` from the directory you run it in; without one, the TUI starts with a
-read-only baseline.
+After installing, run `astro` in an interactive terminal to open the TUI. Without a TTY it prints help, and `astro --help` lists every command. With no configuration, `astro` first opens the provider setup. The CLI reads `astro.config.json` from the directory where you run it.
 
-- Use your own Bun: `ASTRO_BUN_PATH=/path/to/bun astro`.
-- Installed with `--omit=optional`: reinstall without it, or set `ASTRO_BUN_PATH`.
-- The install does not create or shadow a global `bun`/`bunx` command.
+Notes:
 
-The `alpha` tag is the current preview.
+- To use your own Bun binary: `ASTRO_BUN_PATH=/path/to/bun astro`.
+- If you installed with `--omit=optional`, reinstall without that flag or set `ASTRO_BUN_PATH`.
+- The install does not create or shadow a global `bun` or `bunx` command.
+- The `alpha` tag is the current preview release.
 
 ## Quick start from source
 
 ```bash
-git clone https://github.com/UmTioAii/ASTRO.git && cd ASTRO
+git clone https://github.com/UmTioAii/ASTRO-Harness.git && cd ASTRO-Harness
 bun install --frozen-lockfile
 cp astro.config.example.json astro.config.json
-export NVIDIA_API_KEY="..."      # credentialRef from your config
+export NVIDIA_API_KEY="..."   # the credentialRef named in your config
 bun src/cli.ts run "create a hello.ts that exports hello()"
 ```
 
-Secrets never live in config files and are never logged: `openai-compat` keys come only from environment variables named by `credentialRef`; `codex-oauth` reads a local credentials file (`credentialsPath`). The full three-provider example lives in `astro.config.example.json`; the provider guide is `docs/providers.md`.
+## Configuration
 
-## Local development
-
-No publish needed for day-to-day changes:
-
-```bash
-bun run cli -- --help        # source, no build
-bun run cli -- run "..."     # source task
-bun run tui                  # TUI in a real terminal
-bun run build                # dist/cli.js + dist/launcher.js
-bun run dev:launcher -- --help
-bun run smoke                # build + launcher with Bun removed from PATH
-bun link                     # after build: global `astro` points to this checkout
-```
-
-`bun run smoke` checks the generated artifact (Node launcher resolving the bundled Bun) without
-touching npm. After changing source, `bun run build` refreshes `dist`; `bun link` is needed only once.
-The launcher and smoke commands require Node 18+ on `PATH`; the published CLI brings its own Bun.
-
-## Configuration (`astro.config.json`)
-
-| Key | Shape | Default | Where |
-|---|---|---|---|
-| `providers` | `Record<string, { kind, credentialRef?, baseUrl?, credentialsPath?, quotaDomain?, priority?, fallback?, maxRetries?, retryBackoffMs? }>` | — | `src/config.ts` |
-| `models` | `{ provider, id, tags, context, status?, price?, capabilities?, call?, efficiency? }[]` | — | `src/config.ts`, `src/call-profile.ts`, `src/model-choice.ts` |
-| `modelPool` | `Record<profile, { model, capabilities?, fallback? }>` | absent | `src/registry.ts` |
-| `agent` | `{ model XOR profile, maxSteps, tools, entryAgent? }` | — | `src/config.ts` |
-| `agents` | `{ maxActive?, <name>: { model XOR profile, maxSteps?, tools?, systemPrompt? } }`; named agents require at least 2 declared accounts | absent | `src/config.ts`, `src/agent-lock.ts` |
-| `handoff` | `{ ackTimeoutMs }` | `30000` | `src/session.ts` |
-| `pricing` | `Record<"provider/model-id", PriceConfig>` overriding `model.price` | absent | `src/registry.ts` |
-| `quota` | per-domain `{ dailyTokens?, monthlyCostUsd? }` | no enforcement | `src/quota.ts` |
-| `team` | `{ projectBudgetUsd?, agentQuotas?, auditWebhook? }` | — | `src/team.ts` |
-| `budget` | `{ scope: day\|month\|project\|use-as-you-go, limitUsd, warnAt?, onExceed?, hardCeilingUsd? }` | absent (status/warning + enforcement + chain reservation) | `src/budget.ts` |
-| `run` | `{ maxTurns?: positive int \| "unlimited" }` (`unlimited` exige `limitUsd` ou `hardCeilingUsd`; cap nunca eleva `agent.maxSteps`) | `agent.maxSteps` | `src/config.ts` |
-| `tools` | `{ run_command: { sandbox } }` | `sandbox: false` | `src/tools/run-command.ts` |
-| `cache` | `{ enabled, ttlHours, maxEntries }` | off; 24h; 10000 | `src/cache.ts` |
-| `telemetry` | `{ enabled, endpoint, sampleRate }` | off | `src/telemetry.ts` |
-| `plugins` | `string[]` | — | `src/plugins.ts` |
-| `paths` | `{ ledger, audit }` (relative to `--cwd`) | — | `src/ledger.ts` |
-
-Minimal valid config (note: `id` is the bare model id; the `provider/id` form is used in `agent.model`):
+ASTRO reads `astro.config.json` from the working directory. A minimal valid configuration:
 
 ```json
 {
-  "providers": { "nvidia": { "kind": "openai-compat", "baseUrl": "https://integrate.api.nvidia.com/v1", "credentialRef": "NVIDIA_API_KEY" } },
-  "models": [{ "provider": "nvidia", "id": "meta/llama-3.3-70b-instruct", "tags": ["writing-code", "tools"], "context": 131072 }],
-  "agent": { "model": "nvidia/meta/llama-3.3-70b-instruct", "maxSteps": 12, "tools": ["read_file", "write_file", "run_command"] },
-  "paths": { "ledger": ".astro/ledger.jsonl", "audit": ".astro/audit.jsonl" }
+  "providers": {
+    "nvidia": {
+      "kind": "openai-compat",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "credentialRef": "NVIDIA_API_KEY"
+    }
+  },
+  "models": [
+    {
+      "provider": "nvidia",
+      "id": "meta/llama-3.3-70b-instruct",
+      "tags": ["writing-code", "tools"],
+      "context": 131072
+    }
+  ],
+  "agent": {
+    "model": "nvidia/meta/llama-3.3-70b-instruct",
+    "maxSteps": 12,
+    "tools": ["read_file", "write_file", "run_command"]
+  },
+  "paths": {
+    "ledger": ".astro/ledger.jsonl",
+    "audit": ".astro/audit.jsonl"
+  }
 }
 ```
 
-Model pool and profiles are implemented — a profile replaces `model` (both together are rejected), and pricing stays inherited from `models[]` (never per profile). Fragment of `astro.config.example.json` (needs the `codex` provider and its `gpt-5.5` model from the full example):
+Model pools and agent profiles are also supported. A full example with three providers lives in [`astro.config.example.json`](astro.config.example.json), and the provider guide is in [`docs/providers.md`](docs/providers.md).
 
-```json
-{
-  "modelPool": { "cheap": { "model": "nvidia/meta/llama-3.3-70b-instruct" }, "premium": { "model": "codex/gpt-5.5" } },
-  "agent": { "model": "nvidia/meta/llama-3.3-70b-instruct", "maxSteps": 12, "tools": ["read_file", "handoff"] },
-  "agents": { "planner": { "profile": "premium", "tools": ["handoff"] }, "coder": { "profile": "cheap" } }
-}
-```
+**Secrets never live in configuration files and are never logged.** OpenAI-compatible keys come only from the environment variable named by `credentialRef`. The `codex-oauth` provider reads a local credentials file (`credentialsPath`).
 
-Every active agent (orchestrator included) holds one account exclusively. The lock is the `agent.created`/`agent.destroyed` pair in the ledger — no separate lock file; `created` records the owner `pid`. A failing run releases its account with a stable reason (`max_steps`, `cancelled`, `budget_exceeded`, `swap_denied`, error class) and stays resumable. Every run first frees locks whose `pid` is dead; `astro resume` releases that run's orphans as `crash_recovered`, but refuses (`account_locked`) when the owner process is still alive. Acquisition is fail-closed if the ledger file lock cannot be taken. With named agents, `loadConfig` requires at least two declared accounts (credentials, or one per keyless provider) and fails with `max_active_exceeds_accounts` otherwise; `agents.maxActive` (v2 ceiling, `4`) is validated against that count. Locks never touch quota: usage stays aggregated per `quotaDomain`.
-
-## CLI
-
-All commands run as `astro <command>`; from a clone, `bun src/cli.ts <command>` is equivalent.
-
-| Command | What it does | Flags |
+| Variable | Required | Purpose |
 |---|---|---|
-| `run "<prompt>"` | runs a task end to end; prints answer and summary | `--config`, `--cwd` |
-| `replay <run-id>` | re-runs the task and compares metrics with the original run | `--task`, `--config`, `--cwd` |
-| `resume <run-id>` | resumes an interrupted run from the recorded active agent (ledger is the source) | `--task`, `--config`, `--cwd` |
-| `chat` | interactive REPL: shared history, provider/model switch, session save/inspect, inline swap and budget prompts | `--config`, `--cwd` |
-| `tui` | terminal UI (Ink, lazy): conversation panel, input and live status bar | `--config`, `--cwd` |
-| `eval` | golden dataset in mock mode; regression gate | `--threshold`, `--golden`, `--report`, `--baseline`, `--write-baseline` |
-| `bench` | latency, tokens/s and cost per model | `--config`, `--models`, `--runs`, `--out` |
-| `health` | validates config, credentials and provider connectivity | `--config` |
-| `handoff show <handoff_id>` | inspects a durable handoff artifact with its compaction audit | `--config` |
-| `cost --by-agent` | cost per agent (and profile) read from the ledger | `--config` |
-| `pool <list\|health>` / `agents list` | lists model-pool profiles with per-profile health / lists named agents | `--config` |
-| `config <push\|pull> <name>` | publishes/retrieves a config in a GitHub registry | `--registry`, `--config`, `--token` |
-| `serve` | exposes `/metrics` in Prometheus format | `--port` |
+| `<credentialRef>` (e.g. `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) | For OpenAI-compatible providers | Provider API key, named by your configuration. |
+| `ASTRO_BUN_PATH` | No | Path to a Bun binary to use instead of the bundled one. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | Enables OpenTelemetry tracing (run, step, tool and provider spans). |
+| `ASTRO_CONFIG_REGISTRY` | No | Registry (`owner/repo`) used by `config push` and `config pull`. |
+| `GH_TOKEN` / `GITHUB_TOKEN` | Only for `config push` / `config pull` | Registry token. |
 
-## Chat
+## Usage
 
-`bun src/cli.ts chat` opens a REPL; turns share history and each turn persists a sanitized record in `.astro/sessions/` (capped at 5 MB, sanitized again on load).
+All commands run as `astro <command>`. From a clone, `bun src/cli.ts <command>` is equivalent.
 
-| Command | Effect |
+| Command | Description |
 |---|---|
-| `/model [provider/id]` | REPL: lists models or switches model. TUI: opens the picker (search, favorites, recents, detail) or switches when an argument is given |
-| `/providers` / `/provider [name]` | lists providers or switches provider (keeps the model id when available) |
-| `/session` | id, start, model, turns, tokens, cost and last session file |
-| `/details` | id, provider, model, uptime, turns, tokens, cost and resume origin |
-| `/compact` | summarizes history (no tools) and replaces with summary, keeping system prompt |
-| `/summarize` | alias for `/compact` |
-| `/sessions` | lists saved sessions, newest first |
-| `/resume <n\|id>` | loads a saved session (messages and counters) |
-| `/save` | forces a sanitized write and prints the path |
-| `/export [file]` | writes the conversation as Markdown (default `.astro/exports/`, confined to cwd) |
-| `/init` | creates `AGENTS.md` in the cwd if absent |
-| `/clear` | drops history (keeps the system prompt) |
-| `/help`, `/exit` | help, quit |
+| `run "<prompt>"` | Runs a task end to end and prints the answer and a summary. |
+| `chat` | Interactive REPL with shared history, provider and model switching, and session management. |
+| `tui` | Full-screen terminal UI with a conversation panel, input and live status bar. |
+| `replay <run-id>` | Re-runs a task and compares metrics with the original run. |
+| `resume <run-id>` | Resumes an interrupted run from its recorded agent. |
+| `eval` | Runs the golden dataset in mock mode as a regression gate. |
+| `bench` | Reports latency, tokens per second and cost per model. |
+| `health` | Validates configuration, credentials and provider connectivity. |
+| `cost --by-agent` | Shows cost per agent and profile, read from the ledger. |
+| `handoff show <handoff_id>` | Inspects a durable handoff and its compaction audit. |
+| `serve` | Exposes `/metrics` in Prometheus format. |
 
-On a terminal, swap approval (`s/N`) and budget overrun (`c`/`l`/`p`) are asked inline, input history (arrows) is kept and status colors are enabled. Piped stdin keeps the non-interactive `pending` behavior.
-
-## TUI
-
-`bun src/cli.ts tui` opens the Ink interface (ADR-0001): conversation panel, single-line input and a status bar with cwd/branch, model, turns, tokens, cost, active provider and its health (`n/d` until tested or switched). Tab completes slash commands and `@` files from the cwd; `!cmd` runs the shell through `run_command` only when it is in `agent.tools` (same sandbox/timeout); swap approval and budget prompts are answered in the panel with the same rules as `chat` (empty or EOF denies, exact budget tokens). It needs a real terminal; `chat` remains the piped option.
-
-It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/details`, `/compact`, `/summarize`, `/sessions`, `/resume`, `/save`, `/export`, `/init`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Assistant replies render basic Markdown (headings, lists, inline code/bold, fenced blocks); `/new` aliases `/clear`. Keybindings use the `ctrl+x` leader: `c` (clear), `e`/`q` (exit), `m` (models), `n` (new), `l` (saved sessions), `t` (dark/light theme). Theme, last model, favorites and recents persist in `.astro/tui.json`; `/model` in the TUI opens a picker with search and a detail row (context, tags, curated price). The provider screen tests a profile with `t` after confirmation and shows `ok`/error class/latency; `l` on a `codex-oauth` profile starts the device login, shows the URL/code and writes only the credentials file (0600). The status bar shows the active provider and health (`n/d` until the first test or provider switch). Session picker and diff view remain in #64.
-
-## Environment variables
-
-| Name | Required | Where | Purpose |
-|---|---|---|---|
-| `<credentialRef>` (e.g. `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) | for openai-compat providers | `src/app.ts` | provider key; the name comes from config, the value only from the environment |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | no | `src/tracing.ts` | enables OTLP tracing (run, step, tool and provider spans) |
-| `ASTRO_CONFIG_REGISTRY` | no | `src/cli.ts` | registry (`owner/repo`) used by `config push/pull` |
-| `GH_TOKEN` / `GITHUB_TOKEN` | only for `config push/pull` | `src/cli.ts` | registry token |
+Inside `chat` and `tui`, slash commands such as `/model`, `/providers`, `/session`, `/compact`, `/export` and `/resume` are available. Run `/help` to list them all.
 
 ## Security
 
+ASTRO treats security as a contract. These guarantees are enforced in code and covered by tests:
+
 | Guarantee | Invariant | Tests |
 |---|---|---|
-| Secrets only from the environment; redaction in audit, ledger, errors and prompts | I-03 | `tests/security-*.test.ts`, `tests/audit.test.ts` |
-| Tools outside the allowlist never execute; denials are audited | I-01 | `tests/tools.test.ts`, `tests/tool-isolation.test.ts` |
-| Paths confined to `--cwd` (symlink/junction resolved); optional sandbox for `run_command` | I-11 | `tests/security-f00.test.ts`, `tests/sandbox.test.ts` |
-| Child shell environment sanitized (credentialRefs and secret names removed) | I-03 | `tests/security-f00.test.ts` |
-| Harness state (`.astro/`) not writable by tools | I-11 | `tests/security-f00.test.ts` |
-| Prompts never persisted; `run.started` stores only `taskHash` | I-04 | `tests/golden-f2.test.ts` |
-| Quota and team budget block before spending (budget enforcement lands in #132 part 3) | I-17 | `tests/quota.test.ts`, `tests/team.test.ts`, `tests/budget-status.test.ts` |
-| Handoff is single-path: idempotent by `handoff_id` (CAS), identity verified at reception, digest-checked artifacts | I-18 | `tests/handoff-cas.test.ts`, `tests/handoff-compact.test.ts` |
+| Secrets come only from the environment and are redacted in audit, ledger, errors and prompts. | I-03 | `tests/security-*.test.ts`, `tests/audit.test.ts` |
+| Tools outside an agent's allowlist never execute, and denials are audited. | I-01 | `tests/tools.test.ts`, `tests/tool-isolation.test.ts` |
+| File paths are confined to `--cwd` (symlinks and junctions resolved), with an optional sandbox for `run_command`. | I-11 | `tests/security-f00.test.ts`, `tests/sandbox.test.ts` |
+| The child shell environment is sanitized: credential references and secret names are removed. | I-03 | `tests/security-f00.test.ts` |
+| Harness state in `.astro/` cannot be written by tools. | I-11 | `tests/security-f00.test.ts` |
+| Prompts are never persisted; `run.started` stores only a task hash. | I-04 | `tests/golden-f2.test.ts` |
+| Quota and team budgets block before spending. | I-17 | `tests/quota.test.ts`, `tests/team.test.ts` |
+| Handoffs are idempotent by `handoff_id`, verified on reception, and digest-checked. | I-18 | `tests/handoff-cas.test.ts`, `tests/handoff-compact.test.ts` |
 
-## Design principles
+Security issues should be reported privately through the repository's security advisories rather than public issues.
 
-Determinism over flexibility; security as a contract; every action auditable; extend, don't recreate.
+## Status and roadmap
 
-## Status
+ASTRO is in **alpha**. Interfaces may still change before a stable release.
 
-| Scope | State | Reference |
-|---|---|---|
-| F0–F7 (foundation, multi-agent, tools, eval, production, ecosystem) | done | `docs/roadmap.md` |
-| Layer 0 (durable handoff with ack/CAS/compaction, model pool and profiles, per-agent cost, provider fallback) | in progress | F-03, F-07, F-10, F-23..F-30 merged (#75–#102); C6 merged (#103, #106); F-31 in progress (#86) |
-| C1–C5, C7 (skills, MCP, web tools, advanced agents, quality, organization), T1–T4 (REPL, TUI, sessions) | planned | `docs/roadmap-complementar.md`, issues #55–#65 |
+| Scope | State |
+|---|---|
+| Foundation, multi-agent core, tools, evaluation, production hardening and ecosystem (F0–F7) | Done |
+| Layer 0: durable handoffs, model pools and profiles, per-agent cost, provider fallback | In progress |
+| Skills, MCP integration, web tools, advanced agents, quality and organization (C1–C5, C7) | Planned |
+| REPL, TUI and sessions improvements (T1–T4) | Planned |
+
+The detailed plan lives in [`docs/roadmap.md`](docs/roadmap.md) and [`docs/roadmap-complementar.md`](docs/roadmap-complementar.md).
+
+## Local development
+
+```bash
+bun run cli -- --help        # run from source, no build needed
+bun run cli -- run "..."     # run a task from source
+bun run tui                  # open the TUI in a real terminal
+bun run build                # build dist/cli.js and dist/launcher.js
+bun run smoke                # build and check the launcher with Bun removed from PATH
+bun link                     # after a build, make the global `astro` command point to this checkout
+```
+
+Test and type-check before opening a pull request:
+
+```bash
+bun test
+bun run typecheck
+```
 
 ## Documentation
 
-| File | Purpose |
+| File | Contents |
 |---|---|
-| `docs/CONTRIBUTING-DOCS.md` | documentation standard |
-| `docs/workflow.md` | branch, commit, PR and merge flow |
-| `docs/review-checklist.md` | PR review checklist |
-| `docs/invariants.md` | invariants I-01..I-22 mapped to code |
-| `docs/decisions.md` | decisions D-01..D-20 |
-| `docs/adr/` | architecture decision records |
-| `docs/providers.md` | providers, credentials and SDKs |
-| `docs/roadmap.md` / `docs/roadmap-complementar.md` | completed phases / planned layers |
+| [`docs/workflow.md`](docs/workflow.md) | Branch, commit, pull request and merge flow. |
+| [`docs/review-checklist.md`](docs/review-checklist.md) | Pull request review checklist. |
+| [`docs/invariants.md`](docs/invariants.md) | Invariants I-01 to I-22, mapped to code. |
+| [`docs/decisions.md`](docs/decisions.md) | Decisions D-01 to D-20. |
+| [`docs/adr/`](docs/adr/) | Architecture decision records. |
+| [`docs/providers.md`](docs/providers.md) | Providers, credentials and SDKs. |
+| [`docs/roadmap.md`](docs/roadmap.md) and [`docs/roadmap-complementar.md`](docs/roadmap-complementar.md) | Completed phases and planned layers. |
 
-## Contributing and license
+## Contributing
 
-Contributions follow `docs/workflow.md`: one issue per change, a branch per item, PR with mandatory independent review, squash merge. Suite: `bun test` and `bun run typecheck`. License: MIT (`LICENSE`).
+Contributions are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`docs/workflow.md`](docs/workflow.md) first. In short: one issue per change, one branch per item, a pull request with independent review, and a squash merge.
+
+## License
+
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
