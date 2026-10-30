@@ -38,6 +38,17 @@ export interface ProviderInfo {
   models: string[];
 }
 
+/** Metadados de um modelo ativo para o seletor da TUI (#227). */
+export interface ModelInfo {
+  ref: string;
+  provider: string;
+  id: string;
+  tags: string[];
+  context: number;
+  status: string;
+  price?: { inputPerM: number; outputPerM: number; fonte: string; verificado: boolean };
+}
+
 export interface TurnResult {
   final: string;
   model: string;
@@ -186,6 +197,19 @@ export class AgentSession {
 
   listModels(): string[] {
     return this.#registry.list().map((model) => `${model.provider}/${model.id}`);
+  }
+
+  /** Modelos ativos com metadados para o seletor da TUI. */
+  listModelInfo(): ModelInfo[] {
+    return this.#registry.list().map((model) => ({
+      ref: `${model.provider}/${model.id}`,
+      provider: model.provider,
+      id: model.id,
+      tags: model.tags,
+      context: model.context,
+      status: model.status,
+      ...(model.price === undefined ? {} : { price: model.price }),
+    }));
   }
 
   listProviders(): ProviderInfo[] {

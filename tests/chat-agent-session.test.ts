@@ -99,6 +99,11 @@ describe("AgentSession (T1, #62)", () => {
     const chat = session();
     try {
       expect(chat.listModels()).toEqual(["p/m1", "p/m2", "q/m2"]);
+      expect(chat.listModelInfo().map((model) => model.ref)).toEqual(["p/m1", "p/m2", "q/m2"]);
+      expect(chat.listModelInfo()[0]).toMatchObject({
+        provider: "p", id: "m1", tags: ["writing-code"], context: 8192, status: "active",
+        price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false },
+      });
       chat.setModel("p/m2");
       await chat.send("depois");
       expect(bodies[0]!.model).toBe("m2");
