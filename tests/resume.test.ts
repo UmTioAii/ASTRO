@@ -230,6 +230,7 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     const cases: [string, (l: Ledger) => void, RegExp][] = [
       ["pai inexistente", (l) => create(l, "child", "ghost"), /pai "ghost" inexistente/],
       ["dois ativos irmãos", (l) => { create(l, "a"); create(l, "b", "a"); create(l, "c", "a"); destroy(l, "a"); }, /2 agentes ativos/],
+      ["pai com dois filhos ativos", (l) => { create(l, "a"); create(l, "b", "a"); create(l, "c", "a"); }, /3 agentes ativos/],
       ["session divergente", (l) => l.recordAgentCreated({ run: "r1", agent_id: "a", session_id: "other", model: "m" }), /session_id/],
       ["destroyed sem created", (l) => destroy(l, "ghost"), /replay incompleto/],
       ["created duplicado", (l) => { create(l, "a"); create(l, "a"); }, /criado duas vezes/],

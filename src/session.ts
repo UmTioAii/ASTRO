@@ -764,6 +764,7 @@ export async function runMultiAgentSession(
       currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
       currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
       currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+      if (opts.spawns?.get(currentAgentName) !== undefined) currentTools.delete("spawn_agent");
       // Teto de escopo na retomada = máximo do baseExecutor (I-02)
       // currentCeiling não muda — já é o máximo do baseExecutor
       if (!restoreAgentState(currentAgentName) && opts.spawns?.get(currentAgentName) !== undefined) {
@@ -972,6 +973,7 @@ export async function runMultiAgentSession(
           currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
           currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
           currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+          if (opts.spawns?.get(currentAgentName) !== undefined) currentTools.delete("spawn_agent");
           if (!restoreAgentState(currentAgentName) && opts.spawns?.get(currentAgentName) !== undefined) {
             messages.length = 0;
             messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });

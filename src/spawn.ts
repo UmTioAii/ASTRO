@@ -247,8 +247,6 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
           return { output: JSON.stringify({ error: "invalid_request", message: "campo 'maxTurns' deve ser inteiro >= 1" }), isError: true };
         }
 
-        if (deps.spawns.size >= deps.spawns.limit) throw new SpawnLimitError(deps.spawns.limit);
-
         // v1 é serial: filho não spawna neto (sem canal p2p e sem histórico do pai).
         if (deps.spawns.get(ctx.agent) !== undefined) {
           return {
@@ -256,6 +254,8 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
             isError: true,
           };
         }
+
+        if (deps.spawns.size >= deps.spawns.limit) throw new SpawnLimitError(deps.spawns.limit);
 
         const maxActive = deps.config.maxActive ?? 2;
         const runKey = redactSecrets(ctx.run);

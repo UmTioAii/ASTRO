@@ -118,6 +118,16 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
     }
     const root = activeRoots[0]!;
     const byId = new Map(ordered.map((node) => [node.agent_id, node]));
+    // Spawn é serial: no máximo um filho ativo por pai (cadeia linear).
+    const activeChildren = new Map<string, number>();
+    for (const node of active) {
+      if (node.parent_agent_id === undefined || !activeIds.has(node.parent_agent_id)) continue;
+      const count = (activeChildren.get(node.parent_agent_id) ?? 0) + 1;
+      activeChildren.set(node.parent_agent_id, count);
+      if (count > 1) {
+        throw new ReplayIncompleteError(`run "${run}" com ${active.length} agentes ativos; replay incompleto`);
+      }
+    }
     for (const node of active) {
       let current: AgentNode | undefined = node;
       const seen = new Set<string>();

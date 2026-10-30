@@ -129,6 +129,26 @@ describe("tool spawn_agent (S-11, A1/A2/A3/A5)", () => {
     expect(JSON.parse(mismatch.output)).toMatchObject({ error: "candidate_set_changed" });
   });
 
+  test("sem candidato porque contas estão presas em outro run → no_candidates", async () => {
+    const { ledger, audit, tool, ctx } = setup();
+    for (const [provider, key] of [["p1", "KEY1"], ["p2", "KEY2"]] as const) {
+      acquireAgentLock(ledger, audit, {
+        run: "other", agent_id: `holder-${provider}`, session_id: "other", provider, credentialRef: key, accountRef: key,
+      });
+    }
+    const result = await tool.execute({ need: "writing-code", task: "a", tools: [] }, ctx);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.output)).toMatchObject({ error: "no_candidates" });
+  });
+
+  test("reason do chamador preserva o marcador da escolha", async () => {
+    const { ledger, tool, ctx } = setup();
+    const result = await tool.execute({ need: "writing-code", task: "a", tools: [], reason: "preciso de código" }, ctx);
+    expect(result.isError).toBe(false);
+    const created = ledger.readAllEntries().find((e) => e.kind === "agent" && e.event === "created");
+    expect((created as { reason?: string }).reason).toMatch(/^default_rank: preciso de código/);
+  });
+
   test("conta já presa por outro agente exclui o candidato e o spawn falha fechado", async () => {
     const { ledger, audit, tool, ctx } = setup();
     acquireAgentLock(ledger, audit, {
