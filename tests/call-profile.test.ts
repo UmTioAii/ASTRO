@@ -72,6 +72,13 @@ describe("call profile (S-08, #125)", () => {
     ]);
   });
 
+  test("caminho de parâmetro com chave de protótipo é recusado em runtime", () => {
+    expect(() => applyCallToBody({}, {
+      effort: { param: "__proto__.effort", map: { "0": "a", "1": "b", "2": "c", "3": "d", "4": "e" } },
+    })).toThrow(RangeError);
+    expect(() => applyCallToBody({}, { forbidden: ["constructor.type"] })).toThrow(RangeError);
+  });
+
   test("subir 1–2 níveis é automático; 3+ pede aprovação (E4); descer é automático (E5)", () => {
     expect(planEffortChange(1, 3)).toEqual({ allowed: true, approvalRequired: false, level: 3, reason: "up_auto" });
     expect(planEffortChange(1, 4)).toEqual({ allowed: false, approvalRequired: true, level: 1, reason: "up_needs_approval" });

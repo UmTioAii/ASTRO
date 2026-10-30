@@ -438,6 +438,15 @@ const THINKING_MODES: ReadonlySet<string> = new Set(["toggle", "always", "adapti
 const EFFORT_LEVELS: readonly EffortLevel[] = ["0", "1", "2", "3", "4"];
 const CALL_KEYS: ReadonlySet<string> = new Set(["thinking", "effort", "forbidden"]);
 const THINKING_KEYS: ReadonlySet<string> = new Set(["mode", "param", "on", "off"]);
+const UNSAFE_PATH_SEGMENTS: ReadonlySet<string> = new Set(["__proto__", "prototype", "constructor"]);
+
+/** Rejeita caminho vazio ou com chave de protótipo (defesa contra prototype pollution). */
+function validateParamPath(path: string, field: string): void {
+  const parts = path.split(".");
+  if (parts.some((part) => part.length === 0 || UNSAFE_PATH_SEGMENTS.has(part))) {
+    fail(`config inválida: "${field}" contém caminho de parâmetro inválido "${path}"`);
+  }
+}
 
 /** Valida `models[].call` (D-CFG1): non-discard em todo campo (E1–E8). */
 function validateCall(value: unknown, field: string): CallConfig {
@@ -458,6 +467,7 @@ function validateCall(value: unknown, field: string): CallConfig {
       fail(`config inválida: "${f}.mode" deve ser toggle, always, adaptive ou none`);
     }
     const param = expectString(t.param, `${f}.param`);
+    validateParamPath(param, `${f}.param`);
     const on = t.on === undefined ? undefined : expectString(t.on, `${f}.on`);
     const off = t.off === undefined ? undefined : expectString(t.off, `${f}.off`);
     if (mode !== "none" && on === undefined) {
@@ -488,6 +498,7 @@ function validateCall(value: unknown, field: string): CallConfig {
       if (key !== "param" && key !== "map") fail(`config inválida: "${f}.${key}" desconhecido em call.effort`);
     }
     const param = expectString(e.param, `${f}.param`);
+    validateParamPath(param, `${f}.param`);
     const mapRaw = expectObject(e.map, `${f}.map`);
     for (const key of Object.keys(mapRaw)) {
       if (!(EFFORT_LEVELS as readonly string[]).includes(key)) {
@@ -506,8 +517,11 @@ function validateCall(value: unknown, field: string): CallConfig {
     if (!Array.isArray(raw.forbidden)) {
       fail(`config inválida: "${field}.forbidden" deve ser uma lista de parâmetros`);
     }
-    forbidden = raw.forbidden.map((item: unknown, index: number) =>
-      expectString(item, `${field}.forbidden[${index}]`));
+    forbidden = raw.forbidden.map((item: unknown, index: number) => {
+      const name = expectString(item, `${field}.forbidden[${index}]`);
+      validateParamPath(name, `${field}.forbidden[${index}]`);
+      return name;
+    });
     const seen = new Set<string>();
     for (const name of forbidden) {
       if (seen.has(name)) fail(`config inválida: "${field}.forbidden" contém "${name}" duplicado`);

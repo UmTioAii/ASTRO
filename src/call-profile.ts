@@ -87,9 +87,20 @@ export function normalizeLevel(lvl: number): number {
   return lvl;
 }
 
+const UNSAFE_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
+
+/** Caminho seguro: sem segmento vazio e sem chaves de protótipo. */
+function safePath(path: string): string[] {
+  const parts = path.split(".");
+  if (parts.some((part) => part.length === 0 || UNSAFE_SEGMENTS.has(part))) {
+    throw new RangeError(`caminho de parâmetro inválido: "${path}"`);
+  }
+  return parts;
+}
+
 /** Escreve um valor em caminho `a.b.c`, criando objetos intermediários. */
 function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split(".");
+  const parts = safePath(path);
   let current = target;
   for (const part of parts.slice(0, -1)) {
     const next = current[part];
@@ -106,7 +117,7 @@ function setPath(target: Record<string, unknown>, path: string, value: unknown):
 
 /** Remove um caminho; devolve `true` só quando a folha existia. Limpa objetos vazios. */
 function deletePath(target: Record<string, unknown>, path: string): boolean {
-  const parts = path.split(".");
+  const parts = safePath(path);
   const trail: Array<{ parent: Record<string, unknown>; key: string }> = [];
   let current = target;
   for (const part of parts.slice(0, -1)) {
