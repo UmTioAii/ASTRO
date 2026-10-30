@@ -4,7 +4,7 @@ Objetivo: registrar o motivo de cada escolha com ID estável.
 
 | Cobre | Não cobre |
 |---|---|
-| Decisões D-01 a D-21 do repo e a correspondência com a trilha de planejamento | Invariantes (em `docs/invariants.md`) e ADRs (em `docs/adr/`) |
+| Decisões D-01 a D-22 do repo e a correspondência com a trilha de planejamento | Invariantes (em `docs/invariants.md`) e ADRs (em `docs/adr/`) |
 
 IDs estáveis; não renumerar.
 
@@ -31,6 +31,7 @@ IDs estáveis; não renumerar.
 | D-19 | **Ciclo de vida de modelo** | `ModelStatus`: `active` | `deprecated` | `disabled`. `Registry.require()` só devolve `active`. | Descontinuação segura; modelos legados ficam na config mas não são selecionáveis. |
 | D-20 | **Quota domain por provider** | `quotaDomain` agrupa credenciais que compartilham limite (ex.: mesma conta OpenRouter). Default `"default"`. | Ledger e futuras quotas operam no domínio correto. |
 | D-21 | **Perfis globais de provider** | `~/.astro/providers.json` (`ASTRO_HOME`) guarda perfis sem segredo; projeto vence por nome; ativo segue `--provider` > `ASTRO_PROVIDER` > `activeProfileId` > `agent.model`; env é efêmero e a baseline sem config é somente leitura. | CRUD pelo `/provider` e onboarding sem editar JSON (#201); a origem fica auditada em `run.started`. |
+| D-22 | **Contagem de tokens por provider** | Pura e determinística: tokenizer nativo registrado por provider; senão estimativa documentada de 4 chars/token; resultado marcado `measured`/`estimate` e nunca zero para texto não vazio. `src/tokens.ts`. | Compaction (S-17) e overflow retry usam a mesma contagem; sem chamada de provider e sem segredo (I-03). |
 
 ---
 
@@ -50,6 +51,7 @@ A trilha de planejamento usa numeração própria de decisões. Pares e colisõe
 | D-13 (worktrees no fluxo de dev) | D-13 | Tema distinto: na trilha, D-13 é workspace de agentes |
 | D-16 (squash merge) | D-16 | Colisão: na trilha, D-16 é aprovação bloqueante |
 | D-19 (ciclo de vida de modelo) | D-19 | Colisão: na trilha, D-19 é classe de equivalência |
+| D-22 (contagem de tokens por provider) | D-22 (Bun + TypeScript strict) | Colisão: mesmo número, decisões distintas |
 
 Decisões novas da trilha (escada de troca, classe de equivalência, aprovação bloqueante) entram nesta tabela a partir de D-21, com a origem registrada. Renumerar os IDs atuais exige ADR, porque quebra referências em issues e PRs.
 
@@ -57,4 +59,4 @@ Decisões novas da trilha (escada de troca, classe de equivalência, aprovação
 
 1. Crie `docs/adr/NNNN-titulo-kebab.md` (template em `docs/adr/0000-template.md`).
 2. Adicione linha na tabela acima com próximo ID sequencial.
-3. Referencie no PR/issue: `D-21`.
+3. Referencie no PR/issue: `D-22`.

@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolveWithin } from "../tools/paths";
+import { estimateTokens } from "../tokens";
 import { HandoffError, type HandoffArtifactRef, type HandoffCompaction, type HandoffDraft } from "./types";
 
 /** Teto padrão do nível compacto, em tokens estimados (~4 chars/token, F-09). */
@@ -20,11 +21,6 @@ export interface CompactResult {
   truncated: boolean;
   originalTokens: number;
   returnedTokens: number;
-}
-
-/** Estimativa conservadora consistente com F-09 (~4 chars por token). */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 /**

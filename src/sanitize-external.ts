@@ -5,6 +5,7 @@
  * remove padrões de segredo, limita tamanho e devolve metadados de truncamento
  * antes de o conteúdo entrar no contexto do modelo ou ser logado.
  */
+import { estimateTokens } from "./tokens";
 
 export interface SanitizeExternalOptions {
   /** Teto de tokens no resultado (estimativa: ~4 chars/token). Default: 8000. */
@@ -60,11 +61,6 @@ export function redactSecrets(text: string): string {
     .replace(REDACT_PREFIX, REDACTED)
     .replace(REDACT_ENV, (_match, key: string, separator: string, _value: string, closing?: string) =>
       `${key}${separator}[REDACTED]${closing ?? ""}`);
-}
-
-/** Estimativa conservadora: ~4 chars por token. */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 /**
