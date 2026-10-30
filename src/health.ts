@@ -52,6 +52,26 @@ function expandHome(path: string): string {
   return path;
 }
 
+/** Lê só um prefixo do corpo de erro; nunca bufferiza uma página gigante do proxy. */
+async function readPrefix(response: Response, max = 4096): Promise<string> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return "";
+  const decoder = new TextDecoder();
+  let out = "";
+  try {
+    while (out.length < max) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+  } catch {
+    // corpo ilegível: usa o que já veio
+  } finally {
+    void reader.cancel().catch(() => {});
+  }
+  return out.slice(0, max);
+}
+
 /** GET {baseUrl}/models com header de autenticação e timeout. */
 async function checkEndpoint(
   baseUrl: string,
@@ -71,6 +91,13 @@ async function checkEndpoint(
     });
     const latencyMs = Date.now() - started;
     if (!response.ok) {
+      // 429/402 podem significar quota esgotada (hard_quota) em vez de "tente depois".
+      if (response.status === 429 || response.status === 402) {
+        let body = "";
+        try { body = (await readPrefix(response)).toLowerCase(); } catch { /* corpo ilegível: segue sem marcador */ }
+        const quota = body.includes("insufficient_quota") || response.status === 402;
+        return { ok: false, latencyMs, detail: `HTTP ${response.status} em GET /models${quota ? " (insufficient_quota)" : ""}` };
+      }
       return { ok: false, latencyMs, detail: `HTTP ${response.status} em GET /models` };
     }
     return { ok: true, latencyMs };

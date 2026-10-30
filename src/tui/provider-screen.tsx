@@ -1,10 +1,12 @@
 /** Tela cheia de providers (TUI): lista + formulário, sem tocar segredo. */
 import { Box, Text, useInput } from "ink";
-import { useState, type ReactElement } from "react";
+import { useState, useRef, type ReactElement } from "react";
 import { PROVIDER_CATALOG } from "../provider/catalog";
 import type { ProfileDraft, ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ProfileModel } from "../provider/profiles";
+import type { HealthCheck } from "../health";
 import { redactSecrets } from "../sanitize-external";
+import { formatProviderCheck } from "./health";
 import type { ThemeColors } from "./theme";
 
 export interface ProviderScreenProps {
@@ -16,6 +18,8 @@ export interface ProviderScreenProps {
   onClose: () => void;
   onActivate: (id: string) => void;
   onChanged?: () => void;
+  /** Teste real mínimo do provider (C6); ausente desabilita `t`. */
+  onTest?: (id: string) => Promise<HealthCheck>;
 }
 
 type Step = "catalog" | "name" | "baseUrl" | "models" | "credential" | "confirm";
@@ -40,7 +44,7 @@ function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel
 }
 
 export function ProviderScreen({
-  manager, colors, currentModel, initial, onClose, onActivate, onChanged,
+  manager, colors, currentModel, initial, onClose, onActivate, onChanged, onTest,
 }: ProviderScreenProps): ReactElement {
   const initialList = manager.list();
   const initialTarget = initial?.target === undefined
@@ -83,6 +87,10 @@ export function ProviderScreen({
     }
     return undefined;
   });
+  const [testTarget, setTestTarget] = useState<ProfileView | undefined>(undefined);
+  const [testing, setTesting] = useState(false);
+  const [messageOk, setMessageOk] = useState(false);
+  const probeToken = useRef(0);
 
 
   const list = manager.list();
@@ -170,11 +178,50 @@ export function ProviderScreen({
       onClose();
       return;
     }
+    if (testTarget !== undefined) {
+      if (key.escape) {
+        probeToken.current++;
+        setTestTarget(undefined);
+        setTesting(false);
+        setMessage(undefined);
+        return;
+      }
+      if (key.return && !testing) {
+        const token = ++probeToken.current;
+        const target = testTarget;
+        setTesting(true);
+        setMessage(undefined);
+        void onTest?.(target.id)
+          .then((check) => {
+            if (token !== probeToken.current) return;
+            setMessage(`${target.id}: ${formatProviderCheck(check)}`);
+            setMessageOk(check.status === "ok");
+          })
+          .catch((error) => {
+            if (token !== probeToken.current) return;
+            setMessage(`erro: ${messageOf(error)}`);
+            setMessageOk(false);
+          })
+          .finally(() => {
+            if (token !== probeToken.current) return;
+            setTesting(false);
+            setTestTarget(undefined);
+          });
+      }
+      return;
+    }
     if (view === "list") {
       if (key.escape) { onClose(); return; }
-      if (key.upArrow) { setSelected((value) => Math.max(0, value - 1)); return; }
-      if (key.downArrow) { setSelected((value) => Math.min(list.length - 1, value + 1)); return; }
+      if (key.upArrow) { setSelected((value) => Math.max(0, value - 1)); setMessage(undefined); return; }
+      if (key.downArrow) { setSelected((value) => Math.min(list.length - 1, value + 1)); setMessage(undefined); return; }
       if (input === "a") { startAdd(); return; }
+      if (input === "t") {
+        if (onTest !== undefined && current !== undefined) {
+          setMessage(undefined);
+          setTestTarget(current);
+        }
+        return;
+      }
       if (input === "e") { if (current !== undefined) startEdit(current); return; }
       if (input === "d") {
         if (current === undefined) return;
@@ -268,6 +315,16 @@ export function ProviderScreen({
     else if (step === "credential") setCredential((value) => value + input);
   });
 
+  if (testTarget !== undefined) {
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Testar {testTarget.name}?</Text>
+        <Text dimColor>{testing ? "testando…" : "enter confirmar · esc cancelar"}</Text>
+        {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
+      </Box>
+    );
+  }
+
   if (view === "remove" && current !== undefined) {
     return (
       <Box flexDirection="column" borderStyle="round" paddingX={1}>
@@ -334,8 +391,12 @@ export function ProviderScreen({
           cred={profile.credentialRef ?? "sem chave"} [{profile.source}]
         </Text>
       ))}
-      <Text dimColor>a adicionar · e editar · d remover · enter ativar · esc voltar</Text>
-      {message === undefined ? null : <Text color={colors.error}>{message}</Text>}
+      <Text dimColor>
+        {onTest === undefined
+          ? "a adicionar · e editar · d remover · enter ativar · esc voltar"
+          : "a adicionar · e editar · d remover · t testar · enter ativar · esc voltar"}
+      </Text>
+      {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
     </Box>
   );
 }

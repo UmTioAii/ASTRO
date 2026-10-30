@@ -15,6 +15,7 @@ import { indexFiles } from "./files";
 import { Markdown } from "./markdown";
 import { ModelPicker } from "./model-picker";
 import { recordRecent, type ModelOption } from "./models";
+import { providerHealth } from "./health";
 import { loadTuiConfig, saveTuiConfig, getThemeColors, type Theme, type ThemeColors } from "./theme";
 import { LEADER, runKeybind } from "./keybinds";
 import { ProviderScreen } from "./provider-screen";
@@ -114,6 +115,22 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
+  const [health, setHealth] = useState<{ provider: string; state: "ok" | "down" } | undefined>(undefined);
+  const healthToken = useRef(0);
+  const activeProvider = (): string => session.providerName?.() ?? session.snapshot().model.split("/")[0]!;
+  const refreshHealth = async (): Promise<void> => {
+    if (session.health === undefined) return;
+    const token = ++healthToken.current;
+    const provider = activeProvider();
+    try {
+      const report = await session.health();
+      if (token !== healthToken.current) return;
+      const state = providerHealth(report, provider);
+      setHealth(state === undefined ? undefined : { provider, state });
+    } catch {
+      if (token === healthToken.current) setHealth(undefined);
+    }
+  };
   const [screen, setScreen] = useState<{ mode: "list" | "add" | "edit" | "remove"; target?: string } | undefined>(undefined);
   const [modelPicker, setModelPicker] = useState(false);
   const [favorites, setFavorites] = useState<string[]>(initialConfig.favoriteModels ?? []);
@@ -229,6 +246,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         } catch (error) {
           added.push({ kind: "error", text: `erro: ${messageOf(error)}` });
         }
+        if (command.kind === "provider" && command.action === "use") void refreshHealth();
       }
       setEntries((current) => [...current, ...added]);
       setStatus(statusOf(session.snapshot()));
@@ -395,15 +413,28 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
           });
           setStatus(statusOf(session.snapshot()));
           setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
+          void refreshHealth();
         }}
         onChanged={() => {
           try {
             session.reload?.();
+            healthToken.current++;
+            setHealth(undefined);
             setStatus(statusOf(session.snapshot()));
           } catch (error) {
             setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
           }
         }}
+        {...(session.probeProvider === undefined ? {} : { onTest: async (id: string) => {
+          const token = ++healthToken.current;
+          const check = await session.probeProvider!(id);
+          if (token !== healthToken.current) return check;
+          if (id === activeProvider()) {
+            const state = providerHealth({ status: check.status === "ok" ? "ok" : "down", checks: [check] }, id);
+            setHealth(state === undefined ? undefined : { provider: id, state });
+          }
+          return check;
+        } })}
       />
     );
   }
@@ -430,7 +461,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         </Text>
       ))}
       <Text dimColor>
-        {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)}
+        {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)} · {session.providerName?.() ?? status.model.split("/")[0]} · saúde: {health?.provider === (session.providerName?.() ?? status.model.split("/")[0]) ? health.state : "n/d"}
       </Text>
     </Box>
   );

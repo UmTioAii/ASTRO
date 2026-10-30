@@ -48,6 +48,17 @@ class FakeSession implements ChatSession {
   setProvider(name: string): string {
     return `${name}/m1`;
   }
+  healthCalls = 0;
+  health() {
+    this.healthCalls++;
+    return Promise.resolve({
+      status: "degraded" as const,
+      checks: [{ name: "provider:p", status: "ok" as const, latencyMs: 5 }],
+    });
+  }
+  providerName(): string {
+    return this.model.split("/")[0]!;
+  }
   resumed: string[] = [];
   resumedFrom: { id: string; startedAt: string } | undefined;
   resume(snapshot: SessionSnapshot): void {
@@ -73,6 +84,11 @@ async function waitFor(check: () => boolean): Promise<void> {
   throw new Error("timeout esperando o frame");
 }
 
+/** A status bar quebra linha em terminais estreitos; normaliza antes de procurar. */
+function frameHas(instance: ReturnType<typeof render>, text: string): boolean {
+  return (instance.lastFrame() ?? "").replace(/\s+/g, " ").includes(text);
+}
+
 test("mostra boas-vindas, status e responde um turno", async () => {
   const session = new FakeSession();
   const instance = render(<TuiApp session={session} cwd="/tmp/astro" branch="main" />);
@@ -87,6 +103,39 @@ test("mostra boas-vindas, status e responde um turno", async () => {
     expect(instance.lastFrame()).toContain("1 step(s)");
     expect(session.sent).toEqual(["olá"]);
     expect(instance.lastFrame()).toContain("1 turno(s)");
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("status bar mostra saúde n/d e atualiza após troca de provider", async () => {
+  const session = new FakeSession();
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-health-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    await waitFor(() => frameHas(instance, "saúde: n/d"));
+    expect(session.healthCalls).toBe(0);
+    instance.stdin.write("/provider use p");
+    instance.stdin.write("\r");
+    await waitFor(() => frameHas(instance, "saúde: ok"));
+    expect(session.healthCalls).toBe(1);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("saúde de um provider não é reaproveitada por outro após /model", async () => {
+  const session = new FakeSession();
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-health-stale-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    instance.stdin.write("/provider use p");
+    instance.stdin.write("\r");
+    await waitFor(() => frameHas(instance, "saúde: ok"));
+    instance.stdin.write("/model p2/m2");
+    instance.stdin.write("\r");
+    await waitFor(() => frameHas(instance, "saúde: n/d"));
+    expect(session.healthCalls).toBe(1);
   } finally {
     instance.unmount();
   }
