@@ -236,4 +236,24 @@ describe("ProfileFallbackProvider (F-31)", () => {
     const skipped = audit.readAll().find((e) => e.tipo === "profile.fallback_skipped");
     expect(skipped?.payload).toMatchObject({ profile: "p2", provider: "b", errorClass: "account_locked" });
   });
+
+  test("após fallback, o próximo completion continua no profile que atendeu (A4)", async () => {
+    const calls: string[] = [];
+    let p1Calls = 0;
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => {
+          calls.push("p1");
+          p1Calls++;
+          if (p1Calls === 1) throw new ProviderError("outage", "a fora");
+          return resp("p1");
+        }),
+        entry("p2", "b", "m2", [], async () => { calls.push("p2"); return resp("p2"); }),
+      ],
+    });
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect(calls).toEqual(["p1", "p2", "p2"]);
+  });
 });

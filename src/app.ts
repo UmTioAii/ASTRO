@@ -390,11 +390,17 @@ function providerChain(
   agentName?: () => string,
 ): Provider {
   const primaryConfig = config.providers[model.provider];
+  const entryCredential = (name: string): { credentialRef?: string } => {
+    const provider = config.providers[name];
+    const credentialRef = provider === undefined ? undefined : providerCredentialRefFor(provider);
+    return credentialRef === undefined ? {} : { credentialRef };
+  };
   return new FallbackProvider({
     providers: [
       {
         name: model.provider,
         priority: primaryConfig?.priority ?? DEFAULT_PRIORITY,
+        ...entryCredential(model.provider),
         create: memoizedCreate(() => createGuardedProvider(
           config, model, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
         )),
@@ -411,6 +417,7 @@ function providerChain(
         return {
           name,
           priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
+          ...entryCredential(name),
           create: memoizedCreate(() => createGuardedProvider(
             config, fallbackModel, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
           )),
@@ -423,6 +430,14 @@ function providerChain(
     run,
     ...(profile === undefined ? {} : { profile }),
     ...(approveSwap === undefined ? {} : { approveSwap }),
+    moveAccount: (entry, reason) => moveAgentLock(ledger, audit, {
+      run,
+      agent_id: agentName?.() ?? AGENT_NAME,
+      provider: entry.name,
+      model: model.id,
+      ...(entry.credentialRef === undefined ? {} : { credentialRef: entry.credentialRef }),
+      reason,
+    }),
     ...(agentName === undefined ? {} : { agentName }),
   });
 }

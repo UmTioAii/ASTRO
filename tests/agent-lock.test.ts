@@ -386,4 +386,19 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
     })).toThrow(AccountLockedError);
     expect(activeLocks(ledger).find((l) => l.run === "r1")?.accountRef).toBe("A_KEY");
   });
+
+  test("mover para a mesma conta/modelo é no-op e agente inativo falha", () => {
+    const { ledger, audit } = setup();
+    acquireAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", session_id: "r1", provider: "nvidia", model: "m1", credentialRef: "A_KEY",
+    });
+    const before = ledger.readAllEntries().length;
+    moveAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", provider: "nvidia", model: "m1", credentialRef: "A_KEY", reason: "same",
+    });
+    expect(ledger.readAllEntries()).toHaveLength(before); // sem identity/audit
+    expect(() => moveAgentLock(ledger, audit, {
+      run: "r1", agent_id: "ghost", provider: "nvidia", model: "m1", credentialRef: "A_KEY", reason: "x",
+    })).toThrow(/não está ativo/);
+  });
 });

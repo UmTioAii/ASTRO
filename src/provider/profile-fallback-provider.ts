@@ -40,6 +40,8 @@ export class ProfileFallbackProvider implements Provider {
   readonly #approveSwap?: SwapApprover;
   readonly #moveAccount?: (entry: ProfileChainEntry, reason: ErrorClass) => void;
   readonly #agentName?: () => string;
+  /** Profile que atendeu por último nesta execução: não volta ao primário a cada step. */
+  readonly #activeProfile = new Map<string, string>();
 
   constructor(opts: ProfileFallbackProviderOptions) {
     this.#base = opts.base;
@@ -60,15 +62,20 @@ export class ProfileFallbackProvider implements Provider {
     }
 
     const chain = this.#flatten(start);
+    // Depois de uma troca, o run continua no profile que atendeu; voltar ao
+    // primário a cada step usaria uma conta sem o lock (A4/A7).
+    const sticky = this.#activeProfile.get(requested);
+    const stickyIndex = sticky === undefined ? -1 : chain.findIndex((entry) => entry.name === sticky);
+    const effectiveChain = stickyIndex > 0 ? chain.slice(stickyIndex) : chain;
     const fallbacks: FallbackRecord[] = [];
     let lastError: unknown;
     let lastReason: ErrorClass = "invalid_request";
     /** Último profile efetivamente tentado (destinos ocupados não contam). */
     let previousIndex = -1;
-    for (let i = 0; i < chain.length; i++) {
-      const entry = chain[i]!;
+    for (let i = 0; i < effectiveChain.length; i++) {
+      const entry = effectiveChain[i]!;
       if (previousIndex >= 0) {
-        const fromEntry = chain[previousIndex]!;
+        const fromEntry = effectiveChain[previousIndex]!;
         if (this.#approveSwap !== undefined) {
           const request: SwapRequest = {
             run: this.#run ?? "",
@@ -114,6 +121,7 @@ export class ProfileFallbackProvider implements Provider {
       try {
         attempt = { ...req, model: entry.model };
         const response = await provider.complete(attempt, signal);
+        this.#activeProfile.set(requested, entry.name);
         return { ...response, provider: response.provider ?? entry.provider, model: response.model ?? entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
         if (isAbortError(error, signal)) throw error;

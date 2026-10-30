@@ -306,6 +306,14 @@ export function moveAgentLock(
       throw new Error(`agente "${opts.agent_id}" não está ativo no run "${opts.run}"`);
     }
     const accountRef = accountRefOf(opts);
+    if (
+      current.accountRef === accountRef &&
+      current.provider === opts.provider &&
+      current.model === opts.model &&
+      current.profile === opts.profile
+    ) {
+      return current;
+    }
     const holder = activeLocks(ledger).find(
       (lock) => lock.accountRef === accountRef && !sameAgent(lock, opts.run, opts.agent_id),
     );
@@ -344,7 +352,7 @@ export function moveAgentLock(
       model: opts.model,
       ...(opts.profile === undefined ? {} : { profile: opts.profile }),
     };
-  });
+  }, { failClosed: true });
 }
 
 /**
