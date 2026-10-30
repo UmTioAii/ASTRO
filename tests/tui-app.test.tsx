@@ -84,6 +84,11 @@ async function waitFor(check: () => boolean): Promise<void> {
   throw new Error("timeout esperando o frame");
 }
 
+/** A status bar quebra linha em terminais estreitos; normaliza antes de procurar. */
+function frameHas(instance: ReturnType<typeof render>, text: string): boolean {
+  return (instance.lastFrame() ?? "").replace(/\s+/g, " ").includes(text);
+}
+
 test("mostra boas-vindas, status e responde um turno", async () => {
   const session = new FakeSession();
   const instance = render(<TuiApp session={session} cwd="/tmp/astro" branch="main" />);
@@ -108,11 +113,11 @@ test("status bar mostra saúde n/d e atualiza após troca de provider", async ()
   const cwd = mkdtempSync(join(tmpdir(), "astro-tui-health-"));
   const instance = render(<TuiApp session={session} cwd={cwd} />);
   try {
-    await waitFor(() => instance.lastFrame()?.includes("saúde: n/d") === true);
+    await waitFor(() => frameHas(instance, "saúde: n/d"));
     expect(session.healthCalls).toBe(0);
     instance.stdin.write("/provider use p");
     instance.stdin.write("\r");
-    await waitFor(() => instance.lastFrame()?.includes("saúde: ok") === true);
+    await waitFor(() => frameHas(instance, "saúde: ok"));
     expect(session.healthCalls).toBe(1);
   } finally {
     instance.unmount();
@@ -126,10 +131,10 @@ test("saúde de um provider não é reaproveitada por outro após /model", async
   try {
     instance.stdin.write("/provider use p");
     instance.stdin.write("\r");
-    await waitFor(() => instance.lastFrame()?.includes("saúde: ok") === true);
+    await waitFor(() => frameHas(instance, "saúde: ok"));
     instance.stdin.write("/model p2/m2");
     instance.stdin.write("\r");
-    await waitFor(() => instance.lastFrame()?.includes("saúde: n/d") === true);
+    await waitFor(() => frameHas(instance, "saúde: n/d"));
     expect(session.healthCalls).toBe(1);
   } finally {
     instance.unmount();
