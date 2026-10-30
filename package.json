@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "astro": "./dist/launcher.js"
+    "astro": "dist/launcher.js"
   },
   "files": [
     "dist",
