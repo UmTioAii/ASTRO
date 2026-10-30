@@ -77,8 +77,11 @@ describe("config call profile por modelo (E1–E8, D-CFG1)", () => {
     expect(() => validateConfig(cfg({ forbidden: ["temperature", "temperature"] }))).toThrow(/forbidden/);
     expect(() => validateConfig(cfg({ forbidden: ["model"] }))).toThrow(/forbidden/);
     expect(() => validateConfig(cfg({ forbidden: ["messages.0"] }))).toThrow(/forbidden/);
+    expect(() => validateConfig(cfg({ forbidden: ["stream_options"] }))).toThrow(/forbidden/);
     expect(() => validateConfig(cfg({ forbidden: ["__proto__"] }))).toThrow(/forbidden/);
     expect(() => validateConfig(cfg({ effort: { param: "__proto__.effort", map: { "0": "minimal", "1": "low", "2": "medium", "3": "high", "4": "ultra" } } }))).toThrow(/effort.param/);
+    expect(() => validateConfig(cfg({ effort: { param: "model", map: { "0": "minimal", "1": "low", "2": "medium", "3": "high", "4": "ultra" } } }))).toThrow(/effort.param/);
+    expect(() => validateConfig(cfg({ thinking: { mode: "always", param: "instructions", on: "on" } }))).toThrow(/thinking.param/);
     expect(() => validateConfig(cfg({ thinking: { mode: "always", param: "constructor.type", on: "on" } }))).toThrow(/thinking.param/);
   });
 });

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Ledger, LEDGER_SCHEMA_VERSION, hashToolCalls } from "../src/ledger";
+import { Ledger, LEDGER_SCHEMA_VERSION, hashToolCalls, type LedgerEntry } from "../src/ledger";
 import { redactSecrets } from "../src/sanitize-external";
 
 const dir = () => mkdtempSync(join(tmpdir(), "astro-ledger-"));
@@ -258,18 +258,31 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
         tokensIn: 10,
         tokensOut: 5,
         lvl: 1,
-        effort: "low",
-        thinking: "off",
+        effort: secret,
+        thinking: secret,
         "param.stripped": [{ name: secret, reason: "forbidden" }],
       }, undefined);
 
       const content = readFileSync(path, "utf8");
       const written = JSON.parse(content.trim());
       expect(written.lvl).toBe(1);
-      expect(written.effort).toBe("low");
-      expect(written.thinking).toBe("off");
-      // O secret deve ser redigido
+      // O secret deve ser redigido também em effort/thinking/param.stripped
       expect(content).not.toContain(secret);
+    });
+
+    test("param.stripped legado em string continua legível", () => {
+      const path = join(testDir(), "ledger.jsonl");
+      const old = { ...entry, ts: "2026-01-01T00:00:00Z", costUsd: null, schemaVersion: 2, "param.stripped": ["legacy"] };
+      writeFileSync(path, `${JSON.stringify(old)}\n`, "utf8");
+      const l = new Ledger(path);
+      const read = l.readAllEntries()[0] as LedgerEntry;
+      expect(read["param.stripped"]).toEqual(["legacy"]);
+    });
+
+    test("lvl fora de 0..4 falha na escrita", () => {
+      const l = new Ledger(join(testDir(), "ledger.jsonl"));
+      expect(() => l.record({ ...entry, tokensIn: 1, tokensOut: 1, lvl: 5 }, undefined))
+        .toThrow(/nível de esforço inválido/);
     });
   });
 

@@ -440,11 +440,15 @@ const CALL_KEYS: ReadonlySet<string> = new Set(["thinking", "effort", "forbidden
 const THINKING_KEYS: ReadonlySet<string> = new Set(["mode", "param", "on", "off"]);
 const UNSAFE_PATH_SEGMENTS: ReadonlySet<string> = new Set(["__proto__", "prototype", "constructor"]);
 
-/** Rejeita caminho vazio ou com chave de protótipo (defesa contra prototype pollution). */
+/** Rejeita caminho vazio, chave de protótipo ou raiz de protocolo protegida. */
 function validateParamPath(path: string, field: string): void {
   const parts = path.split(".");
   if (parts.some((part) => part.length === 0 || UNSAFE_PATH_SEGMENTS.has(part))) {
     fail(`config inválida: "${field}" contém caminho de parâmetro inválido "${path}"`);
+  }
+  const root = parts[0]!;
+  if ((PROTECTED_FORBIDDEN_ROOTS as readonly string[]).includes(root)) {
+    fail(`config inválida: "${field}" não pode apontar para a raiz protegida "${root}"`);
   }
 }
 
@@ -526,10 +530,6 @@ function validateCall(value: unknown, field: string): CallConfig {
     for (const name of forbidden) {
       if (seen.has(name)) fail(`config inválida: "${field}.forbidden" contém "${name}" duplicado`);
       seen.add(name);
-      const root = name.split(".")[0]!;
-      if ((PROTECTED_FORBIDDEN_ROOTS as readonly string[]).includes(root)) {
-        fail(`config inválida: "${field}.forbidden" não pode remover "${root}"`);
-      }
     }
   }
 

@@ -169,6 +169,39 @@ describe("cachedProvider (F6-4)", () => {
     }
   });
 
+  test("scope por request separa profiles/configs e hit não ecoa call", async () => {
+    const cache = makeCache();
+    try {
+      let calls = 0;
+      const inner: Provider = {
+        complete: async (request) => {
+          calls++;
+          return resp({ content: `${request.profile ?? "base"}-${calls}`, call: { lvl: 4, effort: "ultra", stripped: [] } });
+        },
+      };
+      const wrapped = cachedProvider(inner, {
+        cache,
+        scope: (request) => `scope|${request.profile ?? "base"}`,
+        ttlHours: 24,
+        maxEntries: 100,
+      });
+
+      const first = await wrapped.complete(req({ profile: "a" }));
+      expect(first.content).toBe("a-1");
+      expect(first.call).toMatchObject({ lvl: 4 });
+
+      const hit = await wrapped.complete(req({ profile: "a" }));
+      expect(hit.content).toBe("a-1");
+      expect(calls).toBe(1);
+      expect(hit.call).toBeUndefined(); // nada foi enviado neste hit
+
+      await wrapped.complete(req({ profile: "b" }));
+      expect(calls).toBe(2);
+    } finally {
+      cache.close();
+    }
+  });
+
   test("scope separa providers com o mesmo request (sem hit cruzado)", async () => {
     const cache = makeCache();
     try {

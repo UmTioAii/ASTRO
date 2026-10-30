@@ -87,7 +87,9 @@ O ledger (F-31d) grava a identidade efetiva que atendeu — `provider`, `model`,
 | `forbidden` | caminhos removidos do corpo antes do envio e gravados em `usage["param.stripped"]` como `[{name, reason:"forbidden"}]`; raízes de protocolo (`model`, `messages`, `input`, `stream`, `stream_options`, `tools`, `instructions`) são recusadas na config (E8) |
 | `call` na sessão | `RunOptions.call`/`SessionOptions.call` = `{lvl?, thinking?}`; a automação E4/E5 recebe `fixed` em `planEffortChange`/`applyEffortChange`, nunca sobrescrevendo o valor fixado (E3) |
 
-`planEffortChange`/`applyEffortChange` (`src/call-profile.ts`) implementam E4/E5: descer e subir 1–2 níveis é automático; subir 3+ exige aprovação. O `usage` grava `lvl`, `effort`, `thinking` e `param.stripped` (E7). Texto de raciocínio (`reasoning_content`) nunca é persistido: o parser só lê `content`, tool calls e usage (I-03, Q-08).
+`planEffortChange`/`applyEffortChange` (`src/call-profile.ts`) implementam as regras E4/E5 como primitivas para o S-09: descer e subir 1–2 níveis é automático; subir 3+ exige aprovação. O run atual não altera o nível sozinho. O `usage` grava `lvl`, `effort`, `thinking` e `param.stripped` (E7); em cache hit o `call` não é ecoado, porque nenhuma chamada foi enviada. Texto de raciocínio (`reasoning_content`) nunca é persistido: o parser só lê `content`, tool calls e usage (I-03, Q-08).
+
+Providers de plugin não recebem `models[].call`; a factory do plugin deve ler o próprio config se quiser aplicar effort/thinking. A cadeia de fallback usa a entrada `models[]` do provider de destino quando declarada e, sem ela, não herda o `call` do primário (parâmetro de outro protocolo quebraria a chamada).
 
 ### E6 — valores oficiais reverificados (2026-10-30)
 

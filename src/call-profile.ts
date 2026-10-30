@@ -98,6 +98,14 @@ function safePath(path: string): string[] {
   return parts;
 }
 
+/** Depois da config, providers não podem escrever/remover raízes de protocolo. */
+function assertProtocolPath(path: string, label: string): void {
+  const root = safePath(path)[0]!;
+  if ((PROTECTED_FORBIDDEN_ROOTS as readonly string[]).includes(root)) {
+    throw new RangeError(`${label} não pode apontar para a raiz protegida "${root}"`);
+  }
+}
+
 /** Escreve um valor em caminho `a.b.c`, criando objetos intermediários. */
 function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
   const parts = safePath(path);
@@ -172,14 +180,21 @@ export function applyCallToBody(
   const applied = resolveCallProfile(config, selection);
   if (config === undefined) return applied;
 
-  if (config.effort !== undefined && applied.lvl !== undefined && applied.effort !== undefined) {
-    setPath(body, config.effort.param, applied.effort);
+  if (config.effort !== undefined) {
+    assertProtocolPath(config.effort.param, "call.effort.param");
+    if (applied.lvl !== undefined && applied.effort !== undefined) {
+      setPath(body, config.effort.param, applied.effort);
+    }
   }
-  if (config.thinking !== undefined && applied.thinking !== undefined) {
-    setPath(body, config.thinking.param, applied.thinking);
+  if (config.thinking !== undefined) {
+    assertProtocolPath(config.thinking.param, "call.thinking.param");
+    if (applied.thinking !== undefined) {
+      setPath(body, config.thinking.param, applied.thinking);
+    }
   }
 
   for (const name of config.forbidden ?? []) {
+    assertProtocolPath(name, "call.forbidden");
     if (!deletePath(body, name)) continue;
     applied.stripped.push({ name, reason: "forbidden" });
     // O valor foi calculado mas não enviado; não pode aparecer como aplicado.
