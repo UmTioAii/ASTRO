@@ -129,6 +129,8 @@ test("busca aceita f no termo", async () => {
     await openPicker(instance);
     instance.stdin.write("fast");
     await waitFor(() => instance.lastFrame()?.includes("p/fast") === true && instance.lastFrame()?.includes("p/m1") === false);
+    expect(instance.lastFrame()).toContain("buscar: fast");
+    expect(loadTuiConfig(cwd).favoriteModels).toBeUndefined();
   } finally {
     instance.unmount();
   }
@@ -160,6 +162,7 @@ test("modelo sem metadados mostra contexto n/d em vez de zero", async () => {
   try {
     await openPicker(instance);
     expect(instance.lastFrame()).toContain("contexto n/d");
+    expect(instance.lastFrame()).toContain("unknown");
   } finally {
     instance.unmount();
   }
