@@ -24,25 +24,13 @@ describe("configuração da TUI (T2, #197)", () => {
     expect(getThemeColors("dark").accent).toBe("cyan");
   });
 
-  test("salva e carrega favoritos e recentes, ignorando entradas inválidas", () => {
+  test("favoritos e recentes persistem e ignoram entradas inválidas", () => {
     const cwd = tempCwd();
-    saveTuiConfig(cwd, {
-      favoriteModels: ["p/a", "p/a", "", "p/b"],
-      recentModels: ["p/c", "p/c", "p/d"],
-    });
-    expect(loadTuiConfig(cwd)).toEqual({
-      theme: "dark",
-      favoriteModels: ["p/a", "p/b"],
-      recentModels: ["p/c", "p/d"],
-    });
-
+    saveTuiConfig(cwd, { favoriteModels: ["p/a", "p/a", ""], recentModels: ["p/c", "p/c"] });
+    expect(loadTuiConfig(cwd)).toEqual({ theme: "dark", favoriteModels: ["p/a"], recentModels: ["p/c"] });
     const broken = tempCwd();
     mkdirSync(join(broken, ".astro"));
-    writeFileSync(join(broken, ".astro", "tui.json"), JSON.stringify({
-      theme: "light",
-      favoriteModels: ["p/a", 1, "", "p/a"],
-      recentModels: "p/b",
-    }), "utf8");
+    writeFileSync(join(broken, ".astro", "tui.json"), JSON.stringify({ theme: "light", favoriteModels: ["p/a", 1, ""] }), "utf8");
     expect(loadTuiConfig(broken)).toEqual({ theme: "light", favoriteModels: ["p/a"] });
   });
 

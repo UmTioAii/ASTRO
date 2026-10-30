@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ChatSession } from "../src/chat/repl";
 import type { ModelInfo, ProviderInfo, SessionSnapshot, TurnResult } from "../src/chat/agent-session";
 import { TuiApp } from "../src/tui/app";
+import { filterModels, modelDetail, orderModels, recordRecent, toggleFavorite, type ModelOption } from "../src/tui/models";
 import { loadTuiConfig } from "../src/tui/theme";
 
 class FakeSession implements ChatSession {
@@ -62,6 +63,23 @@ async function openPicker(instance: ReturnType<typeof render>): Promise<void> {
   instance.stdin.write("\r");
   await waitFor(() => instance.lastFrame()?.includes("Modelos") === true);
 }
+
+test("helpers do seletor: filtro, ordem, recente, favorito e detalhe", () => {
+  const option = (id: string, tags: string[] = []): ModelOption => ({
+    ref: `p/${id}`, provider: "p", id, tags, context: 8192, status: "active",
+  });
+  const a = option("a", ["writing-code"]);
+  const b = option("b");
+  const c = option("c");
+  expect(filterModels([a, b], "writing").map((item) => item.id)).toEqual(["a"]);
+  expect(filterModels([a, b], "P/B").map((item) => item.id)).toEqual(["b"]);
+  expect(orderModels([a, b, c], ["p/c"], ["p/b", "p/ghost"]).map((item) => item.id)).toEqual(["c", "b", "a"]);
+  expect(recordRecent("p/a", Array.from({ length: 10 }, (_, index) => `p/m${index}`))).toHaveLength(10);
+  expect(toggleFavorite("p/a", ["p/a", "p/b"])).toEqual(["p/b"]);
+  expect(modelDetail({ ...a, price: { inputPerM: 1, outputPerM: 2, fonte: "t", verificado: false } }))
+    .toContain("in 1/M");
+  expect(modelDetail(b)).toContain("n/d");
+});
 
 test("/model abre o seletor, filtra e troca o modelo persistindo o recente", async () => {
   const session = new FakeSession();
