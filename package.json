@@ -1,6 +1,6 @@
 {
   "name": "@umtioai/astro-harness",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Multi-agent coding harness for AI agents. Features deterministic model routing, append-only audit ledgers, cost governance, and durable handoffs. Built with Bun & TypeScript.",
   "license": "MIT",
   "type": "module",
