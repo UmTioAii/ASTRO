@@ -377,14 +377,13 @@ export class Ledger {
           try {
             closeSync(fd);
           } finally {
-            rmSync(lockPath, { force: true });
+            // Só remove se o lock ainda é nosso: um sucessor não pode ser apagado.
+            this.removeIfOwned(lockPath);
           }
         }
       }
-      if (this.staleLock(lockPath, timeoutMs)) {
-        rmSync(lockPath, { force: true });
-        continue;
-      }
+      const stale = this.staleLock(lockPath, timeoutMs);
+      if (stale !== undefined && this.removeIfUnchanged(lockPath, stale)) continue;
       if (Date.now() >= deadline) {
         if (opts.failClosed === true) {
           throw new LedgerLockError(`lock do ledger "${lockPath}" indisponível após ${timeoutMs}ms`);
@@ -395,20 +394,56 @@ export class Ledger {
     }
   }
 
-  /** Lock cujo dono está morto (ou ilegível por tempo demais) pode ser removido. */
-  private staleLock(lockPath: string, timeoutMs: number): boolean {
-    let pid: number | undefined;
-    let ageMs: number;
+  /** Conteúdo e mtime observados de um lock órfão (token de remoção segura). */
+  private staleLock(
+    lockPath: string,
+    timeoutMs: number,
+  ): { content: string; mtimeMs: number } | undefined {
+    let content: string;
+    let mtimeMs: number;
     try {
-      const raw = readFileSync(lockPath, "utf8").trim();
-      pid = /^\d+$/.test(raw) ? Number(raw) : undefined;
-      ageMs = Date.now() - statSync(lockPath).mtimeMs;
+      content = readFileSync(lockPath, "utf8").trim();
+      mtimeMs = statSync(lockPath).mtimeMs;
     } catch {
-      return false; // sumiu: o próximo openSync decide
+      return undefined; // sumiu: o próximo openSync decide
     }
-    if (pid !== undefined && pid !== process.pid) return !processAlive(pid);
-    // Sem PID (crash entre create e write) ou dono é este processo: só expira.
-    return ageMs > Math.max(LEDGER_STALE_LOCK_MS, timeoutMs * 2);
+    const pid = /^\d+$/.test(content) ? Number(content) : undefined;
+    const stale = pid !== undefined && pid !== process.pid
+      ? !processAlive(pid)
+      // Sem PID (crash entre create e write) ou dono é este processo: só expira.
+      : Date.now() - mtimeMs > Math.max(LEDGER_STALE_LOCK_MS, timeoutMs * 2);
+    return stale ? { content, mtimeMs } : undefined;
+  }
+
+  /**
+   * Remove o lock só se ainda for exatamente o observado. Reconferir conteúdo e
+   * mtime fecha a janela em que outro processo substitui o lock entre a
+   * detecção e o unlink.
+   */
+  private removeIfUnchanged(
+    lockPath: string,
+    observed: { content: string; mtimeMs: number },
+  ): boolean {
+    try {
+      const content = readFileSync(lockPath, "utf8").trim();
+      const mtimeMs = statSync(lockPath).mtimeMs;
+      if (content !== observed.content || mtimeMs !== observed.mtimeMs) return false;
+      rmSync(lockPath, { force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** No `finally`, só apaga o lock se o conteúdo ainda for o PID deste processo. */
+  private removeIfOwned(lockPath: string): void {
+    try {
+      if (readFileSync(lockPath, "utf8").trim() === String(process.pid)) {
+        rmSync(lockPath, { force: true });
+      }
+    } catch {
+      // já removido por outro caminho
+    }
   }
 
   private appendHandoff(

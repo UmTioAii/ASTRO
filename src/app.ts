@@ -484,8 +484,10 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         };
   const audit = new Auditor(auditPath, ...(onEvent === undefined ? [] : [{ onEvent }]));
   // A4: crash duro de um processo anterior não pode deixar a conta cativa para
-  // sempre. Só locks de PID comprovadamente morto são liberados.
-  recoverDeadAgentLocks(ledger, audit);
+  // sempre. Só locks de PID comprovadamente morto são liberados. O run que está
+  // sendo retomado fica de fora: sua recuperação só ocorre depois da validação
+  // de modelo/identidade, para não gravar crash_recovered em resume rejeitado.
+  recoverDeadAgentLocks(ledger, audit, undefined, opts.resume === undefined ? {} : { excludeRun: opts.resume });
 
   if (opts.runId !== undefined && opts.resume !== undefined) {
     throw new ConfigError("runId e resume são mutuamente exclusivos");

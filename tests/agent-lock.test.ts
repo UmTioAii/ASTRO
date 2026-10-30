@@ -270,6 +270,25 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
     expect(activeLocks(ledger).map((l) => l.run)).toEqual(["live"]);
   });
 
+  test("varredura global pode excluir o run em retomada (valida antes de recuperar)", () => {
+    const { ledger, audit } = setup();
+    for (const run of ["resume-me", "other"]) {
+      acquireAgentLock(ledger, audit, {
+        run,
+        agent_id: "planner",
+        session_id: run,
+        provider: "nvidia",
+        credentialRef: `${run}_KEY`,
+        pid: 6100,
+      });
+    }
+
+    const recovered = recoverDeadAgentLocks(ledger, audit, () => false, { excludeRun: "resume-me" });
+
+    expect(recovered.map((l) => l.run)).toEqual(["other"]);
+    expect(activeLocks(ledger).map((l) => l.run)).toEqual(["resume-me"]);
+  });
+
   test("reentrada com outra conta não devolve o lock antigo em silêncio", () => {
     const { ledger, audit } = setup();
     acquireAgentLock(ledger, audit, {

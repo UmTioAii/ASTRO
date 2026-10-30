@@ -139,7 +139,7 @@ describe("execução de resume (F-22, #131)", () => {
   test("resume com identidade divergente falha sem gravar crash_recovered", async () => {
     const { cwd, configPath, server } = setup("m3");
     try {
-      const ledger = seedInterrupted(cwd, "r1", "m2");
+      const ledger = seedInterrupted(cwd, "r1", "m2", deadPid());
 
       await expect(runTask({ configPath, task: "continue", cwd, env: { TEST_KEY: "x" }, resume: "r1" }))
         .rejects.toThrow(/modelo do agente "coder" mudou/);

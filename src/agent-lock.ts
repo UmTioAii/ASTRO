@@ -277,9 +277,15 @@ export function recoverDeadAgentLocks(
   ledger: Ledger,
   audit: Auditor,
   probe: PidProbe = processAlive,
+  opts: { excludeRun?: string } = {},
 ): AgentLock[] {
+  const excluded = opts.excludeRun === undefined ? undefined : redactSecrets(opts.excludeRun);
   const dead = activeLocks(ledger).filter(
-    (lock) => lock.pid !== undefined && lock.pid !== process.pid && !probe(lock.pid),
+    (lock) =>
+      (excluded === undefined || lock.run !== excluded) &&
+      lock.pid !== undefined &&
+      lock.pid !== process.pid &&
+      !probe(lock.pid),
   );
   for (const lock of dead) {
     releaseAgentLock(ledger, audit, {
