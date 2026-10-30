@@ -6,7 +6,6 @@ import {
   bunArgs,
   isMainEntry,
   MissingBunError,
-  platformPackages,
   resolveBun,
   type ResolveDeps,
 } from "../src/launcher";
@@ -16,27 +15,6 @@ const fakeResolve = (paths: Record<string, string>) => (id: string): string => {
   if (value === undefined) throw new Error(`not found: ${id}`);
   return value;
 };
-
-describe("platformPackages", () => {
-  test("windows x64", () => {
-    expect(platformPackages("win32", "x64")).toEqual(["@oven/bun-windows-x64"]);
-  });
-
-  test("linux arm64 includes glibc and musl", () => {
-    expect(platformPackages("linux", "arm64")).toEqual([
-      "@oven/bun-linux-aarch64",
-      "@oven/bun-linux-aarch64-musl",
-    ]);
-  });
-
-  test("darwin x64", () => {
-    expect(platformPackages("darwin", "x64")).toEqual(["@oven/bun-darwin-x64"]);
-  });
-
-  test("plataforma desconhecida não inventa pacote", () => {
-    expect(platformPackages("aix", "ppc64")).toEqual([]);
-  });
-});
 
 describe("resolveBun", () => {
   const base: ResolveDeps = { runningUnderBun: false, platform: "win32", arch: "x64" };
@@ -59,13 +37,13 @@ describe("resolveBun", () => {
     expect(resolveBun({ ...base, runningUnderBun: true, execPath, env: {} })).toBe(execPath);
   });
 
-  test("usa o binário da dependência de plataforma", () => {
-    const pkg = join("C:", "app", "node_modules", "@oven", "bun-windows-x64", "package.json");
-    const bin = join("C:", "app", "node_modules", "@oven", "bun-windows-x64", "bin", "bun.exe");
+  test("usa o binário do pacote npm \"bun\"", () => {
+    const manifestPath = join("C:", "app", "node_modules", "bun", "package.json");
+    const bin = join("C:", "app", "node_modules", "bun", "bin", "bun.exe");
     const deps: ResolveDeps = {
       ...base,
       env: {},
-      resolve: fakeResolve({ "@oven/bun-windows-x64/package.json": pkg }),
+      resolve: fakeResolve({ "bun/package.json": manifestPath }),
       exists: (path) => path === bin,
       which: () => undefined,
     };
@@ -99,7 +77,7 @@ describe("resolveBun", () => {
     expect(error).toBeInstanceOf(MissingBunError);
     expect((error as Error).message).toContain("Bun");
     expect((error as Error).message).toContain("ASTRO_BUN_PATH");
-    expect((error as Error).message).toContain("--omit=optional");
+    expect((error as Error).message).toContain("npm install");
   });
 });
 
@@ -108,10 +86,10 @@ test("bunArgs monta cli + argumentos do usuário", () => {
   expect(bunArgs("dist/cli.js", [])).toEqual(["dist/cli.js"]);
 });
 
-test("resolve o binário da dependência de plataforma realmente instalada", () => {
+test("resolve o binário do pacote bun realmente instalado", () => {
   const bun = resolveBun({ env: {}, runningUnderBun: false });
   expect(existsSync(bun)).toBe(true);
-  expect(bun.replaceAll("\\", "/")).toContain("@oven/bun-");
+  expect(bun.replaceAll("\\", "/")).toContain("/bun/");
 });
 
 test("reconhece o launcher executado por symlink/junction (npm POSIX)", () => {
