@@ -108,7 +108,7 @@ Mapas sugeridos: Anthropic `{0:"low",1:"low",2:"medium",3:"high",4:"max"}`; Open
 
 ## Contagem de tokens (S-19, D-22)
 
-`src/tokens.ts` conta mensagens e requests sem chamada de rede: tokenizer nativo registrado por provider (`registerTokenizer`) ou estimativa documentada de 4 chars/token. O resultado é `{tokens, source: "measured"|"estimate", tokenizer?}`; texto não vazio nunca conta zero. `countMessageTokens`/`countRequestTokens` incluem conteúdo, tool calls e definições de tools; são determinísticos e não leem ambiente nem segredo (I-03). Compaction (S-17) e o retry de overflow consomem essa contagem.
+`src/tokens.ts` conta mensagens e requests sem chamada de rede: tokenizer nativo registrado por provider (`registerTokenizer`) ou estimativa documentada de 4 chars/token. O resultado é `{tokens, source: "measured"|"estimate", tokenizer?}`; texto não vazio nunca conta zero. `countMessageTokens`/`countRequestTokens` incluem conteúdo, tool calls e definições de tools; são determinísticos e não leem ambiente nem segredo (I-03). `sanitize-external` e `handoff/compact` reutilizam `estimateTokens`; o `context-guard` do chat mantém a própria fórmula até S-17. Compaction (S-17) e o retry de overflow consomem essa contagem.
 
 ## Streaming (T3)
 

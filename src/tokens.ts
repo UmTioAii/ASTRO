@@ -1,5 +1,5 @@
 /**
- * Contagem de tokens por provider (S-19, D-21, ADR-0015): pura, determinística,
+ * Contagem de tokens por provider (S-19, D-22, ADR-0015): pura, determinística,
  * sem chamadas a provider e sem segredo (I-03). Tokenizer nativo quando o
  * provider registra um; senão estimativa documentada de 4 chars/token, sempre
  * marcada como `estimate` e nunca zero para texto não vazio.
@@ -22,8 +22,6 @@ export type Tokenizer = (text: string) => number;
 export interface TokenCountOptions {
   /** Provider ativo; seleciona o tokenizer nativo registrado. */
   provider?: string;
-  /** Modelo ativo; reservado para tokenizers cientes do modelo. */
-  model?: string;
 }
 
 interface RegisteredTokenizer {
@@ -33,21 +31,26 @@ interface RegisteredTokenizer {
 
 const TOKENIZERS = new Map<string, RegisteredTokenizer>();
 
+/** Chave canônica do provider: registro e consulta usam a mesma normalização. */
+function providerKey(provider: string): string {
+  return provider.trim();
+}
+
 /** Registra o tokenizer nativo de um provider (idempotente). */
 export function registerTokenizer(provider: string, tokenizer: Tokenizer, name = provider): void {
-  const key = provider.trim();
+  const key = providerKey(provider);
   if (key.length === 0) throw new Error("provider vazio no registro de tokenizer");
   TOKENIZERS.set(key, { fn: tokenizer, name });
 }
 
 /** Remove o tokenizer de um provider (testes/plugins). */
 export function unregisterTokenizer(provider: string): void {
-  TOKENIZERS.delete(provider);
+  TOKENIZERS.delete(providerKey(provider));
 }
 
 /** Existe tokenizer nativo para o provider? */
 export function hasTokenizer(provider: string): boolean {
-  return TOKENIZERS.has(provider);
+  return TOKENIZERS.has(providerKey(provider));
 }
 
 /** Estimativa documentada: 4 caracteres por token, zero só para texto vazio. */
@@ -56,7 +59,8 @@ export function estimateTokens(text: string): number {
 }
 
 function tokenizerFor(opts: TokenCountOptions): RegisteredTokenizer | undefined {
-  return opts.provider === undefined ? undefined : TOKENIZERS.get(opts.provider);
+  if (opts.provider === undefined) return undefined;
+  return TOKENIZERS.get(providerKey(opts.provider));
 }
 
 /** Soma as peças de texto; cada peça é medida ou estimada e nunca vira zero se não vazia. */

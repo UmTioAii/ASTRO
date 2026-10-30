@@ -4,7 +4,7 @@ Objetivo: registrar o motivo de cada escolha com ID estável.
 
 | Cobre | Não cobre |
 |---|---|
-| Decisões D-01 a D-21 do repo e a correspondência com a trilha de planejamento | Invariantes (em `docs/invariants.md`) e ADRs (em `docs/adr/`) |
+| Decisões D-01 a D-22 do repo e a correspondência com a trilha de planejamento | Invariantes (em `docs/invariants.md`) e ADRs (em `docs/adr/`) |
 
 IDs estáveis; não renumerar.
 
@@ -58,4 +58,4 @@ Decisões novas da trilha (escada de troca, classe de equivalência, aprovação
 
 1. Crie `docs/adr/NNNN-titulo-kebab.md` (template em `docs/adr/0000-template.md`).
 2. Adicione linha na tabela acima com próximo ID sequencial.
-3. Referencie no PR/issue: `D-21`.
+3. Referencie no PR/issue: `D-22`.

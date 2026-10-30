@@ -3,7 +3,7 @@
 - Status: aceita
 - Data: 2026-10-28
 - Issue: #120
-- Decisões relacionadas: D-10, D-21, ADR-0010, ADR-0014
+- Decisões relacionadas: D-10, D-22, ADR-0010, ADR-0014
 
 ## Contexto
 

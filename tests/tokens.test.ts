@@ -12,24 +12,25 @@ import {
 const user = (content: string): ChatMessage => ({ role: "user", content });
 
 beforeEach(() => {
-  for (const provider of ["native", "native-2", "other"]) unregisterTokenizer(provider);
+  for (const provider of ["native", "native-2", "other", " openai "]) unregisterTokenizer(provider);
 });
 
-describe("contagem de tokens por provider (S-19, D-21)", () => {
-  test("estimativa determinística: 4 chars/token, nunca zero para texto não vazio", () => {
+describe("contagem de tokens por provider (S-19, D-22)", () => {
+  test("estimativa documentada: 4 chars/token, determinística e nunca zero para texto não vazio", () => {
     expect(estimateTokens("")).toBe(0);
     expect(estimateTokens("a")).toBe(1);
     expect(estimateTokens("abcd")).toBe(1);
     expect(estimateTokens("abcde")).toBe(2);
     const text = "uma mensagem de teste com acentuação";
+    expect(estimateTokens(text)).toBe(9);
     expect(estimateTokens(text)).toBe(estimateTokens(text));
   });
 
   test("mensagens vazias são zero; texto vira estimate marcado", () => {
     expect(countMessageTokens([])).toEqual({ tokens: 0, source: "estimate" });
     const count = countMessageTokens([user("abcd")]);
-    expect(count.source).toBe("estimate");
-    expect(count.tokens).toBeGreaterThan(0);
+    expect(count).toEqual({ tokens: 1, source: "estimate" });
+    expect(countMessageTokens([user("abcde")])).toEqual({ tokens: 2, source: "estimate" });
   });
 
   test("tokenizer nativo registrado por provider é medido; outro provider estima", () => {
@@ -42,34 +43,64 @@ describe("contagem de tokens por provider (S-19, D-21)", () => {
     expect(measured.tokenizer).toBe("native-test");
 
     const estimated = countMessageTokens([user("abcd")], { provider: "other" });
-    expect(estimated.source).toBe("estimate");
-    expect(estimated.tokens).toBeGreaterThan(0);
+    expect(estimated).toEqual({ tokens: 1, source: "estimate" });
   });
 
-  test("conta conteúdo, tool calls e definições de tools da request", () => {
+  test("a chave do provider é normalizada em registro, consulta e remoção", () => {
+    registerTokenizer(" openai ", (text) => text.length, "spaced");
+    expect(hasTokenizer("openai")).toBe(true);
+    expect(hasTokenizer(" openai ")).toBe(true);
+    expect(countMessageTokens([user("abcd")], { provider: "openai" }))
+      .toMatchObject({ tokens: 4, source: "measured" });
+
+    unregisterTokenizer(" openai ");
+    expect(hasTokenizer("openai")).toBe(false);
+    expect(countMessageTokens([user("abcd")], { provider: "openai" }).source).toBe("estimate");
+
+    expect(() => registerTokenizer("   ", () => 1)).toThrow(/provider vazio/);
+    expect(hasTokenizer("   ")).toBe(false);
+    expect(() => unregisterTokenizer("   ")).not.toThrow();
+  });
+
+  test("registro é idempotente: o último tokenizer do provider vence", () => {
+    registerTokenizer("native", (text) => text.length, "first");
+    registerTokenizer("native", (text) => text.length * 2, "second");
+    expect(countMessageTokens([user("abcd")], { provider: "native" })).toMatchObject({
+      tokens: 8,
+      source: "measured",
+      tokenizer: "second",
+    });
+  });
+
+  test("conta conteúdo, toolCallId, tool calls e definições de tools da request", () => {
     const messages: ChatMessage[] = [
-      user("oi"),
+      user("ab"), // 2
       {
         role: "assistant",
-        content: "",
-        toolCalls: [{ id: "c1", name: "read_file", arguments: "{\"path\":\"x\"}" }],
+        content: "", // vazio não conta
+        toolCalls: [{ id: "i", name: "nm", arguments: "a" }], // 1 + 2 + 1
       },
-      { role: "tool", content: "resultado", toolCallId: "c1" },
+      { role: "tool", content: "r", toolCallId: "t" }, // 1 + 1
     ];
-    const withoutTools = countRequestTokens({ model: "m1", messages });
-    const withTools = countRequestTokens({
+    registerTokenizer("native", (text) => text.length, "chars");
+
+    expect(countMessageTokens(messages, { provider: "native" })).toEqual({
+      tokens: 8,
+      source: "measured",
+      tokenizer: "chars",
+    });
+    expect(countRequestTokens({
       model: "m1",
       messages,
-      tools: [{ name: "read_file", description: "lê arquivo", parameters: { type: "object" } }],
-    });
-    expect(withoutTools.tokens).toBeGreaterThan(0);
-    expect(withTools.tokens).toBeGreaterThan(withoutTools.tokens);
-    expect(countRequestTokens({ model: "m1", messages })).toEqual(withoutTools);
+      tools: [{ name: "n", description: "d", parameters: {} }], // 1 + 1 + 2 ("{}")
+    }, { provider: "native" })).toEqual({ tokens: 12, source: "measured", tokenizer: "chars" });
   });
 
-  test("tokenizer que devolve zero para texto não vazio falha em vez de reportar grátis", () => {
-    registerTokenizer("native", () => 0, "broken");
-    expect(() => countMessageTokens([user("abcd")], { provider: "native" })).toThrow(/contagem inválida/);
+  test("tokenizer que devolve zero, negativo ou não finito falha em vez de reportar grátis", () => {
+    for (const value of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      registerTokenizer("native", () => value, "broken");
+      expect(() => countMessageTokens([user("abcd")], { provider: "native" })).toThrow(/contagem inválida/);
+    }
 
     // Sem tokenizer, o provider volta à estimativa documentada e nunca a zero.
     unregisterTokenizer("native");
@@ -83,5 +114,17 @@ describe("contagem de tokens por provider (S-19, D-21)", () => {
     expect(countMessageTokens([user("abcd")], { provider: "native" }).tokens).toBe(4);
     expect(countMessageTokens([user("abcd")], { provider: "native-2" }).tokens).toBe(8);
     expect(countMessageTokens([user("abcd")], { provider: "other" }).source).toBe("estimate");
+    expect(hasTokenizer("other")).toBe(false);
+  });
+
+  test("mesma entrada produz a mesma contagem (determinismo)", () => {
+    const messages: ChatMessage[] = [user("mensagem estável"), { role: "assistant", content: "resposta" }];
+    const request = {
+      model: "m1",
+      messages,
+      tools: [{ name: "t", description: "d", parameters: { type: "object" } }],
+    };
+    expect(countRequestTokens(request)).toEqual(countRequestTokens(request));
+    expect(countMessageTokens(messages)).toEqual(countMessageTokens([...messages]));
   });
 });
