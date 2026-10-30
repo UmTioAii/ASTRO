@@ -13,7 +13,10 @@ import { assertAgentQuota } from "../src/team";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const cfgRaw = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
-  providers: { openai: { kind: "openai-compat", baseUrl: "http://x/v1", credentialRef: "X_KEY" } },
+  providers: {
+    openai: { kind: "openai-compat", baseUrl: "http://x/v1", credentialRef: "X_KEY" },
+    backup: { kind: "openai-compat", baseUrl: "http://x/v1", credentialRef: "BACKUP_KEY" },
+  },
   models: [
     { provider: "openai", id: "gpt-4o-mini", tags: ["writing-code"], context: 128000, capabilities: { tools: true } },
     { provider: "openai", id: "llama-3", tags: ["analysis"], context: 8192 },

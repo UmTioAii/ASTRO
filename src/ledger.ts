@@ -318,7 +318,7 @@ export class Ledger {
     const safe = sanitizeHandoffArtifact(artifact);
     const id = handoffId(safe);
     if (kind === "handoff.created" || kind === "handoff.received") {
-      return this.withLedgerLock(() => {
+      return this.withFileLock(() => {
         const existing = this.readHandoffs().find((e) => e.kind === kind && e.handoff_id === id);
         if (existing !== undefined) return existing;
         return this.appendHandoff(kind, run, safe, id, opts);
@@ -327,24 +327,30 @@ export class Ledger {
     return this.appendHandoff(kind, run, safe, id, opts);
   }
 
-  /** Serializa a seção crítica do CAS com um lock de arquivo (F-26). */
-  private withLedgerLock<T>(critical: () => T): T {
+  /**
+   * Serializa uma seção crítica com lock de arquivo (F-26, A4). Erros de
+   * `critical` propagam na hora; só a disputa pelo lock espera até o timeout.
+   */
+  withFileLock<T>(critical: () => T): T {
     const lockPath = `${this.path}.lock`;
     const deadline = Date.now() + LEDGER_LOCK_TIMEOUT_MS;
     for (;;) {
       let fd: number | undefined;
       try {
         fd = openSync(lockPath, "wx"); // exclusivo: falha se outro processo segura o lock
+      } catch {
+        fd = undefined;
+      }
+      if (fd !== undefined) {
         try {
           return critical();
         } finally {
           closeSync(fd);
           rmSync(lockPath, { force: true });
         }
-      } catch {
-        if (Date.now() >= deadline) return critical(); // lock quebrado: melhor esforço
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); // espera síncrona de 5ms
       }
+      if (Date.now() >= deadline) return critical(); // lock quebrado: melhor esforço
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); // espera síncrona de 5ms
     }
   }
 

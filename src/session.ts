@@ -18,6 +18,7 @@ import { redactSecrets } from "./sanitize-external";
 import type { SpanHandle, TracerLike } from "./tracing";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
+import { acquireAgentLock, releaseAgentLock } from "./agent-lock";
 
 /** Identidade efetiva de quem atendeu o completion (F-31d). */
 export interface EffectiveIdentity {
@@ -445,8 +446,10 @@ function interruptReason(error: unknown, signal?: AbortSignal): string {
 
 /** Está ativo? O último evento `agent` do id no run não é `destroyed` (created/identity contam). */
 function agentActive(ledger: Ledger, run: string, agentId: string): boolean {
+  const targetRun = redactSecrets(run);
+  const targetAgent = redactSecrets(agentId);
   const last = ledger.readAllEntries()
-    .filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === run && e.agent_id === agentId)
+    .filter((e): e is LedgerAgentEntry => e.kind === "agent" && e.run === targetRun && e.agent_id === targetAgent)
     .at(-1);
   return last !== undefined && last.event !== "destroyed";
 }
@@ -457,7 +460,7 @@ export interface AgentIdentity {
   credentialRef?: string;
 }
 
-/** Garante um `agent.created` (idempotente; reabre agente já destruído - F-22). */
+/** Garante um `agent.created` e o lock exclusivo da conta (idempotente; reabre agente já destruído - F-22). */
 function ensureAgentCreated(
   ledger: Ledger,
   audit: Auditor,
@@ -469,7 +472,7 @@ function ensureAgentCreated(
   parentAgentId?: string,
 ): void {
   if (agentActive(ledger, run, agentId)) return;
-  ledger.recordAgentCreated({
+  acquireAgentLock(ledger, audit, {
     run,
     agent_id: agentId,
     session_id: run,
@@ -479,21 +482,12 @@ function ensureAgentCreated(
     ...(profile === undefined ? {} : { profile }),
     ...(parentAgentId === undefined ? {} : { parent_agent_id: parentAgentId }),
   });
-  audit.append({ run, agent: agentId, tipo: "agent.created",
-    payload: {
-      agent_id: agentId,
-      model,
-      provider: identity.provider,
-      ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
-      ...(parentAgentId === undefined ? {} : { parent_agent_id: parentAgentId }),
-    } });
 }
 
-/** Garante um `agent.destroyed` (só se ativo; ledger → audit, ADR-0008 A5). */
+/** Garante um `agent.destroyed` e libera o lock (só se ativo; ledger → audit, ADR-0008 A5). */
 function ensureAgentDestroyed(ledger: Ledger, audit: Auditor, run: string, agentId: string, reason: string): void {
   if (!agentActive(ledger, run, agentId)) return;
-  ledger.recordAgentDestroyed({ run, agent_id: agentId, session_id: run, reason });
-  audit.append({ run, agent: agentId, tipo: "agent.destroyed", payload: { agent_id: agentId, reason } });
+  releaseAgentLock(ledger, audit, { run, agent_id: agentId, reason });
 }
 
 /** Opções para sessão multi-agent. */

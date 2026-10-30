@@ -4,7 +4,10 @@ import { validateConfig } from "../src/config";
 import { Registry } from "../src/registry";
 
 const cfg: AstroConfig = validateConfig({
-  providers: { openai: { kind: "openai-compat", baseUrl: "http://localhost", credentialRef: "OPENAI_API_KEY" } },
+  providers: {
+    openai: { kind: "openai-compat", baseUrl: "http://localhost", credentialRef: "OPENAI_API_KEY" },
+    backup: { kind: "openai-compat", baseUrl: "http://localhost", credentialRef: "BACKUP_API_KEY" },
+  },
   models: [
     { provider: "openai", id: "gpt-4o-mini", tags: ["writing-code", "tools"], context: 128000 },
     { provider: "openai", id: "old-model", tags: ["fast"], context: 8192, status: "deprecated" },

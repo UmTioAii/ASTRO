@@ -23,7 +23,10 @@ function setup(coderModel = "m2") {
     },
   });
   const config = {
-    providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "TEST_KEY" } },
+    providers: {
+      mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "TEST_KEY" },
+      backup: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "BACKUP_KEY" },
+    },
     models: [
       { provider: "mock", id: "m1", tags: ["writing-code"], context: 8192, price: { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false } },
       { provider: "mock", id: coderModel, tags: ["writing-code"], context: 8192 },

@@ -46,6 +46,9 @@ describe("teto de agentes ativos vs contas declaradas (A2, ADR-0008)", () => {
         local: { kind: "openai-compat", baseUrl: "http://local/v1" },
         other: { kind: "openai-compat", baseUrl: "http://other/v1" },
       },
+      models: [{ provider: "local", id: "m1", tags: ["writing-code"], context: 8192 }],
+      agent: { model: "local/m1", maxSteps: 2, tools: [] },
+      agents: { planner: { model: "local/m1" } },
     });
     expect(() => validateConfig(keyless)).not.toThrow();
   });

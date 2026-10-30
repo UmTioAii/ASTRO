@@ -83,7 +83,7 @@ The launcher and smoke commands require Node 18+ on `PATH`; the published CLI br
 | `models` | `{ provider, id, tags, context, price? }[]` | — | `src/config.ts` |
 | `modelPool` | `Record<profile, { model, capabilities?, fallback? }>` | absent | `src/registry.ts` |
 | `agent` | `{ model XOR profile, maxSteps, tools, entryAgent? }` | — | `src/config.ts` |
-| `agents` | named agents inheriting from `agent` | absent | `src/config.ts` |
+| `agents` | `{ maxActive?, <name>: { model XOR profile, maxSteps?, tools?, systemPrompt? } }`; named agents require at least 2 declared accounts | absent | `src/config.ts`, `src/agent-lock.ts` |
 | `handoff` | `{ ackTimeoutMs }` | `30000` | `src/session.ts` |
 | `pricing` | `Record<"provider/model-id", PriceConfig>` overriding `model.price` | absent | `src/registry.ts` |
 | `quota` | per-domain `{ dailyTokens?, monthlyCostUsd? }` | no enforcement | `src/quota.ts` |
@@ -116,6 +116,8 @@ Model pool and profiles are implemented — a profile replaces `model` (both tog
   "agents": { "planner": { "profile": "premium", "tools": ["handoff"] }, "coder": { "profile": "cheap" } }
 }
 ```
+
+Every active agent (orchestrator included) holds one account exclusively. The lock is the `agent.created`/`agent.destroyed` pair in the ledger — no separate lock file — and `astro resume` releases orphaned agents as `crash_recovered` before recreating them. With named agents, `loadConfig` requires at least two declared accounts (credentials, or one per keyless provider) and fails with `max_active_exceeds_accounts` otherwise; `agents.maxActive` (v2 ceiling, `4`) is validated against that count. Locks never touch quota: usage stays aggregated per `quotaDomain`.
 
 ## CLI
 

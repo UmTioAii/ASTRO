@@ -16,7 +16,10 @@ function setup(agents = false) {
   } });
   const configPath = join(cwd, "astro.config.json");
   writeFileSync(configPath, JSON.stringify({
-    providers: { p: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" } },
+    providers: {
+      p: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" },
+      backup: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "BACKUP_KEY" },
+    },
     models: [
       { provider: "p", id: "m1", tags: ["writing-code"], context: 8192 },
       { provider: "p", id: "m2", tags: ["writing-code"], context: 8192 },

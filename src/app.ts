@@ -25,6 +25,7 @@ import type { AuditEvent } from "./audit";
 import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, type BudgetStatus } from "./budget";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
+import { recoverCrashedAgents } from "./agent-lock";
 import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
@@ -549,6 +550,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       resumedModel = resolved;
       resumedProfile = agent.profile;
     }
+    // A4/§11.5: órfãos do crash perdem o lock antes de o agente ser recriado.
+    recoverCrashedAgents(ledger, audit, run);
   }
   const baseModel = resumedModel ?? model;
   const baseProfile = resumedProfile ?? (opts.model === undefined ? config.agent.profile : undefined);
