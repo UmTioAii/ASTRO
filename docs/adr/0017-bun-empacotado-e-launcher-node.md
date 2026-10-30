@@ -1,9 +1,9 @@
 # ADR-0017: Bun empacotado como dependência opcional e launcher Node
 
-- Status: aceita
+- Status: aceita; empacotamento revisto pelo ADR-0018
 - Data: 2026-10-29
 - Issue: #219
-- Decisões relacionadas: D-02, ADR-0001
+- Decisões relacionadas: D-02, ADR-0001, ADR-0018
 
 ## Contexto
 
@@ -13,6 +13,8 @@ global, `npm i -g @umtioai/astro-harness@alpha` instala e cria o shim, mas `astr
 Bun manualmente, o que quebra a promessa de instalação em um comando.
 
 ## Decisão
+
+> Empacotamento revisto pelo ADR-0018: o Bun agora vem do pacote npm `bun@1.4.2` em `dependencies`, com a mesma ordem de resolução no launcher. As consequências abaixo descrevem a decisão original.
 
 - `bin.astro` aponta para `dist/launcher.js`, um launcher Node (`#!/usr/bin/env node`).
 - O Bun vai como `optionalDependencies` de plataforma, fixado em 1.4.2:

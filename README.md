@@ -50,7 +50,7 @@ After installing, run `astro` in an interactive terminal to open the TUI. Withou
 Notes:
 
 - To use your own Bun binary: `ASTRO_BUN_PATH=/path/to/bun astro`.
-- If you installed with `--omit=optional`, reinstall without that flag or set `ASTRO_BUN_PATH`.
+- The install materializes the Bun binary from the `bun` npm package (its `postinstall`). With `--omit=optional`, `--ignore-scripts`, or a `PATH`-only Bun, set `ASTRO_BUN_PATH` or make sure `bun` is on `PATH`.
 - The install does not create or shadow a global `bun` or `bunx` command.
 - The `alpha` tag is the current preview release.
 
