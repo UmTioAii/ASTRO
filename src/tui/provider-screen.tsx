@@ -202,12 +202,15 @@ export function ProviderScreen({
       })
       .then(() => {
         if (controller.signal.aborted) return;
+        let warning = "";
         try {
           if (profile.source === "global") manager.use(profile.id);
-        } catch { /* ativação da sessão abaixo cobre o perfil */ }
+        } catch (error) {
+          warning = ` (não persistido: ${messageOf(error)})`;
+        }
         setLogin(undefined);
         setMessageOk(true);
-        setMessage(`${profile.id}: login concluído`);
+        setMessage(`${profile.id}: login concluído${warning}`);
         onChanged?.();
         onActivate(profile.id);
       })
@@ -406,10 +409,12 @@ export function ProviderScreen({
   });
 
   if (loginTarget !== undefined) {
+    const shownPath = (loginTarget.credentialsPath ?? "~/.codex/auth.json")
+      .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "?");
     return (
       <Box flexDirection="column" borderStyle="round" paddingX={1}>
         <Text color={colors.warning}>Login Codex: {loginTarget.name}</Text>
-        <Text>grava em {loginTarget.credentialsPath ?? "~/.codex/auth.json"}</Text>
+        <Text>grava em {shownPath}</Text>
         <Text dimColor>enter confirmar · esc cancelar</Text>
       </Box>
     );

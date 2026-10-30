@@ -126,6 +126,28 @@ test("loginCodex recusa credentialsPath relativo antes de tocar a rede", async (
   }
 });
 
+test("stalled body é interrompido pelo deadline", async () => {
+  const fetchLike = (async (input: string | URL | Request) => {
+    if (String(input).endsWith("/api/accounts/deviceauth/usercode")) {
+      return Response.json({ device_auth_id: "dev-1", user_code: "ABCD-1234", interval: "1" });
+    }
+    return new Response(new ReadableStream({ start() { /* nunca envia o corpo */ } }), {
+      headers: { "content-type": "application/json" },
+    });
+  }) as unknown as typeof fetch;
+  const { done } = await startCodexLogin({ fetchLike, timeoutMs: 50 });
+  await expect(done).rejects.toThrow(/timeout/i);
+});
+
+test("saveCodexAuth substitui o arquivo existente sem deixar lixo", () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-codex-replace-"));
+  const path = join(dir, "auth.json");
+  writeFileSync(path, "old-content", "utf8");
+  const accessToken = jwt({ exp: Math.floor(Date.now() / 1000) + 3600 });
+  saveCodexAuth(path, { accessToken, refreshToken: "new-refresh", accountId: "acct-2", expiresAt: 9999999999 });
+  expect(readCodexAuth(path)).toMatchObject({ accessToken, refreshToken: "new-refresh", accountId: "acct-2" });
+});
+
 test("saveCodexAuth grava o formato lido por readCodexAuth com modo 0600", () => {
   const dir = mkdtempSync(join(tmpdir(), "astro-codex-login-"));
   const path = join(dir, "auth.json");

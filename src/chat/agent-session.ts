@@ -1,7 +1,9 @@
 /** Sessão de chat (T1): multi-turn sobre o mesmo run; a UI só fala com esta classe. */
 import { randomUUID } from "node:crypto";
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { runTask, createProvider, shortTaskHash, type RunReport } from "../app";
+import { throwIfAborted } from "../abort";
 import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
 import type { BudgetDecider } from "../budget";
@@ -253,14 +255,21 @@ export class AgentSession {
     const expanded = expandHomePath(credentialsPath);
     if (!isAbsolute(expanded)) throw new Error(`credentialsPath "${credentialsPath}" precisa ser absoluto ou começar com ~`);
     const path = resolve(expanded);
-    const rel = relative(this.#cwd, path);
-    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
-      throw new Error("credentialsPath não pode ficar dentro do cwd");
+    const canonical = (value: string): string => {
+      try { return realpathSync(value); } catch {
+        try { return join(realpathSync(dirname(value)), basename(value)); } catch { return resolve(value); }
+      }
+    };
+    const rel = relative(canonical(this.#cwd), canonical(path));
+    const insideCwd = rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+    if (insideCwd && existsSync(join(this.#cwd, ".git"))) {
+      throw new Error("credentialsPath não pode ficar dentro do repositório");
     }
     const start = await startCodexLogin({ ...(signal === undefined ? {} : { signal }) });
     return {
       ...start,
       done: start.done.then((tokens) => {
+        throwIfAborted(signal);
         saveCodexAuth(path, tokens);
         return tokens;
       }),
