@@ -102,7 +102,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   };
   const [busy, setBusy] = useState(false);
   const [partial, setPartial] = useState<string | undefined>(undefined);
-  const [theme, setTheme] = useState<Theme>(() => loadTuiConfig(cwd).theme);
+  const [initialConfig] = useState(() => loadTuiConfig(cwd));
+  const [theme, setTheme] = useState<Theme>(initialConfig.theme);
   const colors = getThemeColors(theme);
   const persistTheme = (next: Theme): void => {
     setTheme(next);
@@ -115,8 +116,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
   const [screen, setScreen] = useState<{ mode: "list" | "add" | "edit" | "remove"; target?: string } | undefined>(undefined);
   const [modelPicker, setModelPicker] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(() => loadTuiConfig(cwd).favoriteModels ?? []);
-  const [recents, setRecents] = useState<string[]>(() => loadTuiConfig(cwd).recentModels ?? []);
+  const [favorites, setFavorites] = useState<string[]>(initialConfig.favoriteModels ?? []);
+  const [recents, setRecents] = useState<string[]>(initialConfig.recentModels ?? []);
   const commandState = useRef<CommandState>({});
   const exited = useRef(false);
 
@@ -164,7 +165,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
       const slash = ref.indexOf("/");
       const provider = slash < 0 ? ref : ref.slice(0, slash);
       const id = slash < 0 ? ref : ref.slice(slash + 1);
-      return { ref, provider, id, tags: [], context: 0, status: "active" };
+      return { ref, provider, id, tags: [], status: "unknown" };
     });
   };
 
@@ -350,6 +351,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         recents={recents}
         colors={colors}
         onClose={() => setModelPicker(false)}
+        onExit={finish}
         onSelect={(ref) => {
           try {
             const model = session.setModel(ref);

@@ -10,47 +10,61 @@ export interface ModelPickerProps {
   recents: readonly string[];
   colors: ThemeColors;
   onClose: () => void;
+  onExit?: () => void;
   onSelect: (ref: string) => void;
   onFavorite: (favorites: string[]) => void;
 }
 
 export function ModelPicker({
-  models, favorites, recents, colors, onClose, onSelect, onFavorite,
+  models, favorites, recents, colors, onClose, onExit, onSelect, onFavorite,
 }: ModelPickerProps): ReactElement {
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState(0);
+  const [selectedRef, setSelectedRef] = useState<string | undefined>(undefined);
   const ordered = orderModels(filterModels(models, query), favorites, recents);
+  const found = ordered.findIndex((model) => model.ref === selectedRef);
+  const selected = found < 0 ? 0 : found;
   const current = ordered[Math.min(selected, Math.max(ordered.length - 1, 0))];
 
+  const move = (delta: number): void => {
+    if (ordered.length === 0) return;
+    const next = (Math.max(selected, 0) + delta + ordered.length) % ordered.length;
+    setSelectedRef(ordered[next]?.ref);
+  };
+
   useInput((input, key) => {
+    if (key.ctrl && (input === "c" || input === "d")) {
+      (onExit ?? onClose)();
+      return;
+    }
     if (key.escape) {
       onClose();
       return;
     }
     if (key.upArrow) {
-      setSelected((value) => Math.max(0, value - 1));
+      move(-1);
       return;
     }
-    if (key.downArrow) {
-      setSelected((value) => Math.min(ordered.length - 1, value + 1));
+    if (key.downArrow || key.tab || input === "\t") {
+      move(1);
       return;
     }
     if (key.return) {
       if (current !== undefined) onSelect(current.ref);
       return;
     }
-    if (input === "f" && current !== undefined) {
+    if (((key.ctrl && input === "f") || input === "\u0006") && current !== undefined) {
+      setSelectedRef(current.ref);
       onFavorite(toggleFavorite(current.ref, favorites));
       return;
     }
     if (key.backspace || key.delete) {
       setQuery((value) => value.slice(0, -1));
-      setSelected(0);
+      setSelectedRef(undefined);
       return;
     }
     if (!key.ctrl && !key.meta && input !== "") {
-      setQuery((value) => value + input.replace(/[\r\n]/g, ""));
-      setSelected(0);
+      setQuery((value) => value + input.replace(/[\r\n\t]/g, ""));
+      setSelectedRef(undefined);
     }
   });
 
@@ -63,11 +77,11 @@ export function ModelPicker({
         <Text key={model.ref} color={index === selected ? colors.accent : undefined}>
           {index === selected ? "> " : "  "}
           {favorites.includes(model.ref) ? "* " : "  "}
-          {model.ref} {model.status} contexto {model.context}
+          {model.ref} {model.status} contexto {model.context ?? "n/d"}
         </Text>
       ))}
       {current === undefined ? null : <Text dimColor>{modelDetail(current)}</Text>}
-      <Text dimColor>↑↓ mover · enter trocar · f favorito · esc voltar</Text>
+      <Text dimColor>↑↓/tab mover · enter trocar · ctrl+f favorito · esc voltar</Text>
     </Box>
   );
 }

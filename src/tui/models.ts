@@ -4,7 +4,7 @@ export interface ModelOption {
   provider: string;
   id: string;
   tags: string[];
-  context: number;
+  context?: number;
   status: string;
   price?: { inputPerM: number; outputPerM: number; fonte: string; verificado: boolean };
 }
@@ -53,5 +53,5 @@ export function modelDetail(model: ModelOption): string {
     ? "preço: n/d"
     : `preço: in ${model.price.inputPerM}/M out ${model.price.outputPerM}/M (${model.price.fonte}${model.price.verificado ? "" : ", não verificado"})`;
   const tags = model.tags.length === 0 ? "tags: -" : `tags: ${model.tags.join(", ")}`;
-  return `${model.ref} · ${model.status} · contexto ${model.context} · ${tags} · ${price}`;
+  return `${model.ref} · ${model.status} · contexto ${model.context ?? "n/d"} · ${tags} · ${price}`;
 }

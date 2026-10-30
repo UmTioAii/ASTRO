@@ -16,7 +16,7 @@ class FakeSession implements ChatSession {
     return ref;
   }
   listModels(): string[] {
-    return ["p/m1", "p/m2"];
+    return ["p/m1", "p/m2", "p/fast"];
   }
   listModelInfo(): ModelInfo[] {
     return [
@@ -25,6 +25,7 @@ class FakeSession implements ChatSession {
         price: { inputPerM: 1, outputPerM: 2, fonte: "test", verificado: true },
       },
       { ref: "p/m2", provider: "p", id: "m2", tags: ["fast"], context: 4096, status: "active" },
+      { ref: "p/fast", provider: "p", id: "fast", tags: ["fast"], context: 4096, status: "active" },
     ];
   }
   listProviders(): ProviderInfo[] {
@@ -103,18 +104,62 @@ test("/model abre o seletor, filtra e troca o modelo persistindo o recente", asy
   }
 });
 
-test("esc fecha o seletor sem trocar o modelo e f persiste o favorito", async () => {
+test("esc fecha o seletor sem trocar o modelo e ctrl+f persiste o favorito", async () => {
   const session = new FakeSession();
   const cwd = mkdtempSync(join(tmpdir(), "astro-tui-picker-esc-"));
   const instance = render(<TuiApp session={session} cwd={cwd} />);
   try {
     await openPicker(instance);
-    instance.stdin.write("f");
+    instance.stdin.write("\u0006");
     await waitFor(() => loadTuiConfig(cwd).favoriteModels?.includes("p/m1") === true);
     instance.stdin.write("\u001b");
     await waitFor(() => instance.lastFrame()?.includes("Modelos") === false);
     expect(session.model).toBe("p/m1");
     expect(loadTuiConfig(cwd).favoriteModels).toEqual(["p/m1"]);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("busca aceita f no termo", async () => {
+  const session = new FakeSession();
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-picker-search-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    await openPicker(instance);
+    instance.stdin.write("fast");
+    await waitFor(() => instance.lastFrame()?.includes("p/fast") === true && instance.lastFrame()?.includes("p/m1") === false);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("tab move e favoritar não troca a seleção", async () => {
+  const session = new FakeSession();
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-picker-keys-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    await openPicker(instance);
+    instance.stdin.write("\t");
+    await waitFor(() => instance.lastFrame()?.includes(">   p/m2") === true);
+    instance.stdin.write("\u0006");
+    await waitFor(() => loadTuiConfig(cwd).favoriteModels?.includes("p/m2") === true);
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("Modelos") === false);
+    expect(session.model).toBe("p/m2");
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("modelo sem metadados mostra contexto n/d em vez de zero", async () => {
+  const session = new FakeSession();
+  Object.defineProperty(session, "listModelInfo", { value: undefined });
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-picker-bare-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    await openPicker(instance);
+    expect(instance.lastFrame()).toContain("contexto n/d");
   } finally {
     instance.unmount();
   }
