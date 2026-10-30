@@ -43,8 +43,6 @@ export interface CallSelection {
   lvl?: number;
   /** Estado do modo `toggle`; default `on`. */
   thinking?: "on" | "off";
-  /** Valor fixado pelo usuário: o caminho automático nunca sobrescreve (E3). */
-  fixed?: boolean;
 }
 
 /** Parâmetro proibido que existia no corpo e foi removido. */
@@ -174,8 +172,11 @@ export function applyCallToBody(
     if (!deletePath(body, name)) continue;
     applied.stripped.push({ name, reason: "forbidden" });
     // O valor foi calculado mas não enviado; não pode aparecer como aplicado.
-    if (config.effort?.param === name) delete applied.effort;
-    if (config.thinking?.param === name) delete applied.thinking;
+    // `name` pode ser ancestral do parâmetro (ex.: "reasoning" cobre "reasoning.effort").
+    const covers = (param: string | undefined): boolean =>
+      param !== undefined && (param === name || param.startsWith(`${name}.`));
+    if (covers(config.effort?.param)) delete applied.effort;
+    if (covers(config.thinking?.param)) delete applied.thinking;
   }
   return applied;
 }

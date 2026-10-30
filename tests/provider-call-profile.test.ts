@@ -30,12 +30,12 @@ describe("call profile no corpo do provider (E1–E8)", () => {
     });
 
     const res = await provider.complete({
-      model: "m1",
+      model: "meta/llama-3.3-70b-instruct",
       messages: [{ role: "user", content: "oi" }],
       call: { lvl: 4, thinking: "off" },
     });
 
-    expect(body).toMatchObject({ model: "m1", reasoning: { effort: "ultra" }, thinking: { type: "disabled" } });
+    expect(body).toMatchObject({ model: "meta/llama-3.3-70b-instruct", reasoning: { effort: "ultra" }, thinking: { type: "disabled" } });
     expect(res.call).toEqual({ lvl: 4, effort: "ultra", thinking: "disabled", stripped: [] });
     expect(res.content).toBe("ok");
   });
@@ -51,7 +51,7 @@ describe("call profile no corpo do provider (E1–E8)", () => {
       },
     });
 
-    const res = await provider.complete({ model: "m1", messages: [{ role: "user", content: "oi" }], call: { lvl: 3 } });
+    const res = await provider.complete({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: "oi" }], call: { lvl: 3 } });
 
     expect(body.reasoning).toBeUndefined();
     expect(res.call).toEqual({
@@ -59,6 +59,32 @@ describe("call profile no corpo do provider (E1–E8)", () => {
       thinking: "enabled",
       stripped: [{ name: "reasoning.effort", reason: "forbidden" }],
     });
+  });
+
+  test("streaming openai-compat ecoa o call aplicado", async () => {
+    let body: Record<string, unknown> = {};
+    const provider = new OpenAICompatProvider({
+      baseUrl: "http://mock/v1",
+      call,
+      fetchFn: async (_url, init) => {
+        body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n', {
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    });
+
+    const tokens: string[] = [];
+    const res = await provider.complete({
+      model: "m1",
+      messages: [{ role: "user", content: "oi" }],
+      call: { lvl: 2 },
+      onToken: (text) => tokens.push(text),
+    });
+
+    expect(tokens.join("")).toBe("ok");
+    expect(body).toMatchObject({ stream: true, reasoning: { effort: "medium" } });
+    expect(res.call).toMatchObject({ lvl: 2, effort: "medium", thinking: "enabled" });
   });
 
   test("Codex envia reasoning.effort no corpo /responses", async () => {

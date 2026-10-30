@@ -635,6 +635,9 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   // Completion cache (F6-4): vale para o provider base/profile e para os
   // providers por modelo do multi-agent (mesma instância de cache).
   let cache: CompletionCache | undefined;
+  /** Escopo inclui a config de call: mudar effort/thinking invalida a entrada. */
+  const cacheScope = (m: ModelEntry): string =>
+    `${m.provider}/${m.id}|${JSON.stringify(m.call ?? null)}`;
   const withCache = (provider: Provider, scope: string): Provider => {
     const c = cache;
     if (c === undefined) return provider;
@@ -650,7 +653,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   };
   if (config.cache?.enabled === true) {
     cache = new CompletionCache(join(dirname(ledgerPath), "cache.db"));
-    effectiveProvider = withCache(effectiveProvider, `${model.provider}/${model.id}`);
+    effectiveProvider = withCache(effectiveProvider, cacheScope(model));
   }
 
   // Provider por modelo do agent (F-31d): o multi-agent troca de modelo e precisa
@@ -665,7 +668,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     const built = (config.providers[m.provider]?.fallback ?? []).length > 0
       ? providerChain(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
       : createGuardedProvider(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, () => activeAgent.name);
-    const wrapped = withCache(built, key);
+    const wrapped = withCache(built, cacheScope(m));
     modelProviders.set(key, wrapped);
     return wrapped;
   };

@@ -466,6 +466,12 @@ function validateCall(value: unknown, field: string): CallConfig {
     if (mode === "toggle" && off === undefined) {
       fail(`config inválida: "${f}.off" é obrigatório no modo "toggle"`);
     }
+    if (mode === "none" && (on !== undefined || off !== undefined)) {
+      fail(`config inválida: "${f}.on"/"${f}.off" não se aplicam ao modo "none"`);
+    }
+    if ((mode === "always" || mode === "adaptive") && off !== undefined) {
+      fail(`config inválida: "${f}.off" não se aplica ao modo "${mode}"`);
+    }
     thinking = {
       mode: mode as ThinkingMode,
       param,

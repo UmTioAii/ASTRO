@@ -11,13 +11,15 @@ import { Database } from "bun:sqlite";
 import { throwIfAborted } from "./abort";
 import type { CompletionRequest, CompletionResponse, Provider } from "./provider/types";
 
-/** Chave determinística da request: modelo + profile + mensagens + tools. */
+/** Chave determinística da request: modelo + profile + mensagens + tools + call. */
 export function cacheKey(req: CompletionRequest): string {
   const canonical = JSON.stringify({
     model: req.model,
     profile: req.profile ?? null,
     messages: req.messages,
     tools: req.tools ?? [],
+    // lvl/thinking/fixed mudam a resposta: não podem compartilhar entrada (E1).
+    call: req.call ?? null,
   });
   return createHash("sha256").update(canonical).digest("hex");
 }

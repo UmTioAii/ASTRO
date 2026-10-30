@@ -84,8 +84,8 @@ O ledger (F-31d) grava a identidade efetiva que atendeu — `provider`, `model`,
 |---|---|
 | `effort.param` / `effort.map` | `lvl` 0..4 → valor aceito pelo provider; ausente `lvl` usa 2 quando o modelo declara effort (E1) |
 | `thinking.mode` | `always` envia `on`; `adaptive` envia `on` (provider decide); `toggle` usa `on`/`off` conforme a escolha (default `on`); `none` não envia (E2) |
-| `forbidden` | caminhos removidos do corpo antes do envio e gravados em `usage["param.stripped"]` como `[{name, reason:"forbidden"}]`; raízes de protocolo (`model`, `messages`, `input`, `stream`, `tools`, `instructions`) são recusadas na config (E8) |
-| `call` na sessão | `RunOptions.call`/`SessionOptions.call` = `{lvl?, thinking?, fixed?}`; `fixed` nunca é sobrescrito pelo caminho automático (E3) |
+| `forbidden` | caminhos removidos do corpo antes do envio e gravados em `usage["param.stripped"]` como `[{name, reason:"forbidden"}]`; raízes de protocolo (`model`, `messages`, `input`, `stream`, `stream_options`, `tools`, `instructions`) são recusadas na config (E8) |
+| `call` na sessão | `RunOptions.call`/`SessionOptions.call` = `{lvl?, thinking?}`; a automação E4/E5 recebe `fixed` em `planEffortChange`/`applyEffortChange`, nunca sobrescrevendo o valor fixado (E3) |
 
 `planEffortChange`/`applyEffortChange` (`src/call-profile.ts`) implementam E4/E5: descer e subir 1–2 níveis é automático; subir 3+ exige aprovação. O `usage` grava `lvl`, `effort`, `thinking` e `param.stripped` (E7). Texto de raciocínio (`reasoning_content`) nunca é persistido: o parser só lê `content`, tool calls e usage (I-03, Q-08).
 
@@ -99,6 +99,7 @@ O ledger (F-31d) grava a identidade efetiva que atendeu — `provider`, `model`,
 | Kimi K3 (`kimi-k3.1-pro`) | topo `reasoning_effort`: `low`, `high`, `max`; default `max` | sempre ligado, sem toggle | `platform.kimi.ai` (chat completions) |
 | Kimi K2.6 | — | `thinking.type: "enabled" \| "disabled"` | idem |
 | Kimi K2.7-code | — | sempre `enabled`; `disabled` retorna erro | idem |
+| NVIDIA NIM (openai-compat) | `reasoning.effort` **quando o modelo expõe**; não verificado para `meta/llama-3.3-70b-instruct` | depende do modelo | `integrate.api.nvidia.com`; omita `call` se o modelo não documentar o parâmetro |
 | GLM via NIM | não verificado | não verificado | exige config explícita; nada é hardcoded (E9) |
 
 Mapas sugeridos: Anthropic `{0:"low",1:"low",2:"medium",3:"high",4:"max"}`; OpenAI `{0:"minimal",1:"low",2:"medium",3:"high",4:"max"}`; DeepSeek `{0:"low",1:"low",2:"medium",3:"high",4:"high"}`; Kimi K3 `{0:"low",1:"low",2:"high",3:"high",4:"max"}`. O mapa é config, não constante do harness.

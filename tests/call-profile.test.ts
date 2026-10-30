@@ -59,6 +59,19 @@ describe("call profile (S-08, #125)", () => {
     ]);
   });
 
+  test("forbidden ancestral limpa o applied do parâmetro coberto", () => {
+    const body: Record<string, unknown> = { model: "m", reasoning: { effort: "low" }, thinking: { type: "enabled" } };
+    const applied = applyCallToBody(body, { ...call, forbidden: ["reasoning", "thinking"] }, { lvl: 3 });
+
+    expect(body).toEqual({ model: "m" });
+    expect(applied.effort).toBeUndefined();
+    expect(applied.thinking).toBeUndefined();
+    expect(applied.stripped).toEqual([
+      { name: "reasoning", reason: "forbidden" },
+      { name: "thinking", reason: "forbidden" },
+    ]);
+  });
+
   test("subir 1–2 níveis é automático; 3+ pede aprovação (E4); descer é automático (E5)", () => {
     expect(planEffortChange(1, 3)).toEqual({ allowed: true, approvalRequired: false, level: 3, reason: "up_auto" });
     expect(planEffortChange(1, 4)).toEqual({ allowed: false, approvalRequired: true, level: 1, reason: "up_needs_approval" });

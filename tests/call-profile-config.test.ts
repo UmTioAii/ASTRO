@@ -59,6 +59,8 @@ describe("config call profile por modelo (E1–E8, D-CFG1)", () => {
     expect(() => validateConfig(cfg({ thinking: { mode: "sometimes", param: "x" } }))).toThrow(/thinking.mode/);
     expect(() => validateConfig(cfg({ thinking: { mode: "toggle", param: "x", on: "on" } }))).toThrow(/thinking.off/);
     expect(() => validateConfig(cfg({ thinking: { mode: "always", param: "x" } }))).toThrow(/thinking.on/);
+    expect(() => validateConfig(cfg({ thinking: { mode: "always", param: "x", on: "on", off: "off" } }))).toThrow(/thinking.off/);
+    expect(() => validateConfig(cfg({ thinking: { mode: "none", param: "x", on: "on" } }))).toThrow(/thinking/);
     expect(() => validateConfig(cfg({ thinking: { mode: "always", param: "" , on: "on" } }))).toThrow(/thinking.param/);
   });
 

@@ -30,7 +30,7 @@ describe("call profile ponta a ponta (E1–E8)", () => {
           call: {
             effort: { param: "reasoning.effort", map: { "0": "minimal", "1": "low", "2": "medium", "3": "high", "4": "ultra" } },
             thinking: { mode: "toggle", param: "thinking.type", on: "enabled", off: "disabled" },
-            forbidden: ["temperature"],
+            forbidden: ["reasoning.effort"],
           },
         }],
         agent: { model: "mock/m1", maxSteps: 2, tools: [] },
@@ -41,11 +41,17 @@ describe("call profile ponta a ponta (E1–E8)", () => {
         configPath, task: "x", cwd, env: { KEY: "k" }, call: { lvl: 3, thinking: "off" },
       });
       expect(report.final).toBe("ok");
-      expect(body).toMatchObject({ reasoning: { effort: "high" }, thinking: { type: "disabled" } });
+      expect(body).toMatchObject({ thinking: { type: "disabled" } });
+      expect(body.reasoning).toBeUndefined();
 
       const ledgerPath = join(cwd, ".astro", "ledger.jsonl");
       const usage = new Ledger(ledgerPath).readAllEntries().find((e) => e.kind === "usage");
-      expect(usage).toMatchObject({ lvl: 3, effort: "high", thinking: "disabled" });
+      expect(usage).toMatchObject({
+        lvl: 3,
+        thinking: "disabled",
+        "param.stripped": [{ name: "reasoning.effort", reason: "forbidden" }],
+      });
+      expect(usage).not.toHaveProperty("effort");
       expect(readFileSync(ledgerPath, "utf8")).not.toContain(REASONING);
       expect(readFileSync(join(cwd, ".astro", "audit.jsonl"), "utf8")).not.toContain(REASONING);
     } finally {
