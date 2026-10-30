@@ -6,6 +6,8 @@ import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
 import type { BudgetDecider } from "../budget";
 import type { AstroConfig } from "../config";
+import type { CodexLoginStart } from "../provider/codex-login";
+import { expandHomePath, saveCodexAuth, startCodexLogin } from "../provider/codex-login";
 import { loadEffectiveConfig, providerIdentityFor, type ProviderSelection, type ProviderSource } from "../provider/profiles";
 import type { ChatMessage } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
@@ -239,6 +241,24 @@ export class AgentSession {
   /** Teste real mínimo de um provider (C6); sob demanda na tela de providers. */
   probeProvider(name: string): Promise<HealthCheck> {
     return probeProvider(this.#config, name, this.#env ?? process.env);
+  }
+
+  /** Login device flow do Codex; grava o auth.json só depois do exchange. */
+  async loginCodex(name: string, signal?: AbortSignal): Promise<CodexLoginStart> {
+    const provider = this.#config.providers[name];
+    if (provider === undefined || provider.kind !== "codex-oauth") {
+      throw new Error(`provider "${name}" não é codex-oauth`);
+    }
+    const credentialsPath = (provider as { credentialsPath?: string }).credentialsPath ?? "~/.codex/auth.json";
+    const path = expandHomePath(credentialsPath);
+    const start = await startCodexLogin({ ...(signal === undefined ? {} : { signal }) });
+    return {
+      ...start,
+      done: start.done.then((tokens) => {
+        saveCodexAuth(path, tokens);
+        return tokens;
+      }),
+    };
   }
 
   /** Troca de provider mantendo o id do modelo quando existir; senão o primeiro ativo. */

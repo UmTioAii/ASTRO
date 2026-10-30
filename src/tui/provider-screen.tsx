@@ -5,6 +5,7 @@ import { PROVIDER_CATALOG } from "../provider/catalog";
 import type { ProfileDraft, ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ProfileModel } from "../provider/profiles";
 import type { HealthCheck } from "../health";
+import type { CodexLoginStart } from "../provider/codex-login";
 import { redactSecrets } from "../sanitize-external";
 import { formatProviderCheck } from "./health";
 import type { ThemeColors } from "./theme";
@@ -20,6 +21,8 @@ export interface ProviderScreenProps {
   onChanged?: () => void;
   /** Teste real mínimo do provider (C6); ausente desabilita `t`. */
   onTest?: (id: string) => Promise<HealthCheck>;
+  /** Login device flow do Codex; ausente desabilita `l`. */
+  onLogin?: (id: string, signal?: AbortSignal) => Promise<CodexLoginStart>;
 }
 
 type Step = "catalog" | "name" | "baseUrl" | "models" | "credential" | "confirm";
@@ -44,7 +47,7 @@ function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel
 }
 
 export function ProviderScreen({
-  manager, colors, currentModel, initial, onClose, onActivate, onChanged, onTest,
+  manager, colors, currentModel, initial, onClose, onActivate, onChanged, onTest, onLogin,
 }: ProviderScreenProps): ReactElement {
   const initialList = manager.list();
   const initialTarget = initial?.target === undefined
@@ -90,7 +93,9 @@ export function ProviderScreen({
   const [testTarget, setTestTarget] = useState<ProfileView | undefined>(undefined);
   const [testing, setTesting] = useState(false);
   const [messageOk, setMessageOk] = useState(false);
+  const [login, setLogin] = useState<{ target: ProfileView; url: string; userCode: string } | undefined>(undefined);
   const probeToken = useRef(0);
+  const loginAbort = useRef<AbortController | undefined>(undefined);
 
 
   const list = manager.list();
@@ -173,9 +178,46 @@ export function ProviderScreen({
     }
   };
 
+  const startLogin = (profile: ProfileView): void => {
+    if (onLogin === undefined) return;
+    const controller = new AbortController();
+    loginAbort.current = controller;
+    setMessage(undefined);
+    void onLogin(profile.id, controller.signal)
+      .then((start) => {
+        if (controller.signal.aborted) return undefined;
+        setLogin({ target: profile, url: start.device.verificationUrl, userCode: start.device.userCode });
+        return start.done;
+      })
+      .then(() => {
+        if (controller.signal.aborted) return;
+        setLogin(undefined);
+        setMessageOk(true);
+        setMessage(`${profile.id}: login concluído`);
+        onChanged?.();
+        onActivate(profile.id);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLogin(undefined);
+        setMessageOk(false);
+        setMessage(`erro: ${messageOf(error)}`);
+      });
+  };
+
   useInput((input, key) => {
     if (key.ctrl && (input === "c" || input === "d")) {
       onClose();
+      return;
+    }
+    if (login !== undefined) {
+      if (key.escape) {
+        loginAbort.current?.abort();
+        loginAbort.current = undefined;
+        setLogin(undefined);
+        setMessageOk(false);
+        setMessage("login cancelado");
+      }
       return;
     }
     if (testTarget !== undefined) {
@@ -219,6 +261,12 @@ export function ProviderScreen({
         if (onTest !== undefined && current !== undefined) {
           setMessage(undefined);
           setTestTarget(current);
+        }
+        return;
+      }
+      if (input === "l") {
+        if (onLogin !== undefined && current !== undefined && current.kind === "codex-oauth") {
+          startLogin(current);
         }
         return;
       }
@@ -315,6 +363,17 @@ export function ProviderScreen({
     else if (step === "credential") setCredential((value) => value + input);
   });
 
+  if (login !== undefined) {
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Login Codex: {login.target.name}</Text>
+        <Text>abra {login.url} e informe o código {login.userCode}</Text>
+        <Text dimColor>aguardando… esc cancela</Text>
+        {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
+      </Box>
+    );
+  }
+
   if (testTarget !== undefined) {
     return (
       <Box flexDirection="column" borderStyle="round" paddingX={1}>
@@ -392,9 +451,10 @@ export function ProviderScreen({
         </Text>
       ))}
       <Text dimColor>
-        {onTest === undefined
-          ? "a adicionar · e editar · d remover · enter ativar · esc voltar"
-          : "a adicionar · e editar · d remover · t testar · enter ativar · esc voltar"}
+        {["a adicionar", "e editar", "d remover",
+          ...(onTest === undefined ? [] : ["t testar"]),
+          ...(onLogin === undefined || current?.kind !== "codex-oauth" ? [] : ["l login"]),
+          "enter ativar", "esc voltar"].join(" · ")}
       </Text>
       {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
     </Box>

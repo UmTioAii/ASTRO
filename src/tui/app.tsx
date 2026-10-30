@@ -435,6 +435,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
           }
           return check;
         } })}
+        {...(session.loginCodex === undefined ? {} : { onLogin: (id: string, signal?: AbortSignal) => session.loginCodex!(id, signal) })}
       />
     );
   }

@@ -4,6 +4,7 @@ import { runProviderWizard } from "./provider-wizard";
 import type { ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ModelInfo, ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
 import type { HealthCheck, HealthReport } from "../health";
+import type { CodexLoginStart } from "../provider/codex-login";
 import type { SessionStore } from "./store";
 import { sessionSummaryLine } from "./store";
 import { exportSession } from "./export";
@@ -36,6 +37,8 @@ export interface ChatSession {
   health?(): Promise<HealthReport>;
   /** Teste real mínimo de um provider, sob demanda. */
   probeProvider?(name: string): Promise<HealthCheck>;
+  /** Login device flow do Codex, sob demanda. */
+  loginCodex?(name: string, signal?: AbortSignal): Promise<CodexLoginStart>;
   /** Recarrega config/perfis do disco (após /provider add|edit|remove). */
   reload?(): void;
   snapshot(): SessionSnapshot;
