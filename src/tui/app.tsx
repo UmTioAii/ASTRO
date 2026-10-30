@@ -114,6 +114,16 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
+  const [health, setHealth] = useState<"ok" | "degraded" | "down" | undefined>(undefined);
+  const refreshHealth = async (): Promise<void> => {
+    if (session.health === undefined) return;
+    try {
+      const report = await session.health();
+      setHealth(report.status);
+    } catch {
+      setHealth(undefined);
+    }
+  };
   const [screen, setScreen] = useState<{ mode: "list" | "add" | "edit" | "remove"; target?: string } | undefined>(undefined);
   const [modelPicker, setModelPicker] = useState(false);
   const [favorites, setFavorites] = useState<string[]>(initialConfig.favoriteModels ?? []);
@@ -229,6 +239,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         } catch (error) {
           added.push({ kind: "error", text: `erro: ${messageOf(error)}` });
         }
+        if (command.kind === "provider" && command.action === "use") void refreshHealth();
       }
       setEntries((current) => [...current, ...added]);
       setStatus(statusOf(session.snapshot()));
@@ -395,6 +406,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
           });
           setStatus(statusOf(session.snapshot()));
           setEntries((current) => [...current, { kind: "info", text: `provider: ${session.model}` }]);
+          void refreshHealth();
         }}
         onChanged={() => {
           try {
@@ -404,6 +416,11 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
             setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
           }
         }}
+        {...(session.probeProvider === undefined ? {} : { onTest: async (id: string) => {
+          const check = await session.probeProvider!(id);
+          void refreshHealth();
+          return check;
+        } })}
       />
     );
   }
@@ -430,7 +447,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         </Text>
       ))}
       <Text dimColor>
-        {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)}
+        {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)} · {session.providerName?.() ?? status.model.split("/")[0]} · saúde: {health ?? "n/d"}
       </Text>
     </Box>
   );

@@ -72,6 +72,56 @@ test("ctrl+c fecha a tela de providers", async () => {
   }
 });
 
+test("t pede confirmação, cancela sem chamada e executa com enter", async () => {
+  let calls = 0;
+  const instance = render(
+    <ProviderScreen
+      manager={manager()}
+      colors={colors}
+      onClose={() => undefined}
+      onActivate={() => undefined}
+      onTest={async () => { calls++; return { name: "provider:p", status: "ok", latencyMs: 12 }; }}
+    />,
+  );
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    instance.stdin.write("t");
+    await waitFor(() => instance.lastFrame()?.includes("Testar p?") === true);
+    expect(calls).toBe(0);
+    instance.stdin.write("\u001b");
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    expect(calls).toBe(0);
+    instance.stdin.write("t");
+    await waitFor(() => instance.lastFrame()?.includes("Testar p?") === true);
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("ok · 12ms") === true);
+    expect(calls).toBe(1);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("resultado down mostra classe de erro e latência", async () => {
+  const instance = render(
+    <ProviderScreen
+      manager={manager()}
+      colors={colors}
+      onClose={() => undefined}
+      onActivate={() => undefined}
+      onTest={async () => ({ name: "provider:p", status: "down", latencyMs: 7, detail: "HTTP 401 em GET /models" })}
+    />,
+  );
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    instance.stdin.write("t");
+    await waitFor(() => instance.lastFrame()?.includes("Testar p?") === true);
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("down (auth) · 7ms") === true);
+  } finally {
+    instance.unmount();
+  }
+});
+
 test("a abre o formulário e salva um provider custom", async () => {
   const m = manager();
   const activated: string[] = [];

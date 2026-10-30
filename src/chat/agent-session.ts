@@ -13,6 +13,7 @@ import { Ledger } from "../ledger";
 import { DEFAULT_SYSTEM_PROMPT } from "../session";
 import { guardContext } from "./context-guard";
 import { isFatalSessionError } from "./session-errors";
+import { runHealthCheck, testProvider as probeProvider, type HealthCheck, type HealthReport } from "../health";
 
 export interface AgentSessionOptions {
   configPath: string;
@@ -228,6 +229,16 @@ export class AgentSession {
 
   providerName(): string {
     return this.#registry.require(this.#modelRef).provider;
+  }
+
+  /** Health agregado (F6-6) para a status bar da TUI; sob demanda. */
+  health(): Promise<HealthReport> {
+    return runHealthCheck(this.#config, this.#env ?? process.env);
+  }
+
+  /** Teste real mínimo de um provider (C6); sob demanda na tela de providers. */
+  probeProvider(name: string): Promise<HealthCheck> {
+    return probeProvider(this.#config, name, this.#env ?? process.env);
   }
 
   /** Troca de provider mantendo o id do modelo quando existir; senão o primeiro ativo. */

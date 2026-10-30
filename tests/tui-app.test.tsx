@@ -48,6 +48,14 @@ class FakeSession implements ChatSession {
   setProvider(name: string): string {
     return `${name}/m1`;
   }
+  healthCalls = 0;
+  health() {
+    this.healthCalls++;
+    return Promise.resolve({ status: "degraded" as const, checks: [] });
+  }
+  providerName(): string {
+    return "p";
+  }
   resumed: string[] = [];
   resumedFrom: { id: string; startedAt: string } | undefined;
   resume(snapshot: SessionSnapshot): void {
@@ -87,6 +95,22 @@ test("mostra boas-vindas, status e responde um turno", async () => {
     expect(instance.lastFrame()).toContain("1 step(s)");
     expect(session.sent).toEqual(["olá"]);
     expect(instance.lastFrame()).toContain("1 turno(s)");
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("status bar mostra saúde n/d e atualiza após troca de provider", async () => {
+  const session = new FakeSession();
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-health-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("saúde: n/d") === true);
+    expect(session.healthCalls).toBe(0);
+    instance.stdin.write("/provider use p");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("saúde: degraded") === true);
+    expect(session.healthCalls).toBe(1);
   } finally {
     instance.unmount();
   }
