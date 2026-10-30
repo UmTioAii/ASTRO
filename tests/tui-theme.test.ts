@@ -24,6 +24,16 @@ describe("configuração da TUI (T2, #197)", () => {
     expect(getThemeColors("dark").accent).toBe("cyan");
   });
 
+  test("favoritos e recentes persistem e ignoram entradas inválidas", () => {
+    const cwd = tempCwd();
+    saveTuiConfig(cwd, { favoriteModels: ["p/a", "p/a", ""], recentModels: ["p/c", "p/c"] });
+    expect(loadTuiConfig(cwd)).toEqual({ theme: "dark", favoriteModels: ["p/a"], recentModels: ["p/c"] });
+    const broken = tempCwd();
+    mkdirSync(join(broken, ".astro"));
+    writeFileSync(join(broken, ".astro", "tui.json"), JSON.stringify({ theme: "light", favoriteModels: ["p/a", 1, ""] }), "utf8");
+    expect(loadTuiConfig(broken)).toEqual({ theme: "light", favoriteModels: ["p/a"] });
+  });
+
   test("recusa .astro que escapa do cwd (I-11)", () => {
     const cwd = tempCwd();
     symlinkSync(tempCwd(), join(cwd, ".astro"), process.platform === "win32" ? "junction" : "dir");

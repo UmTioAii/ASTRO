@@ -143,7 +143,7 @@ All commands run as `astro <command>`; from a clone, `bun src/cli.ts <command>` 
 
 | Command | Effect |
 |---|---|
-| `/model [provider/id]` | lists models or switches model |
+| `/model [provider/id]` | REPL: lists models or switches model. TUI: opens the picker (search, favorites, recents, detail) or switches when an argument is given |
 | `/providers` / `/provider [name]` | lists providers or switches provider (keeps the model id when available) |
 | `/session` | id, start, model, turns, tokens, cost and last session file |
 | `/details` | id, provider, model, uptime, turns, tokens, cost and resume origin |
@@ -163,7 +163,7 @@ On a terminal, swap approval (`s/N`) and budget overrun (`c`/`l`/`p`) are asked 
 
 `bun src/cli.ts tui` opens the Ink interface (ADR-0001): conversation panel, single-line input and a status bar with cwd/branch, model, turns, tokens and cost. Tab completes slash commands and `@` files from the cwd; `!cmd` runs the shell through `run_command` only when it is in `agent.tools` (same sandbox/timeout); swap approval and budget prompts are answered in the panel with the same rules as `chat` (empty or EOF denies, exact budget tokens). It needs a real terminal; `chat` remains the piped option.
 
-It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/details`, `/compact`, `/summarize`, `/sessions`, `/resume`, `/save`, `/export`, `/init`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Assistant replies render basic Markdown (headings, lists, inline code/bold, fenced blocks); `/new` aliases `/clear`. Keybindings use the `ctrl+x` leader: `c` (clear), `e`/`q` (exit), `m` (models), `n` (new), `l` (saved sessions), `t` (dark/light theme). Theme and last model persist in `.astro/tui.json`. Session picker and diff view remain in #64.
+It reuses the same `AgentSession`, commands and session store as `chat` (`/help`, `/model`, `/providers`, `/provider`, `/session`, `/details`, `/compact`, `/summarize`, `/sessions`, `/resume`, `/save`, `/export`, `/init`, `/clear`, `/exit`), so prompts, secrets policy and persistence are identical. Ink is imported only by this command; the rest of the CLI stays dependency-free. Assistant replies render basic Markdown (headings, lists, inline code/bold, fenced blocks); `/new` aliases `/clear`. Keybindings use the `ctrl+x` leader: `c` (clear), `e`/`q` (exit), `m` (models), `n` (new), `l` (saved sessions), `t` (dark/light theme). Theme, last model, favorites and recents persist in `.astro/tui.json`; `/model` in the TUI opens a picker with search and a detail row (context, tags, curated price). Session picker and diff view remain in #64.
 
 ## Environment variables
 

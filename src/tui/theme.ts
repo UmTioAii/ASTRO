@@ -9,6 +9,8 @@ export type Theme = "dark" | "light";
 export interface TuiConfig {
   theme: Theme;
   lastModel?: string;
+  favoriteModels?: string[];
+  recentModels?: string[];
 }
 
 export type ThemeColors = { accent: string; warning: string; error: string };
@@ -25,6 +27,19 @@ function assertInside(cwd: string, path: string): void {
   if (rel !== "" && (rel.startsWith("..") || isAbsolute(rel))) throw new ConfigError("config da TUI fora do cwd");
 }
 
+function normalizeList(value: unknown, max = Number.POSITIVE_INFINITY): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.trim() === "" || seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /** Lê a configuração; arquivo ausente, inválido ou fora do cwd cai no default. */
 export function loadTuiConfig(cwd: string): TuiConfig {
   try {
@@ -35,17 +50,35 @@ export function loadTuiConfig(cwd: string): TuiConfig {
     const record = parsed as Record<string, unknown>;
     const theme: Theme = record.theme === "light" ? "light" : "dark";
     const lastModel = typeof record.lastModel === "string" && record.lastModel !== "" ? record.lastModel : undefined;
-    return { theme, ...(lastModel === undefined ? {} : { lastModel }) };
+    const favoriteModels = normalizeList(record.favoriteModels);
+    const recentModels = normalizeList(record.recentModels, 10);
+    return {
+      theme,
+      ...(lastModel === undefined ? {} : { lastModel }),
+      ...(favoriteModels.length === 0 ? {} : { favoriteModels }),
+      ...(recentModels.length === 0 ? {} : { recentModels }),
+    };
   } catch {
     return { ...DEFAULT_CONFIG };
   }
 }
 
-/** Grava a configuração mesclando com o que já existe (tema + último modelo). */
+/** Grava a configuração mesclando com o que já existe (tema + preferências). */
 export function saveTuiConfig(cwd: string, config: Partial<TuiConfig>): void {
   const current = loadTuiConfig(cwd);
   const lastModel = config.lastModel ?? current.lastModel;
-  const merged: TuiConfig = { theme: config.theme ?? current.theme, ...(lastModel === undefined ? {} : { lastModel }) };
+  const favoriteModels = config.favoriteModels === undefined
+    ? current.favoriteModels
+    : normalizeList(config.favoriteModels);
+  const recentModels = config.recentModels === undefined
+    ? current.recentModels
+    : normalizeList(config.recentModels, 10);
+  const merged: TuiConfig = {
+    theme: config.theme ?? current.theme,
+    ...(lastModel === undefined ? {} : { lastModel }),
+    ...(favoriteModels === undefined || favoriteModels.length === 0 ? {} : { favoriteModels }),
+    ...(recentModels === undefined || recentModels.length === 0 ? {} : { recentModels }),
+  };
   const dir = join(cwd, ".astro");
   mkdirSync(dir, { recursive: true });
   assertInside(cwd, dir);

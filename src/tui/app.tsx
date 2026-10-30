@@ -13,6 +13,8 @@ import type { ShellRunner } from "./shell";
 import { COMMANDS, applyCompletion, completionItems } from "./editor";
 import { indexFiles } from "./files";
 import { Markdown } from "./markdown";
+import { ModelPicker } from "./model-picker";
+import { recordRecent, type ModelOption } from "./models";
 import { loadTuiConfig, saveTuiConfig, getThemeColors, type Theme, type ThemeColors } from "./theme";
 import { LEADER, runKeybind } from "./keybinds";
 import { ProviderScreen } from "./provider-screen";
@@ -100,7 +102,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   };
   const [busy, setBusy] = useState(false);
   const [partial, setPartial] = useState<string | undefined>(undefined);
-  const [theme, setTheme] = useState<Theme>(() => loadTuiConfig(cwd).theme);
+  const [initialConfig] = useState(() => loadTuiConfig(cwd));
+  const [theme, setTheme] = useState<Theme>(initialConfig.theme);
   const colors = getThemeColors(theme);
   const persistTheme = (next: Theme): void => {
     setTheme(next);
@@ -112,6 +115,9 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
   const [screen, setScreen] = useState<{ mode: "list" | "add" | "edit" | "remove"; target?: string } | undefined>(undefined);
+  const [modelPicker, setModelPicker] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>(initialConfig.favoriteModels ?? []);
+  const [recents, setRecents] = useState<string[]>(initialConfig.recentModels ?? []);
   const commandState = useRef<CommandState>({});
   const exited = useRef(false);
 
@@ -152,6 +158,17 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
     onExit?.();
   };
 
+  const pickerModels = (): ModelOption[] => {
+    const info = session.listModelInfo?.();
+    if (info !== undefined) return info;
+    return session.listModels().map((ref) => {
+      const slash = ref.indexOf("/");
+      const provider = slash < 0 ? ref : ref.slice(0, slash);
+      const id = slash < 0 ? ref : ref.slice(slash + 1);
+      return { ref, provider, id, tags: [], status: "unknown" };
+    });
+  };
+
   const submit = async (): Promise<void> => {
     const text = inputRef.current.trim();
     if (text === "") return;
@@ -184,6 +201,10 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
     if (command.kind === "empty") return;
     if (command.kind === "exit") {
       finish();
+      return;
+    }
+    if (command.kind === "model" && command.model === undefined) {
+      setModelPicker(true);
       return;
     }
     if (command.kind !== "prompt") {
@@ -247,7 +268,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
     }
   };
 
-  useInput((value, key) => {    if (screen !== undefined) return; const ctrl = key.ctrl === true;
+  useInput((value, key) => {    if (screen !== undefined || modelPicker) return; const ctrl = key.ctrl === true;
     if (ctrl && (value === "c" || value === "d")) {
       approvals?.answer("");
       finish();
@@ -321,6 +342,44 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
       }
     }
   });
+
+  if (modelPicker) {
+    return (
+      <ModelPicker
+        models={pickerModels()}
+        favorites={favorites}
+        recents={recents}
+        colors={colors}
+        onClose={() => setModelPicker(false)}
+        onExit={finish}
+        onSelect={(ref) => {
+          try {
+            const model = session.setModel(ref);
+            const nextRecents = recordRecent(model, recents);
+            try {
+              saveTuiConfig(cwd, { lastModel: model, recentModels: nextRecents });
+            } catch (error) {
+              setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
+            }
+            setRecents(nextRecents);
+            setStatus(statusOf(session.snapshot()));
+            setEntries((current) => [...current, { kind: "info", text: `modelo: ${model}` }]);
+          } catch (error) {
+            setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
+          }
+          setModelPicker(false);
+        }}
+        onFavorite={(next) => {
+          try {
+            saveTuiConfig(cwd, { favoriteModels: next });
+            setFavorites(next);
+          } catch (error) {
+            setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
+          }
+        }}
+      />
+    );
+  }
 
   if (screen !== undefined && manager !== undefined) {
     return (

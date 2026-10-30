@@ -23,7 +23,7 @@ export type ReplCommand =
 export const HELP_TEXT = [
   "Comandos:",
   "  /help           esta ajuda",
-  "  /model [alvo]   lista modelos ou troca (provider/id)",
+  "  /model [alvo]   lista (REPL) ou abre o seletor (TUI); com alvo, troca",
   "  /providers      lista providers (kind, credencial, quota, modelos)",
   "  /provider       lista perfis (projeto, globais, env) e o ativo",
   "  /provider add   cria um perfil (catálogo ou custom)",

@@ -2,7 +2,7 @@
 import { HELP_TEXT, parseCommand } from "./commands";
 import { runProviderWizard } from "./provider-wizard";
 import type { ProfileManager, ProfileView } from "../provider/profile-manager";
-import type { ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
+import type { ModelInfo, ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
 import type { SessionStore } from "./store";
 import { sessionSummaryLine } from "./store";
 import { exportSession } from "./export";
@@ -25,6 +25,8 @@ export interface ChatSession {
   resume(snapshot: SessionSnapshot): void;
   setModel(ref: string): string;
   listModels(): string[];
+  /** Metadados para o seletor da TUI; ausente usa a lista simples. */
+  listModelInfo?(): ModelInfo[];
   listProviders(): ProviderInfo[];
   setProvider(name: string): string;
   /** Recarrega config/perfis do disco (após /provider add|edit|remove). */
