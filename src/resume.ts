@@ -104,8 +104,37 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
   const roots = ordered.filter((n) => n.parent_agent_id === undefined).map((n) => n.agent_id);
   if (roots.length !== 1) throw new ReplayIncompleteError(`run "${run}" com ${roots.length} raízes; replay incompleto`);
   const active = ordered.filter((n) => n.destroyedSeq === undefined);
-  if (active.length > 1) throw new ReplayIncompleteError(`run "${run}" com ${active.length} agentes ativos; replay incompleto`);
-  return { run, nodes: ordered, roots, active: active[0] };
+  let activeAgent = active[0];
+  if (active.length > 1) {
+    // Spawn runtime cria o filho antes do handoff: pai + filho ativos formam
+    // uma cadeia. A retomada usa a raiz da cadeia; ativos irmãos/independentes
+    // continuam sendo replay incompleto.
+    const activeIds = new Set(active.map((node) => node.agent_id));
+    const activeRoots = active.filter(
+      (node) => node.parent_agent_id === undefined || !activeIds.has(node.parent_agent_id),
+    );
+    if (activeRoots.length !== 1) {
+      throw new ReplayIncompleteError(`run "${run}" com ${active.length} agentes ativos; replay incompleto`);
+    }
+    const root = activeRoots[0]!;
+    const byId = new Map(ordered.map((node) => [node.agent_id, node]));
+    for (const node of active) {
+      let current: AgentNode | undefined = node;
+      const seen = new Set<string>();
+      while (current !== undefined && current.agent_id !== root.agent_id) {
+        if (seen.has(current.agent_id)) {
+          throw new ReplayIncompleteError(`run "${run}" com ciclo de pais; replay incompleto`);
+        }
+        seen.add(current.agent_id);
+        current = current.parent_agent_id === undefined ? undefined : byId.get(current.parent_agent_id);
+      }
+      if (current === undefined) {
+        throw new ReplayIncompleteError(`run "${run}" com agente ativo fora da cadeia; replay incompleto`);
+      }
+    }
+    activeAgent = root;
+  }
+  return { run, nodes: ordered, roots, active: activeAgent };
 }
 
 /** Plano determinístico de retomada: último `run_state` + agente a retomar, sem recalcular escolhas. */

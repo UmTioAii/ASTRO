@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Auditor } from "./audit";
-import { AccountLockedError, acquireAgentLock, releaseAgentLock } from "./agent-lock";
+import { AccountLockedError, acquireAgentLock, activeLocks, releaseAgentLock } from "./agent-lock";
 import type { AstroConfig, BudgetConfig } from "./config";
 import { providerAccountRefFor } from "./config";
 import type { Ledger } from "./ledger";
@@ -33,6 +33,15 @@ export class SpawnLimitError extends Error {
   constructor(limit: number) {
     super(`limite de ${limit} spawns por run excedido`);
     this.name = "SpawnLimitError";
+  }
+}
+
+/** Teto de agentes ativos do run (A2 v1: orchestrator + 1). */
+export class SpawnConcurrencyError extends Error {
+  readonly code = "spawn_limit_exceeded";
+  constructor(limit: number) {
+    super(`teto de ${limit} agentes ativos por run atingido`);
+    this.name = "SpawnConcurrencyError";
   }
 }
 
@@ -86,6 +95,11 @@ export class SpawnRegistry {
 
   add(agent: SpawnedAgent): void {
     this.#agents.set(agent.agent_id, agent);
+  }
+
+  /** Remove um spawn que falhou depois da aquisição do lock. */
+  remove(agentId: string): void {
+    this.#agents.delete(agentId);
   }
 
   /** Converte o spawn para o contrato de agent do loop multi-agent. */
@@ -151,7 +165,7 @@ function toolError(error: unknown): ToolResult {
       isError: true,
     };
   }
-  if (error instanceof ModelChoiceError || error instanceof AccountLockedError || error instanceof SpawnLimitError) {
+  if (error instanceof ModelChoiceError || error instanceof AccountLockedError || error instanceof SpawnLimitError || error instanceof SpawnConcurrencyError) {
     const candidates = error instanceof ModelChoiceError ? error.candidates : undefined;
     return {
       output: JSON.stringify({
@@ -234,8 +248,21 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
 
         if (deps.spawns.size >= deps.spawns.limit) throw new SpawnLimitError(deps.spawns.limit);
 
+        const maxActive = deps.config.maxActive ?? 2;
+        const active = activeLocks(deps.ledger).filter((lock) => lock.run === ctx.run).length;
+        if (active >= maxActive) throw new SpawnConcurrencyError(maxActive);
+
+        const isChild = deps.spawns.get(ctx.agent) !== undefined;
         const parentAllow = ctx.allow ?? [];
-        const tools = raw.tools === undefined ? [...parentAllow] : raw.tools;
+        // v1 é serial: filho não spawna neto (sem canal p2p e sem histórico do pai).
+        const inherited = parentAllow.filter((tool) => !(isChild && tool === "spawn_agent"));
+        const tools = raw.tools === undefined ? inherited : raw.tools;
+        if (isChild && tools.includes("spawn_agent")) {
+          return {
+            output: JSON.stringify({ error: "invalid_request", message: "subagente não pode spawnar outro subagente em v1" }),
+            isError: true,
+          };
+        }
         const outside = tools.filter((tool) => !parentAllow.includes(tool));
         if (outside.length > 0) {
           return {
@@ -263,7 +290,7 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
         let choice;
         let snapshotId = typeof raw.snapshot_id === "string" ? raw.snapshot_id : undefined;
         if (snapshotId !== undefined) {
-          choice = resolveModelChoice(snapshotId, raw.model, cdeps);
+          choice = resolveModelChoice(snapshotId, raw.model, cdeps, raw.need);
         } else {
           const query = {
             need: raw.need,
@@ -271,7 +298,7 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
           };
           const snapshot = listModelCandidates(query, cdeps);
           snapshotId = snapshot.snapshot_id;
-          choice = resolveModelChoice(snapshotId, raw.model, cdeps);
+          choice = resolveModelChoice(snapshotId, raw.model, cdeps, raw.need);
         }
 
         if (tools.length > 0) {
@@ -300,7 +327,10 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
         const keyless = providerConfig.kind === "openai-compat" &&
           (typeof rawCredential !== "string" || rawCredential.length === 0);
         const agentId = deps.spawns.nextId(new Set(Object.keys(deps.config.agents ?? {})));
-        const reason = (typeof raw.reason === "string" && raw.reason.length > 0 ? raw.reason : choice.reason).slice(0, 200);
+        const reason = [choice.reason, typeof raw.reason === "string" ? raw.reason : ""]
+          .filter((part) => part.length > 0)
+          .join(": ")
+          .slice(0, 200);
         const instructions = [raw.task, readAgentsMd(deps.cwd)]
           .filter((part) => part.length > 0)
           .join("\n\n");
@@ -346,6 +376,7 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
             },
           });
         } catch (error) {
+          deps.spawns.remove(agentId);
           try {
             releaseAgentLock(deps.ledger, deps.audit, { run: ctx.run, agent_id: agentId, reason: "spawn_failed" });
           } catch {

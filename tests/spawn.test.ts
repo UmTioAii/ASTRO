@@ -76,7 +76,7 @@ describe("tool spawn_agent (S-11, A1/A2/A3/A5)", () => {
     expect((await tool.execute({ need: "writing-code", task: "b", tools: [] }, ctx)).isError).toBe(false);
     const third = await tool.execute({ need: "writing-code", task: "c", tools: [] }, ctx);
     expect(third.isError).toBe(true);
-    expect(JSON.parse(third.output)).toMatchObject({ error: "no_candidates" });
+    expect(JSON.parse(third.output)).toMatchObject({ error: "spawn_limit_exceeded" });
   });
 
   test("limite de spawns por run dispara spawn_limit_exceeded", async () => {
@@ -106,6 +106,23 @@ describe("tool spawn_agent (S-11, A1/A2/A3/A5)", () => {
     const body = JSON.parse(result.output) as { error: string; candidates: unknown[] };
     expect(body.error).toBe("invalid_model_choice");
     expect(body.candidates.length).toBeGreaterThan(0);
+  });
+
+  test("subagente não spawna neto em v1 e snapshot com need divergente falha", async () => {
+    const { cfg, ledger, registry, spawns, tool, ctx } = setup();
+    const first = await tool.execute({ need: "writing-code", task: "a", tools: ["read_file"] }, ctx);
+    expect(first.isError).toBe(false);
+
+    const childCtx = { ...ctx, agent: "sub-1", allow: ["read_file", "spawn_agent"] };
+    const nested = await tool.execute({ need: "writing-code", task: "b", tools: ["spawn_agent"] }, childCtx);
+    expect(nested.isError).toBe(true);
+    expect(JSON.parse(nested.output)).toMatchObject({ error: "invalid_request" });
+    expect(spawns.size).toBe(1);
+
+    const snapshot = listModelCandidates({ need: "writing-code", requires: ["tools"] }, { config: cfg, registry, ledger });
+    const mismatch = await tool.execute({ need: "analysis", task: "b", model: "p1/m1", snapshot_id: snapshot.snapshot_id }, ctx);
+    expect(mismatch.isError).toBe(true);
+    expect(JSON.parse(mismatch.output)).toMatchObject({ error: "candidate_set_changed" });
   });
 
   test("conta já presa por outro agente exclui o candidato e o spawn falha fechado", async () => {

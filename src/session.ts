@@ -682,16 +682,16 @@ export async function runMultiAgentSession(
     const spawned = opts.spawns?.get(name);
     return spawned === undefined ? undefined : opts.spawns!.toAgentEntry(spawned, opts.baseSystemPrompt);
   };
-  const allKnownAgents = (): string[] | undefined => {
-    const declared = opts.registry.listAgentNames?.();
-    const spawned = opts.spawns?.list().map((agent) => agent.agent_id) ?? [];
-    if (declared === undefined && spawned.length === 0) return undefined;
-    return [...(declared ?? []), ...spawned];
-  };
-  /** Subagente só fala com o pai (A8/I-18); o orchestrator vê todos. */
   const knownFor = (name: string): string[] | undefined => {
     const spawned = opts.spawns?.get(name);
-    return spawned === undefined ? allKnownAgents() : [spawned.parent_agent_id];
+    // Filho só fala com o pai; declarado só fala com declarados + filhos próprios.
+    if (spawned !== undefined) return [spawned.parent_agent_id];
+    const declared = opts.registry.listAgentNames?.();
+    const ownChildren = opts.spawns?.list()
+      .filter((agent) => agent.parent_agent_id === name)
+      .map((agent) => agent.agent_id) ?? [];
+    if (declared === undefined && ownChildren.length === 0) return undefined;
+    return [...new Set([...(declared ?? []), ...ownChildren])];
   };
   /** Fecha subagentes que sobraram ativos ao fim do run (A5). */
   const cleanupSpawns = (reason: string): void => {
