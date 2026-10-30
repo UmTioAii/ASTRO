@@ -27,6 +27,8 @@ import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity
 import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
 import { recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
 import type { CallSelection } from "./call-profile";
+import { markProviderFailure, markProviderSuccess } from "./provider/health-state";
+import { reserveForCall } from "./model-cost";
 import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
@@ -38,6 +40,7 @@ import { readFileTool } from "./tools/read-file";
 import { runCommandTool } from "./tools/run-command";
 import { writeFileTool } from "./tools/write-file";
 import { handoffTool } from "./tools/handoff";
+import { createListModelCandidatesTool } from "./tools/list-model-candidates";
 import { grepTool } from "./tools/grep";
 import { listDirTool } from "./tools/list-dir";
 import { editTool } from "./tools/edit";
@@ -300,11 +303,35 @@ function createGuardedProvider(
       ...(profile === undefined ? {} : { profile }),
     },
   });
-  if (quotaLimits === undefined) return setup.provider;
+  if (quotaLimits === undefined) {
+    return {
+      complete: async (req, signal) => {
+        try {
+          const response = await setup.provider.complete(req, signal);
+          markProviderSuccess(model.provider);
+          return response;
+        } catch (error) {
+          if (!isAbortError(error, signal)) {
+            markProviderFailure(model.provider, error instanceof ProviderError ? error.errClass : "invalid_request");
+          }
+          throw error;
+        }
+      },
+    };
+  }
   return {
     complete: async (req, signal) => {
       assertWithinQuota(ledger, quotaLimits, setup.quotaDomain);
-      return setup.provider.complete(req, signal);
+      try {
+        const response = await setup.provider.complete(req, signal);
+        markProviderSuccess(model.provider);
+        return response;
+      } catch (error) {
+        if (!isAbortError(error, signal)) {
+          markProviderFailure(model.provider, error instanceof ProviderError ? error.errClass : "invalid_request");
+        }
+        throw error;
+      }
     },
   };
 }
@@ -341,38 +368,6 @@ function assertProviderKind(
     `provider "${model.provider}" usa kind "${providerConfig.kind}" sem factory; ` +
       `registre um plugin que exporte esse kind`,
   );
-}
-
-/** Custo máximo de um provider + seus fallbacks para o modelo (B9). */
-function chainCost(config: AstroConfig, registry: Registry, model: ModelEntry, provider = model.provider): number {
-  const chain = [provider, ...(config.providers[provider]?.fallback ?? [])];
-  return chain.reduce((total, name) => {
-    const price = registry.get(`${name}/${model.id}`)?.price ?? model.price;
-    if (price === undefined) return total;
-    return total + (model.context * Math.max(price.inputPerM, price.outputPerM)) / 1e6;
-  }, 0);
-}
-
-/** Custo máximo da cadeia de profiles, transitiva e sem repetir (F-31/B9). */
-function profileChainCost(config: AstroConfig, registry: Registry, name: string, visited = new Set<string>()): number {
-  if (visited.has(name)) return 0;
-  visited.add(name);
-  const profile = config.modelPool?.[name];
-  if (profile === undefined) return 0;
-  const model = registry.resolveProfile(name);
-  const own = chainCost(config, registry, model, model.provider);
-  return own + (profile.fallback ?? []).reduce((total, next) => total + profileChainCost(config, registry, next, visited), 0);
-}
-
-/**
- * Custo máximo de uma chamada (B9): soma o provider primário e fallbacks; com
- * profile, soma a cadeia transitiva de profiles e os fallbacks de cada um (F-31).
- */
-function reserveForCall(config: AstroConfig, registry: Registry, model: ModelEntry, profile?: string): number {
-  if (profile !== undefined && config.modelPool?.[profile] !== undefined) {
-    return profileChainCost(config, registry, profile);
-  }
-  return chainCost(config, registry, model);
 }
 
 /**
@@ -718,6 +713,14 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
   const toolsByName = new Map(TOOLS_BY_NAME);
+  // S-09: candidatos dependem do config/ledger/registry deste run.
+  toolsByName.set("list_model_candidates", createListModelCandidatesTool(() => ({
+    config,
+    registry,
+    ledger,
+    ...(quotaLimits === undefined ? {} : { quotaLimits }),
+    ...(budget === undefined ? {} : { budget }),
+  })));
   for (const tool of loaded.tools) {
     if (!toolsByName.has(tool.manifest.name)) toolsByName.set(tool.manifest.name, tool);
   }

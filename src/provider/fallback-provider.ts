@@ -8,6 +8,7 @@
  */
 import type { Auditor } from "../audit";
 import { isAbortError } from "../abort";
+import { markProviderFailure, markProviderSuccess } from "./health-state";
 import { streamStarted } from "./types";
 import { SwapDeniedError, type SwapApprover, type SwapRequest } from "../approval";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type Provider } from "./types";
@@ -95,20 +96,25 @@ export class FallbackProvider implements Provider {
         try {
           const response = await provider.complete(req, signal);
           this.#log("provider.success", { provider: entry.name, latencyMs: Date.now() - startedAt, attempt });
+          markProviderSuccess(entry.name);
           return { ...response, provider: entry.name, model: response.model ?? req.model };
         } catch (error) {
           if (isAbortError(error, signal)) throw error;
           // Negação de troca é terminal (I-08): não tenta o próximo provider
           if (error instanceof SwapDeniedError) throw error;
-          if (streamStarted.has(req)) throw error;
-          lastError = error;
           const errorClass = error instanceof ProviderError ? error.errClass : "invalid_request";
+          if (streamStarted.has(req)) {
+            markProviderFailure(entry.name, errorClass);
+            throw error;
+          }
+          lastError = error;
           lastClass = errorClass;
           this.#log("provider.failure", { provider: entry.name, errorClass, attempt });
           if (!RETRYABLE.has(errorClass) || attempt > this.#maxRetries) break; // próximo da cadeia
           await sleep(this.#retryBackoffMs * attempt);
         }
       }
+      markProviderFailure(entry.name, lastClass);
       previous = entry.name;
       previousReason = lastClass;
     }

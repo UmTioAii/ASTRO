@@ -69,6 +69,8 @@ export interface ModelConfig {
   capabilities?: Partial<Record<Capability, boolean>>;
   /** Call profile (E1–E8): effort, thinking e parâmetros proibidos. */
   call?: CallConfig;
+  /** Eficiência relativa (M6/M8): maior primeiro; usada só quando falta preço. */
+  efficiency?: number;
 }
 
 /** Profile da model pool (F-27, ADR-0007): alias declarativo para um modelo de `models[]`. */
@@ -298,7 +300,7 @@ function expectBoolean(value: unknown, field: string): boolean {
  * `providerIdentity`: a credencial nomeada, o arquivo OAuth expandido ou o
  * `kind` para provider de plugin. Sem chave, o próprio provider é a conta.
  */
-function providerAccountRef(name: string, provider: ProviderConfig): string {
+export function providerAccountRefFor(name: string, provider: ProviderConfig): string {
   const raw = provider as { kind: string; credentialRef?: unknown; credentialsPath?: unknown };
   if (raw.kind === "openai-compat") {
     return typeof raw.credentialRef === "string" && raw.credentialRef.length > 0
@@ -567,6 +569,12 @@ function validateModel(value: unknown, index: number): ModelConfig {
       ? undefined
       : validateCapabilities(raw.capabilities, `${field}.capabilities`);
   const call = raw.call === undefined ? undefined : validateCall(raw.call, `${field}.call`);
+  const efficiency = raw.efficiency === undefined
+    ? undefined
+    : expectNonNegativeNumber(raw.efficiency, `${field}.efficiency`);
+  if (efficiency !== undefined && efficiency > 1) {
+    fail(`config inválida: "${field}.efficiency" deve estar entre 0 e 1`);
+  }
 
   return {
     provider,
@@ -577,6 +585,7 @@ function validateModel(value: unknown, index: number): ModelConfig {
     ...(price === undefined ? {} : { price }),
     ...(capabilities === undefined ? {} : { capabilities }),
     ...(call === undefined ? {} : { call }),
+    ...(efficiency === undefined ? {} : { efficiency }),
   };
 }
 
@@ -1091,7 +1100,7 @@ export function validateConfig(raw: unknown): AstroConfig {
   // O teto efetivo da v1 é 2; `maxActive` só é validado quando declarado.
   if (Object.keys(agents).length > 0) {
     const accounts = new Set(
-      Object.entries(providers).map(([name, provider]) => providerAccountRef(name, provider)),
+      Object.entries(providers).map(([name, provider]) => providerAccountRefFor(name, provider)),
     ).size;
     const ceiling = maxActive ?? 2;
     if (ceiling > accounts) {

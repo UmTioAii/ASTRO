@@ -50,6 +50,8 @@ export interface AcquireAgentLockOptions {
   credentialRef?: string;
   profile?: string;
   parent_agent_id?: string;
+  /** Razão da escolha (M3, ≤200 chars), gravada no `agent.created`. */
+  reason?: string;
   /** PID dono do lock; default o processo atual. */
   pid?: number;
 }
@@ -200,6 +202,7 @@ export function acquireAgentLock(
         ...(opts.credentialRef === undefined ? {} : { credentialRef: opts.credentialRef }),
         ...(opts.profile === undefined ? {} : { profile: opts.profile }),
         ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: opts.parent_agent_id }),
+        ...(opts.reason === undefined ? {} : { reason: opts.reason.slice(0, 200) }),
         ...(opts.pid === undefined ? {} : { pid: opts.pid }),
       });
       audit.append({
