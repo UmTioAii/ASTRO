@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { PROTECTED_FORBIDDEN_ROOTS, type CallConfig, type EffortLevel, type ThinkingMode } from "./call-profile";
 import { DEFAULT_OUTPUT_LIMIT, type OutputLimitConfig } from "./output-limit";
+import { DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from "./compaction/engine";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
 import { urlProblem } from "./url-safety";
@@ -228,6 +229,8 @@ export interface AstroConfig {
   mcpServers?: Record<string, MCPServerConfig>;
   /** Limite de saída por tool (S-16, CMP-10); default 8000 tokens / 5% da janela. */
   outputLimit?: OutputLimitConfig;
+  /** Compactação de sessão (S-17, CMP-1): buffer da janela; `null` = default. */
+  compaction?: CompactionConfig;
   paths: PathsConfig;
 }
 
