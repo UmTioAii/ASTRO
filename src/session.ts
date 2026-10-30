@@ -20,6 +20,7 @@ import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
 import { acquireAgentLock, findAgentLock, releaseAgentLock } from "./agent-lock";
 import type { AppliedCallProfile, CallSelection } from "./call-profile";
+import type { SpawnRegistry } from "./spawn";
 
 /** Identidade efetiva de quem atendeu o completion (F-31d). */
 export interface EffectiveIdentity {
@@ -377,6 +378,8 @@ export async function runSession(
             step,
             journal,
             knownAgents,
+            allow: [...opts.executor.allow],
+            maxSteps: effectiveMaxSteps,
             ...(opts.signal === undefined ? {} : { signal: opts.signal }),
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
@@ -596,6 +599,8 @@ export interface MultiAgentSessionOptions {
   signal?: AbortSignal;
   /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
   call?: CallSelection;
+  /** Subagentes nascidos em runtime (C4a); ausente = só agents declarados. */
+  spawns?: SpawnRegistry;
   /** Gate de aprovação de troca (F-19): o runtime injeta; ausente = sem gate (componente interno). */
   approveSwap?: SwapApprover;
   /** Provider por modelo/agent (F-31d): sem ele, todos usam `provider`. */
@@ -657,7 +662,30 @@ export async function runMultiAgentSession(
   ];
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
   const journal = new CallJournal();
-  const knownAgents = opts.registry.listAgentNames?.();
+  /** Agents resolvíveis: declarados + subagentes deste run (C4a). */
+  const resolveAgent = (name: string): AgentEntry | undefined => {
+    const declared = opts.registry.getAgent(name);
+    if (declared !== undefined) return declared;
+    const spawned = opts.spawns?.get(name);
+    return spawned === undefined ? undefined : opts.spawns!.toAgentEntry(spawned, opts.baseSystemPrompt);
+  };
+  const allKnownAgents = (): string[] | undefined => {
+    const declared = opts.registry.listAgentNames?.();
+    const spawned = opts.spawns?.list().map((agent) => agent.agent_id) ?? [];
+    if (declared === undefined && spawned.length === 0) return undefined;
+    return [...(declared ?? []), ...spawned];
+  };
+  /** Subagente só fala com o pai (A8/I-18); o orchestrator vê todos. */
+  const knownFor = (name: string): string[] | undefined => {
+    const spawned = opts.spawns?.get(name);
+    return spawned === undefined ? allKnownAgents() : [spawned.parent_agent_id];
+  };
+  /** Fecha subagentes que sobraram ativos ao fim do run (A5). */
+  const cleanupSpawns = (reason: string): void => {
+    for (const spawned of opts.spawns?.list() ?? []) {
+      ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, spawned.agent_id, reason);
+    }
+  };
   let budgetWarned = false;
   /** Aviso B3: antes e depois de cada step (o último step também avisa). */
   const maybeWarnBudget = (agent: string): void => {
@@ -712,7 +740,7 @@ export async function runMultiAgentSession(
     }
     if (resume !== undefined && resume.state === "pending") {
       const pending = resume;
-      const toAgent = opts.registry.getAgent(pending.artifact.to);
+      const toAgent = resolveAgent(pending.artifact.to);
       if (toAgent === undefined) throw new HandoffError("handoff_target_not_found", `agent destino "${pending.artifact.to}" não encontrado na configuração`);
       const toModel = modelFor(toAgent); // profile resolvido antes da retomada (F-29)
       await approveHandoff(currentModel, currentAgent, toModel, toAgent);
@@ -736,6 +764,11 @@ export async function runMultiAgentSession(
       opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: pending.handoff_id, artifact: pending.artifact } });
       activeHandoff = pending;
       const resumo = resumeDetail(opts.ledger, pending.artifact);
+      // Subagente não herda histórico do orchestrator (A9): só system + artefato.
+      if (opts.spawns?.get(currentAgentName) !== undefined) {
+        messages.length = 0;
+        messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+      }
       messages.push({ role: "system", content: `[Sistema: handoff ${pending.handoff_id} para "${pending.artifact.to}": ${JSON.stringify(pending.artifact)}]${resumo}` });
       ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, pending.artifact.from, "handoff");
       ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, identityOf(currentModel), currentAgent.profile, pending.artifact.from);
@@ -846,6 +879,7 @@ export async function runMultiAgentSession(
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });
         ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, currentAgentName, "completed");
+        cleanupSpawns("completed");
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
         return { final: response.content, steps: step, agentsUsed: agentsUsed.map(redactSecrets) };
@@ -860,7 +894,8 @@ export async function runMultiAgentSession(
       let handoffTriggered = false;
       for (const [callIndex, call] of response.toolCalls.entries()) {
         throwIfAborted(opts.signal); // ponto seguro: nenhuma tool nova após cancelamento (I-16)
-        assertKnownTarget(call, knownAgents);
+        const known = knownFor(currentAgentName);
+        assertKnownTarget(call, known);
         const toolSpan = tracer?.start(
           "tool.exec",
           { tool: call.name, agent: redactSecrets(currentAgentName) },
@@ -873,7 +908,9 @@ export async function runMultiAgentSession(
             agent: currentAgentName,
             step,
             journal,
-            ...(knownAgents === undefined ? {} : { knownAgents }),
+            ...(known === undefined ? {} : { knownAgents: known }),
+            allow: [...currentTools],
+            maxSteps: currentMaxSteps,
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
@@ -885,7 +922,7 @@ export async function runMultiAgentSession(
 
         const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {
-          const toAgent = opts.registry.getAgent(handoff.to);
+          const toAgent = resolveAgent(handoff.to);
           if (toAgent === undefined) throw new HandoffError("handoff_target_not_found",
             `agent destino "${handoff.to}" não encontrado na configuração`);
           const toModel = modelFor(toAgent); // profile do receptor resolvido ANTES do swap (F-29)
@@ -933,6 +970,11 @@ export async function runMultiAgentSession(
           opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
           activeHandoff = entry;
           for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
+          // Subagente não herda histórico do orchestrator (A9): só system + artefato.
+          if (opts.spawns?.get(currentAgentName) !== undefined) {
+            messages.length = 0;
+            messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+          }
           messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]${resumeDetail(opts.ledger, entry.artifact)}` });
           handoffTriggered = true;
           break; // interrompe execução das outras tools deste step
@@ -974,6 +1016,7 @@ export async function runMultiAgentSession(
       });
     } finally {
       releaseOnFailure(opts.ledger, opts.audit, opts.run, currentAgentName, lockReason(error, opts.signal));
+      cleanupSpawns(lockReason(error, opts.signal));
     }
     if (rootSpan !== undefined) {
       tracer?.end(rootSpan, {

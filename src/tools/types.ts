@@ -46,6 +46,10 @@ export interface ToolContext {
   journal?: CallJournal;
   /** Agents nomeados disponíveis; permite à tool handoff validar o destino (F-23). */
   knownAgents?: readonly string[];
+  /** Allowlist efetiva do agente corrente (I-02): teto para spawn de subagente. */
+  allow?: readonly string[];
+  /** Teto de passos do agente corrente: subagente nunca recebe mais. */
+  maxSteps?: number;
 }
 
 /**

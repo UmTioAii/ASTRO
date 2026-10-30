@@ -41,6 +41,7 @@ import { runCommandTool } from "./tools/run-command";
 import { writeFileTool } from "./tools/write-file";
 import { handoffTool } from "./tools/handoff";
 import { createListModelCandidatesTool } from "./tools/list-model-candidates";
+import { createSpawnAgentTool, SpawnRegistry } from "./spawn";
 import { grepTool } from "./tools/grep";
 import { listDirTool } from "./tools/list-dir";
 import { editTool } from "./tools/edit";
@@ -713,6 +714,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
   const toolsByName = new Map(TOOLS_BY_NAME);
+  const spawns = new SpawnRegistry();
   // S-09: candidatos dependem do config/ledger/registry deste run.
   toolsByName.set("list_model_candidates", createListModelCandidatesTool(() => ({
     config,
@@ -721,6 +723,18 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     ...(quotaLimits === undefined ? {} : { quotaLimits }),
     ...(budget === undefined ? {} : { budget }),
   })));
+  if (hasAgents) {
+    toolsByName.set("spawn_agent", createSpawnAgentTool({
+      config,
+      registry,
+      ledger,
+      audit,
+      cwd,
+      spawns,
+      ...(quotaLimits === undefined ? {} : { quotaLimits }),
+      ...(budget === undefined ? {} : { budget }),
+    }));
+  }
   for (const tool of loaded.tools) {
     if (!toolsByName.has(tool.manifest.name)) toolsByName.set(tool.manifest.name, tool);
   }
@@ -804,6 +818,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
         signal,
         ...(opts.call === undefined ? {} : { call: opts.call }),
+        spawns,
       };
       result = await runMultiAgentSession(multiOpts, task);
     } else {

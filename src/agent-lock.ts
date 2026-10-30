@@ -52,6 +52,8 @@ export interface AcquireAgentLockOptions {
   parent_agent_id?: string;
   /** Razão da escolha (M3, ≤200 chars), gravada no `agent.created`. */
   reason?: string;
+  /** Conta calculada pelo chamador (ex.: candidato da pool); default `accountRefOf`. */
+  accountRef?: string;
   /** PID dono do lock; default o processo atual. */
   pid?: number;
 }
@@ -177,7 +179,7 @@ export function acquireAgentLock(
 ): AgentLock {
   return ledger.withFileLock(
     () => {
-      const accountRef = accountRefOf(opts);
+      const accountRef = opts.accountRef ?? accountRefOf(opts);
       const locks = activeLocks(ledger);
       const self = locks.find((l) => sameAgent(l, opts.run, opts.agent_id));
       if (self !== undefined) {

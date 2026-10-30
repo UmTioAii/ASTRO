@@ -13,7 +13,7 @@
 
 ASTRO is a local, terminal-first harness for AI coding agents. A request becomes a session that plans, reads, writes and executes inside a declared scope, with cost metered per call and an append-only audit trail.
 
-Multiple named agents, each bound to a model or profile, communicate through durable handoffs. The LLM never chooses its own model — the config does. That is the difference between a demo and a system you can audit.
+Multiple named agents, each bound to a model or profile, communicate through durable handoffs. Declared agents keep the model chosen by the config; runtime subagents can only pick a model inside the snapshot returned by `list_model_candidates`, and the choice is recorded in the ledger. That is the difference between a demo and a system you can audit.
 
 | Concern | How ASTRO handles it |
 |---|---|

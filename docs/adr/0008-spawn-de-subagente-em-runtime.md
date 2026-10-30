@@ -25,6 +25,8 @@ Hoje "a LLM nunca cria agente em runtime" (`src/agent-manager.ts:15`): só exist
 
 **Emendas.** I-01 estende-se a agents nascidos em runtime: a declaração efetiva do subagente (tools, teto, orçamento, sandbox) deriva do `spawn_agent` e é sempre ⊆ à do pai; nada fora dela é acessível. I-06 estende a reprodução ao runtime: `snapshot_id` + escolha registrada no ledger reproduzem o placement; `candidate_set_changed` detecta divergência (composição com ADR-0011, #120). Para subagentes nascidos em runtime, esta decisão substitui a cláusula "a LLM nunca escolhe modelo em runtime" do ADR-0007, que segue valendo para agents declarados na config; a auditabilidade exigida lá é preservada por `snapshot_id` + escolha registrada no ledger (I-06).
 
+**Implementação (S-11, #128).** `src/spawn.ts` registra o filho, adquire a conta (A4), fixa modelo/profile/tools/teto e devolve `{agent_id, model, profile, status:"active"}`; o handoff executa o filho em série. `maxSpawnsPerRun` 8, tools ⊆ pai, `maxTurns` ≤ pai, comunicação só com o pai (A8) e limpeza dos filhos ao fim do run (A5). O filho recebe task + `AGENTS.md` no system prompt, sem o histórico do orchestrator (A9).
+
 ## Consequências
 
 - Ganho: delegação dinâmica auditável, com teto, sem bypass de escopo e reproduzível.
