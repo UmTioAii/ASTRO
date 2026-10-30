@@ -1,10 +1,11 @@
 /** Tela cheia de providers (TUI): lista + formulário, sem tocar segredo. */
 import { Box, Text, useInput } from "ink";
-import { useState, useRef, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { PROVIDER_CATALOG } from "../provider/catalog";
 import type { ProfileDraft, ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ProfileModel } from "../provider/profiles";
 import type { HealthCheck } from "../health";
+import type { CodexLoginStart } from "../provider/codex-login";
 import { redactSecrets } from "../sanitize-external";
 import { formatProviderCheck } from "./health";
 import type { ThemeColors } from "./theme";
@@ -20,6 +21,8 @@ export interface ProviderScreenProps {
   onChanged?: () => void;
   /** Teste real mínimo do provider (C6); ausente desabilita `t`. */
   onTest?: (id: string) => Promise<HealthCheck>;
+  /** Login device flow do Codex; ausente desabilita `l`. */
+  onLogin?: (id: string, signal?: AbortSignal) => Promise<CodexLoginStart>;
 }
 
 type Step = "catalog" | "name" | "baseUrl" | "models" | "credential" | "confirm";
@@ -44,7 +47,7 @@ function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel
 }
 
 export function ProviderScreen({
-  manager, colors, currentModel, initial, onClose, onActivate, onChanged, onTest,
+  manager, colors, currentModel, initial, onClose, onActivate, onChanged, onTest, onLogin,
 }: ProviderScreenProps): ReactElement {
   const initialList = manager.list();
   const initialTarget = initial?.target === undefined
@@ -90,7 +93,14 @@ export function ProviderScreen({
   const [testTarget, setTestTarget] = useState<ProfileView | undefined>(undefined);
   const [testing, setTesting] = useState(false);
   const [messageOk, setMessageOk] = useState(false);
+  const [login, setLogin] = useState<{ target: ProfileView; url: string; userCode: string } | undefined>(undefined);
+  const [loginTarget, setLoginTarget] = useState<ProfileView | undefined>(undefined);
+  const [loginStarting, setLoginStarting] = useState(false);
   const probeToken = useRef(0);
+  const loginAbort = useRef<AbortController | undefined>(undefined);
+  const loginBusy = useRef(false);
+
+  useEffect(() => () => { loginAbort.current?.abort(); }, []);
 
 
   const list = manager.list();
@@ -173,9 +183,85 @@ export function ProviderScreen({
     }
   };
 
+  const startLogin = (profile: ProfileView): void => {
+    if (onLogin === undefined || loginBusy.current) return;
+    loginBusy.current = true;
+    setLoginStarting(true);
+    const controller = new AbortController();
+    loginAbort.current = controller;
+    setMessage(undefined);
+    void onLogin(profile.id, controller.signal)
+      .then((start) => {
+        if (controller.signal.aborted) {
+          void start.done.catch(() => undefined);
+          return undefined;
+        }
+        setLoginStarting(false);
+        setLogin({ target: profile, url: start.device.verificationUrl, userCode: start.device.userCode });
+        return start.done;
+      })
+      .then(() => {
+        if (controller.signal.aborted) return;
+        let warning = "";
+        try {
+          if (profile.source === "global") manager.use(profile.id);
+        } catch (error) {
+          warning = ` (não persistido: ${messageOf(error)})`;
+        }
+        setLogin(undefined);
+        setMessageOk(true);
+        setMessage(`${profile.id}: login concluído${warning}`);
+        onChanged?.();
+        onActivate(profile.id);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLogin(undefined);
+        setMessageOk(false);
+        setMessage(`erro: ${messageOf(error)}`);
+      })
+      .finally(() => {
+        loginBusy.current = false;
+        setLoginStarting(false);
+      });
+  };
+
   useInput((input, key) => {
     if (key.ctrl && (input === "c" || input === "d")) {
+      loginAbort.current?.abort();
       onClose();
+      return;
+    }
+    if (loginTarget !== undefined) {
+      if (key.escape) {
+        setLoginTarget(undefined);
+        setMessage(undefined);
+        return;
+      }
+      if (key.return) {
+        const target = loginTarget;
+        setLoginTarget(undefined);
+        startLogin(target);
+      }
+      return;
+    }
+    if (loginStarting) {
+      if (key.escape) {
+        loginAbort.current?.abort();
+        setLoginStarting(false);
+        setMessageOk(false);
+        setMessage("login cancelado");
+      }
+      return;
+    }
+    if (login !== undefined) {
+      if (key.escape) {
+        loginAbort.current?.abort();
+        loginAbort.current = undefined;
+        setLogin(undefined);
+        setMessageOk(false);
+        setMessage("login cancelado");
+      }
       return;
     }
     if (testTarget !== undefined) {
@@ -219,6 +305,13 @@ export function ProviderScreen({
         if (onTest !== undefined && current !== undefined) {
           setMessage(undefined);
           setTestTarget(current);
+        }
+        return;
+      }
+      if (input === "l") {
+        if (onLogin !== undefined && current !== undefined && current.kind === "codex-oauth") {
+          setMessage(undefined);
+          setLoginTarget(current);
         }
         return;
       }
@@ -315,6 +408,38 @@ export function ProviderScreen({
     else if (step === "credential") setCredential((value) => value + input);
   });
 
+  if (loginTarget !== undefined) {
+    const shownPath = (loginTarget.credentialsPath ?? "~/.codex/auth.json")
+      .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "?");
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Login Codex: {loginTarget.name}</Text>
+        <Text>grava em {shownPath}</Text>
+        <Text dimColor>enter confirmar · esc cancelar</Text>
+      </Box>
+    );
+  }
+
+  if (loginStarting) {
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Login Codex: iniciando…</Text>
+        <Text dimColor>esc cancela</Text>
+      </Box>
+    );
+  }
+
+  if (login !== undefined) {
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Login Codex: {login.target.name}</Text>
+        <Text>abra {login.url} e informe o código {login.userCode}</Text>
+        <Text dimColor>aguardando… esc cancela</Text>
+        {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
+      </Box>
+    );
+  }
+
   if (testTarget !== undefined) {
     return (
       <Box flexDirection="column" borderStyle="round" paddingX={1}>
@@ -392,9 +517,10 @@ export function ProviderScreen({
         </Text>
       ))}
       <Text dimColor>
-        {onTest === undefined
-          ? "a adicionar · e editar · d remover · enter ativar · esc voltar"
-          : "a adicionar · e editar · d remover · t testar · enter ativar · esc voltar"}
+        {["a adicionar", "e editar", "d remover",
+          ...(onTest === undefined ? [] : ["t testar"]),
+          ...(onLogin === undefined || current?.kind !== "codex-oauth" ? [] : ["l login"]),
+          "enter ativar", "esc voltar"].join(" · ")}
       </Text>
       {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
     </Box>

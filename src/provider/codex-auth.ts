@@ -43,6 +43,16 @@ function readClaims(token: string | undefined): Record<string, unknown> | undefi
   }
 }
 
+/** Extrai `chatgpt_account_id` do claim aninhado real ou do formato plano legado. */
+export function codexAccountId(token: string | undefined): string | undefined {
+  const claims = readClaims(token);
+  const auth = claims?.["https://api.openai.com/auth"];
+  const nested = typeof auth === "object" && auth !== null && !Array.isArray(auth)
+    ? stringClaim(auth as Record<string, unknown>, "chatgpt_account_id")
+    : undefined;
+  return nested ?? stringClaim(claims, "chatgpt_account_id");
+}
+
 /**
  * Lê `~/.codex/auth.json` (somente leitura) e extrai os tokens do Codex.
  * Erros citam o caminho, nunca o conteúdo do arquivo.
@@ -67,7 +77,7 @@ export function readCodexAuth(path: string): CodexTokens {
   const refreshToken = stringClaim(tokens, "refresh_token");
   const accountId =
     stringClaim(tokens, "account_id") ??
-    stringClaim(readClaims(stringClaim(tokens, "id_token")), "chatgpt_account_id");
+    codexAccountId(stringClaim(tokens, "id_token"));
   const expiresAt = numberClaim(readClaims(accessToken), "exp");
 
   if (accessToken === undefined || refreshToken === undefined) {

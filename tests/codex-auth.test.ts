@@ -12,7 +12,7 @@ test("lê auth.json e extrai tokens/expiração", () => {
   const path = join(dir(), "auth.json");
   writeFileSync(path, JSON.stringify({
     auth_mode: "chatgpt",
-    tokens: { id_token: jwt({ chatgpt_account_id: "acct_1" }), access_token: jwt({ exp: 4102444800 }), refresh_token: "r1" },
+    tokens: { id_token: jwt({ "https://api.openai.com/auth": { chatgpt_account_id: "acct_1" } }), access_token: jwt({ exp: 4102444800 }), refresh_token: "r1" },
   }));
   const t = readCodexAuth(path);
   expect(t.accessToken.split(".")).toHaveLength(3);

@@ -11,7 +11,7 @@ Objetivo: guia de configuração de providers, validação manual de credenciais
 | Kind | Providers | Credencial | Onde |
 |---|---|---|---|
 | `openai-compat` | NVIDIA NIM, OpenRouter, Ollama/LM Studio | `credentialRef` (env nomeada; opcional para provider local) | `src/provider/openai-compat.ts` |
-| `codex-oauth` | Codex OAuth | `~/.codex/auth.json` (somente leitura) | `src/provider/codex-oauth.ts` |
+| `codex-oauth` | Codex OAuth | `~/.codex/auth.json` (lido em runtime; o login da TUI grava nesse caminho) | `src/provider/codex-oauth.ts` |
 
 Kinds de plugin são aceitos com `kind` custom e factory registrada por plugin (`src/plugins.ts`, `src/config.ts`).
 
@@ -29,7 +29,7 @@ Perfis vivem em `~/.astro/providers.json` (`ASTRO_HOME` sobrescreve), modo 0600,
 
 `OPENAI_API_KEY` + `OPENAI_MODEL` (e `OPENAI_BASE_URL` opcional) montam um perfil efêmero `env`, usado só naquela execução e nunca gravado. Sem `astro.config.json`, `chat`/`tui` usam baseline somente leitura (`read_file`, `list_dir`, `grep`); `run` exige config explícita, e escrita/shell exigem config em qualquer caso. Na TUI sem nenhum provider, `astro` abre a tela de providers antes da sessão; adicionar e ativar um perfil continua direto para a TUI. `chat` mantém o erro pedindo provider/config. Em projeto com `agent.profile`, `--provider` divergente é erro (o profile decide o modelo); `run.started` registra `providerSource` (definição) e `providerSelection` (quem escolheu).
 
-CRUD: `/provider add` (catálogo ou custom), `/provider edit <nome|id>`, `/provider remove <nome|id>` e `/provider use <nome|id>`. Na TUI, `/provider` abre a tela cheia (a adicionar, e editar, d remover, t testar, enter ativar, esc voltar); o teste pede confirmação, usa a mesma chamada mínima de `providers test` e mostra `ok`/erro/latência. A status bar mostra o provider ativo e a saúde (`n/d` até o primeiro teste ou troca de provider). `/provider use <nome>` continua trocando inline. `●` marca o perfil ativo salvo e `em uso:` mostra o modelo da sessão — os dois podem divergir após um `/model`. Perfis do projeto e o perfil `env` são somente leitura; remover um perfil referenciado pelo projeto é recusado.
+CRUD: `/provider add` (catálogo ou custom), `/provider edit <nome|id>`, `/provider remove <nome|id>` e `/provider use <nome|id>`. Na TUI, `/provider` abre a tela cheia (a adicionar, e editar, d remover, t testar, l login Codex, enter ativar, esc voltar); o teste pede confirmação, usa a mesma chamada mínima de `providers test` e mostra `ok`/erro/latência. Em um perfil `codex-oauth`, `l` inicia o device flow, mostra URL/código e grava só o arquivo de credenciais (0600). A status bar mostra o provider ativo e a saúde (`n/d` até o primeiro teste ou troca de provider). `/provider use <nome>` continua trocando inline. `●` marca o perfil ativo salvo e `em uso:` mostra o modelo da sessão — os dois podem divergir após um `/model`. Perfis do projeto e o perfil `env` são somente leitura; remover um perfil referenciado pelo projeto é recusado.
 
 ## Custo e preço
 

@@ -26,6 +26,17 @@ function manager() {
   return new ProfileManager({ project: project(), env: { ASTRO_HOME: home } });
 }
 
+function codexManager() {
+  const home = mkdtempSync(join(tmpdir(), "astro-tui-codex-"));
+  const project = validateConfig({
+    providers: { c: { kind: "codex-oauth", credentialsPath: join(home, "auth.json") } },
+    models: [{ provider: "c", id: "gpt-5.5", tags: ["writing-code"], context: 8192 }],
+    agent: { model: "c/gpt-5.5", maxSteps: 2, tools: ["read_file"] },
+    paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+  });
+  return new ProfileManager({ project, env: { ASTRO_HOME: home } });
+}
+
 async function waitFor(check: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt++) {
     if (check()) return;
@@ -117,6 +128,72 @@ test("resultado down mostra classe de erro e latência", async () => {
     await waitFor(() => instance.lastFrame()?.includes("Testar p?") === true);
     instance.stdin.write("\r");
     await waitFor(() => instance.lastFrame()?.includes("down (auth) · 7ms") === true);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("l inicia o login Codex, mostra o código e ativa ao concluir", async () => {
+  let finish: ((value: unknown) => void) | undefined;
+  const done = new Promise<unknown>((resolve) => { finish = resolve; });
+  let activated = "";
+  const instance = render(
+    <ProviderScreen
+      manager={codexManager()}
+      colors={colors}
+      onClose={() => undefined}
+      onActivate={(id) => { activated = id; }}
+      onChanged={() => undefined}
+      onLogin={async () => ({
+        device: { deviceAuthId: "dev-1", userCode: "ABCD-1234", verificationUrl: "https://auth.openai.com/codex/device", intervalMs: 1000 },
+        done: done as never,
+      })}
+    />,
+  );
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    instance.stdin.write("l");
+    await waitFor(() => instance.lastFrame()?.includes("grava em") === true);
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("ABCD-1234") === true);
+    expect(instance.lastFrame()).toContain("https://auth.openai.com/codex/device");
+    finish!({});
+    await waitFor(() => instance.lastFrame()?.includes("login concluído") === true);
+    expect(activated).toBe("c");
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("esc durante o login Codex aborta a espera", async () => {
+  let signal: AbortSignal | undefined;
+  let finish: ((value: unknown) => void) | undefined;
+  const done = new Promise<unknown>((resolve) => { finish = resolve; });
+  const instance = render(
+    <ProviderScreen
+      manager={codexManager()}
+      colors={colors}
+      onClose={() => undefined}
+      onActivate={() => undefined}
+      onLogin={async (_id, received) => {
+        signal = received;
+        return {
+          device: { deviceAuthId: "dev-1", userCode: "WXYZ-9999", verificationUrl: "https://auth.openai.com/codex/device", intervalMs: 1000 },
+          done: done as never,
+        };
+      }}
+    />,
+  );
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    instance.stdin.write("l");
+    await waitFor(() => instance.lastFrame()?.includes("grava em") === true);
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("WXYZ-9999") === true);
+    instance.stdin.write("\u001b");
+    await waitFor(() => instance.lastFrame()?.includes("login cancelado") === true);
+    expect(signal?.aborted).toBe(true);
+    finish!({});
   } finally {
     instance.unmount();
   }

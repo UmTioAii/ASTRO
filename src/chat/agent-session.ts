@@ -1,13 +1,18 @@
 /** Sessão de chat (T1): multi-turn sobre o mesmo run; a UI só fala com esta classe. */
 import { randomUUID } from "node:crypto";
-import { isAbsolute, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { runTask, createProvider, shortTaskHash, type RunReport } from "../app";
+import { throwIfAborted } from "../abort";
 import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
 import type { BudgetDecider } from "../budget";
 import type { AstroConfig } from "../config";
+import type { CodexLoginStart } from "../provider/codex-login";
+import { expandHomePath, saveCodexAuth, startCodexLogin } from "../provider/codex-login";
 import { loadEffectiveConfig, providerIdentityFor, type ProviderSelection, type ProviderSource } from "../provider/profiles";
 import type { ChatMessage } from "../provider/types";
+import type { FetchLike } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
 import { DEFAULT_SYSTEM_PROMPT } from "../session";
@@ -29,6 +34,8 @@ export interface AgentSessionOptions {
   /** Decisores interativos (TTY); ausentes mantêm pending/non-interactive. */
   approveSwap?: SwapApprover;
   onBudgetExceeded?: BudgetDecider;
+  /** Injeção para testes do login device (sem rede real). */
+  fetchLike?: FetchLike;
 }
 
 export interface ProviderInfo {
@@ -85,6 +92,17 @@ function resolvePath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path);
 }
 
+/** Sobe até achar `.git`; usado para não gravar credenciais dentro do repositório. */
+function findGitRoot(start: string): string | undefined {
+  let dir = resolve(start);
+  while (true) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
 export class AgentSession {
   readonly id = randomUUID();
   readonly startedAt = new Date().toISOString();
@@ -103,6 +121,7 @@ export class AgentSession {
   readonly #systemPrompt: string;
   readonly #approveSwap: SwapApprover | undefined;
   readonly #budgetDecider: BudgetDecider | undefined;
+  readonly #fetchLike: FetchLike | undefined;
   #modelRef: string;
   #messages: ChatMessage[];
   #turns = 0;
@@ -135,6 +154,7 @@ export class AgentSession {
     this.#systemPrompt = opts.systemPrompt ?? this.#config.agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.#approveSwap = opts.approveSwap;
     this.#budgetDecider = opts.onBudgetExceeded;
+    this.#fetchLike = opts.fetchLike;
     this.#modelRef = opts.model ?? this.#config.agent.model;
     const usedProvider = this.#registry.require(this.#modelRef).provider; // falha cedo com modelo inexistente
     const identity = providerIdentityFor(effective, usedProvider);
@@ -239,6 +259,41 @@ export class AgentSession {
   /** Teste real mínimo de um provider (C6); sob demanda na tela de providers. */
   probeProvider(name: string): Promise<HealthCheck> {
     return probeProvider(this.#config, name, this.#env ?? process.env);
+  }
+
+  /** Login device flow do Codex; grava o auth.json só depois do exchange. */
+  async loginCodex(name: string, signal?: AbortSignal): Promise<CodexLoginStart> {
+    const provider = this.#config.providers[name];
+    if (provider === undefined || provider.kind !== "codex-oauth") {
+      throw new Error(`provider "${name}" não é codex-oauth`);
+    }
+    const credentialsPath = (provider as { credentialsPath?: string }).credentialsPath ?? "~/.codex/auth.json";
+    const expanded = expandHomePath(credentialsPath);
+    if (!isAbsolute(expanded)) throw new Error(`credentialsPath "${credentialsPath}" precisa ser absoluto ou começar com ~`);
+    const path = resolve(expanded);
+    const canonical = (value: string): string => {
+      try { return realpathSync(value); } catch {
+        try { return join(realpathSync(dirname(value)), basename(value)); } catch { return resolve(value); }
+      }
+    };
+    const root = findGitRoot(this.#cwd);
+    if (root !== undefined) {
+      const relRoot = relative(canonical(root), canonical(path));
+      const insideRepo = relRoot === "" || (relRoot !== ".." && !relRoot.startsWith(`..${sep}`) && !isAbsolute(relRoot));
+      if (insideRepo) throw new Error("credentialsPath não pode ficar dentro do repositório");
+    }
+    const start = await startCodexLogin({
+      ...(signal === undefined ? {} : { signal }),
+      ...(this.#fetchLike === undefined ? {} : { fetchLike: this.#fetchLike }),
+    });
+    return {
+      ...start,
+      done: start.done.then((tokens) => {
+        throwIfAborted(signal);
+        saveCodexAuth(path, tokens);
+        return tokens;
+      }),
+    };
   }
 
   /** Troca de provider mantendo o id do modelo quando existir; senão o primeiro ativo. */
