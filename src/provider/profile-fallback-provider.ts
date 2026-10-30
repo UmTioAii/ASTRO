@@ -14,6 +14,8 @@ export interface ProfileChainEntry {
   fallback: string[];
   /** Credencial do profile (nome/caminho/kind), usada no lock de destino (A7). */
   credentialRef?: string;
+  /** Conta exclusiva do profile; usada para validar o sticky do agente (A4). */
+  accountRef?: string;
   create: () => Provider;
 }
 
@@ -26,6 +28,10 @@ export interface ProfileFallbackProviderOptions {
   approveSwap?: SwapApprover;
   /** Move o lock da conta para o profile de destino (A7); lança AccountLockedError se ocupada. */
   moveAccount?: (entry: ProfileChainEntry, reason: ErrorClass) => void;
+  /** Conta que o agente corrente detém; valida o sticky entre agentes (A4). */
+  currentAccount?: () => string | undefined;
+  /** Pré-checagem de conta livre (A7) para não pedir aprovação de destino ocupado. */
+  canUseAccount?: (entry: ProfileChainEntry) => boolean;
   /** Nome do agente corrente no multi-agent (atribui swap.* corretamente). */
   agentName?: () => string;
 }
@@ -39,6 +45,8 @@ export class ProfileFallbackProvider implements Provider {
   readonly #run?: string;
   readonly #approveSwap?: SwapApprover;
   readonly #moveAccount?: (entry: ProfileChainEntry, reason: ErrorClass) => void;
+  readonly #currentAccount?: () => string | undefined;
+  readonly #canUseAccount?: (entry: ProfileChainEntry) => boolean;
   readonly #agentName?: () => string;
   /** Profile que atendeu por último nesta execução: não volta ao primário a cada step. */
   readonly #activeProfile = new Map<string, string>();
@@ -50,6 +58,8 @@ export class ProfileFallbackProvider implements Provider {
     this.#run = opts.run;
     this.#approveSwap = opts.approveSwap;
     this.#moveAccount = opts.moveAccount;
+    this.#currentAccount = opts.currentAccount;
+    this.#canUseAccount = opts.canUseAccount;
     this.#agentName = opts.agentName;
   }
 
@@ -66,7 +76,13 @@ export class ProfileFallbackProvider implements Provider {
     // primário a cada step usaria uma conta sem o lock (A4/A7).
     const sticky = this.#activeProfile.get(requested);
     const stickyIndex = sticky === undefined ? -1 : chain.findIndex((entry) => entry.name === sticky);
-    const effectiveChain = stickyIndex > 0 ? chain.slice(stickyIndex) : chain;
+    const currentAccount = this.#currentAccount?.();
+    const stickyEntry = stickyIndex > 0 ? chain[stickyIndex] : undefined;
+    // O sticky só vale se a conta que o agente detém é a do profile sticky;
+    // em um handoff o agente seguinte adquiriu a conta primária.
+    const stickyMatches = stickyEntry !== undefined &&
+      (stickyEntry.accountRef === undefined || currentAccount === undefined || stickyEntry.accountRef === currentAccount);
+    const effectiveChain = stickyMatches ? chain.slice(stickyIndex) : chain;
     const fallbacks: FallbackRecord[] = [];
     let lastError: unknown;
     let lastReason: ErrorClass = "invalid_request";
@@ -76,6 +92,15 @@ export class ProfileFallbackProvider implements Provider {
       const entry = effectiveChain[i]!;
       if (previousIndex >= 0) {
         const fromEntry = effectiveChain[previousIndex]!;
+        if (this.#canUseAccount !== undefined && !this.#canUseAccount(entry)) {
+          this.#log("profile.fallback_skipped", {
+            profile: entry.name,
+            provider: entry.provider,
+            reason: lastReason,
+            errorClass: "account_locked",
+          });
+          continue;
+        }
         if (this.#approveSwap !== undefined) {
           const request: SwapRequest = {
             run: this.#run ?? "",

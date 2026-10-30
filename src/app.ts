@@ -5,7 +5,7 @@ import { Auditor } from "./audit";
 import { isAbortError } from "./abort";
 import { SwapDeniedError, swapDelta, type SwapApprover, type SwapRequest } from "./approval";
 import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
-import { ConfigError, providerCredentialRefFor } from "./config";
+import { ConfigError, providerAccountRefFor, providerCredentialRefFor } from "./config";
 import { loadEffectiveConfig, providerIdentityFor } from "./provider/profiles";
 import { Ledger } from "./ledger";
 import { CodexOAuthProvider } from "./provider/codex-oauth";
@@ -25,13 +25,14 @@ import type { AuditEvent } from "./audit";
 import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, type BudgetStatus } from "./budget";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
-import { moveAgentLock, recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
+import { activeLocks, moveAgentLock, recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
 import type { CallSelection } from "./call-profile";
 import { markProviderFailure, markProviderSuccess } from "./provider/health-state";
 import { reserveForCall } from "./model-cost";
 import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
+import { redactSecrets } from "./sanitize-external";
 import { MCPRegistry } from "./mcp/registry";
 import { headerEnvNames } from "./mcp/headers";
 import { mcpTools } from "./mcp/tool";
@@ -395,12 +396,26 @@ function providerChain(
     const credentialRef = provider === undefined ? undefined : providerCredentialRefFor(provider);
     return credentialRef === undefined ? {} : { credentialRef };
   };
+  const agentId = (): string => agentName?.() ?? AGENT_NAME;
+  const currentAccountFor = (): string | undefined => {
+    const runKey = redactSecrets(run);
+    const agentKey = redactSecrets(agentId());
+    return activeLocks(ledger).find((lock) => lock.run === runKey && lock.agent_id === agentKey)?.accountRef;
+  };
+  const canUseAccountFor = (entry: { accountRef?: string }): boolean => {
+    if (entry.accountRef === undefined) return true;
+    const runKey = redactSecrets(run);
+    const agentKey = redactSecrets(agentId());
+    return !activeLocks(ledger).some((lock) => lock.accountRef === entry.accountRef &&
+      !(lock.run === runKey && lock.agent_id === agentKey));
+  };
   return new FallbackProvider({
     providers: [
       {
         name: model.provider,
         priority: primaryConfig?.priority ?? DEFAULT_PRIORITY,
         ...entryCredential(model.provider),
+        ...(primaryConfig === undefined ? {} : { accountRef: providerAccountRefFor(model.provider, primaryConfig) }),
         create: memoizedCreate(() => createGuardedProvider(
           config, model, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
         )),
@@ -418,6 +433,7 @@ function providerChain(
           name,
           priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
           ...entryCredential(name),
+          ...(config.providers[name] === undefined ? {} : { accountRef: providerAccountRefFor(name, config.providers[name]!) }),
           create: memoizedCreate(() => createGuardedProvider(
             config, fallbackModel, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
           )),
@@ -430,12 +446,15 @@ function providerChain(
     run,
     ...(profile === undefined ? {} : { profile }),
     ...(approveSwap === undefined ? {} : { approveSwap }),
+    currentAccount: currentAccountFor,
+    canUseAccount: canUseAccountFor,
     moveAccount: (entry, reason) => moveAgentLock(ledger, audit, {
       run,
-      agent_id: agentName?.() ?? AGENT_NAME,
+      agent_id: agentId(),
       provider: entry.name,
       model: model.id,
       ...(entry.credentialRef === undefined ? {} : { credentialRef: entry.credentialRef }),
+      ...(profile === undefined ? {} : { profile }),
       reason,
     }),
     ...(agentName === undefined ? {} : { agentName }),
@@ -622,6 +641,20 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const baseConfig = config.providers[model.provider];
   /** Agente corrente do multi-agent; os wrappers atribuem swap.* a ele. */
   const activeAgent = { name: AGENT_NAME };
+  /** Conta que o agente corrente detém (A4), usada para validar o sticky. */
+  const currentAccount = (): string | undefined => {
+    const runKey = redactSecrets(run);
+    const agentKey = redactSecrets(activeAgent.name);
+    return activeLocks(ledger).find((lock) => lock.run === runKey && lock.agent_id === agentKey)?.accountRef;
+  };
+  /** Pré-checagem de A7: destino livre para este agente. */
+  const canUseAccount = (entry: { accountRef?: string }): boolean => {
+    if (entry.accountRef === undefined) return true;
+    const runKey = redactSecrets(run);
+    const agentKey = redactSecrets(activeAgent.name);
+    return !activeLocks(ledger).some((lock) => lock.accountRef === entry.accountRef &&
+      !(lock.run === runKey && lock.agent_id === agentKey));
+  };
   let effectiveProvider = (baseConfig?.fallback ?? []).length > 0
     ? providerChain(config, model, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
     : lazyProvider(() => createGuardedProvider(
@@ -641,6 +674,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         provider: profileModel.provider,
         fallback: profile.fallback ?? [],
         ...(credentialRef === undefined ? {} : { credentialRef }),
+        ...(profileProvider === undefined ? {} : { accountRef: providerAccountRefFor(profileModel.provider, profileProvider) }),
         create: () => (chain ??= providerChain(
           config, profileModel, env, loaded.providerFactories, audit, run, ledger, quotaLimits, name, approveSwap, () => activeAgent.name,
         )),
@@ -655,6 +689,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       run,
       approveSwap,
       agentName: () => activeAgent.name,
+      currentAccount,
+      canUseAccount,
       moveAccount: (entry, reason) => moveAgentLock(ledger, audit, {
         run,
         agent_id: activeAgent.name,

@@ -23,6 +23,8 @@ export interface FallbackChainEntry {
   priority: number;
   /** Credencial do provider, usada no lock de destino (A7); ausente em keyless. */
   credentialRef?: string;
+  /** Conta exclusiva do provider; usada para validar o sticky do agente (A4). */
+  accountRef?: string;
   /** Fábrica preguiçosa: credenciais só são resolvidas quando o provider entra na cadeia. */
   create: () => Provider;
 }
@@ -41,6 +43,10 @@ export interface FallbackProviderOptions {
   approveSwap?: SwapApprover;
   /** Move o lock para a conta do provider de destino (A7); lança AccountLockedError se ocupada. */
   moveAccount?: (entry: FallbackChainEntry, reason: ErrorClass) => void;
+  /** Conta que o agente corrente detém; valida o sticky entre agentes (A4). */
+  currentAccount?: () => string | undefined;
+  /** Pré-checagem de conta livre (A7) para não pedir aprovação de destino ocupado. */
+  canUseAccount?: (entry: FallbackChainEntry) => boolean;
   /** Nome do agente corrente no multi-agent (atribui swap.* corretamente). */
   agentName?: () => string;
 }
@@ -56,6 +62,8 @@ export class FallbackProvider implements Provider {
   readonly #profile?: string;
   readonly #approveSwap?: SwapApprover;
   readonly #moveAccount?: (entry: FallbackChainEntry, reason: ErrorClass) => void;
+  readonly #currentAccount?: () => string | undefined;
+  readonly #canUseAccount?: (entry: FallbackChainEntry) => boolean;
   readonly #agentName?: () => string;
   /** Provider que atendeu por último nesta execução: não volta ao primário a cada step. */
   #activeProvider: string | undefined;
@@ -69,6 +77,8 @@ export class FallbackProvider implements Provider {
     this.#profile = opts.profile;
     this.#approveSwap = opts.approveSwap;
     this.#moveAccount = opts.moveAccount;
+    this.#currentAccount = opts.currentAccount;
+    this.#canUseAccount = opts.canUseAccount;
     this.#agentName = opts.agentName;
   }
 
@@ -79,8 +89,20 @@ export class FallbackProvider implements Provider {
     const stickyIndex = this.#activeProvider === undefined
       ? -1
       : this.#chain.findIndex((entry) => entry.name === this.#activeProvider);
-    const chain = stickyIndex > 0 ? this.#chain.slice(stickyIndex) : this.#chain;
+    const currentAccount = this.#currentAccount?.();
+    const stickyEntry = stickyIndex > 0 ? this.#chain[stickyIndex] : undefined;
+    const stickyMatches = stickyEntry !== undefined &&
+      (stickyEntry.accountRef === undefined || currentAccount === undefined || stickyEntry.accountRef === currentAccount);
+    const chain = stickyMatches ? this.#chain.slice(stickyIndex) : this.#chain;
     for (const entry of chain) {
+      if (previous !== undefined && this.#canUseAccount !== undefined && !this.#canUseAccount(entry)) {
+        this.#log("provider.fallback_skipped", {
+          provider: entry.name,
+          reason: previousReason,
+          errorClass: "account_locked",
+        });
+        continue;
+      }
       if (previous !== undefined && this.#approveSwap !== undefined) {
         const request: SwapRequest = {
           run: this.#run ?? "",

@@ -29,8 +29,14 @@ function entry(
   fallback: string[],
   complete: Provider["complete"],
   credentialRef?: string,
+  accountRef?: string,
 ): ProfileChainEntry {
-  return { name, provider, model, fallback, ...(credentialRef === undefined ? {} : { credentialRef }), create: () => ({ complete }) };
+  return {
+    name, provider, model, fallback,
+    ...(credentialRef === undefined ? {} : { credentialRef }),
+    ...(accountRef === undefined ? {} : { accountRef }),
+    create: () => ({ complete }),
+  };
 }
 
 const holder = (accountRef: string): AgentLock => ({
@@ -255,5 +261,51 @@ describe("ProfileFallbackProvider (F-31)", () => {
     expect((await fb.complete(req("p1"))).content).toBe("p2");
     expect((await fb.complete(req("p1"))).content).toBe("p2");
     expect(calls).toEqual(["p1", "p2", "p2"]);
+  });
+
+  test("sticky de profile não vaza para outro agente com a conta primária", async () => {
+    let current = "KEY_A";
+    const calls: string[] = [];
+    let p1Calls = 0;
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => {
+          calls.push("p1");
+          p1Calls++;
+          if (p1Calls === 1) throw new ProviderError("outage", "a fora");
+          return resp("p1");
+        }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", [], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B", "KEY_B"),
+      ],
+      currentAccount: () => current,
+      moveAccount: (target) => { current = target.accountRef ?? current; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect(current).toBe("KEY_B");
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // mesmo agente, sticky
+    current = "KEY_A"; // handoff: novo agente adquiriu a conta primária
+    expect((await fb.complete(req("p1"))).content).toBe("p1");
+    expect(calls).toEqual(["p1", "p2", "p2", "p1"]);
+  });
+
+  test("destino ocupado é pulado antes do gate de aprovação (A7)", async () => {
+    const calls: string[] = [];
+    const approvals: string[] = [];
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2", "p3"], async () => { calls.push("p1"); throw new ProviderError("outage", "a"); }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", ["p3"], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B", "KEY_B"),
+        entry("p3", "c", "m3", [], async () => { calls.push("p3"); return resp("p3"); }, "KEY_C", "KEY_C"),
+      ],
+      canUseAccount: (entry) => entry.name !== "p2",
+      approveSwap: async (request) => { approvals.push(request.to.profile ?? ""); return true; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p3");
+    expect(calls).toEqual(["p1", "p3"]);
+    expect(approvals).toEqual(["p3"]);
   });
 });
