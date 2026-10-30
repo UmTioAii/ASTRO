@@ -25,6 +25,7 @@ import type { AuditEvent } from "./audit";
 import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, type BudgetStatus } from "./budget";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
+import { recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
 import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
@@ -482,6 +483,11 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           if (webhookUrl !== undefined) void sendAuditWebhook(webhookUrl, event);
         };
   const audit = new Auditor(auditPath, ...(onEvent === undefined ? [] : [{ onEvent }]));
+  // A4: crash duro de um processo anterior não pode deixar a conta cativa para
+  // sempre. Só locks de PID comprovadamente morto são liberados. O run que está
+  // sendo retomado fica de fora: sua recuperação só ocorre depois da validação
+  // de modelo/identidade, para não gravar crash_recovered em resume rejeitado.
+  recoverDeadAgentLocks(ledger, audit, undefined, opts.resume === undefined ? {} : { excludeRun: opts.resume });
 
   if (opts.runId !== undefined && opts.resume !== undefined) {
     throw new ConfigError("runId e resume são mutuamente exclusivos");
@@ -549,6 +555,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       resumedModel = resolved;
       resumedProfile = agent.profile;
     }
+    // A4/§11.5: órfãos do crash perdem o lock antes de o agente ser recriado.
+    recoverCrashedAgents(ledger, audit, run);
   }
   const baseModel = resumedModel ?? model;
   const baseProfile = resumedProfile ?? (opts.model === undefined ? config.agent.profile : undefined);

@@ -42,7 +42,10 @@ test("agent nomeado sem profile mantém o model próprio (sem defaultProfile)", 
   try {
     const dir = mkdtempSync(join(tmpdir(), "astro-f31c-"));
     const cfgPath = writeConfig(dir, {
-      providers: { mock: provider(`http://127.0.0.1:${server.port}/v1`, "TEST_KEY") },
+      providers: {
+        mock: provider(`http://127.0.0.1:${server.port}/v1`, "TEST_KEY"),
+        backup: provider(`http://127.0.0.1:${server.port}/v1`, "BACKUP_KEY"),
+      },
       models: [model("mock", "m1"), model("mock", "m2"), model("mock", "m3")],
       // pro tem fallback de profile: garante que o roteador está montado.
       modelPool: { pro: { model: "mock/m2", fallback: ["other"] }, other: { model: "mock/m3" } },

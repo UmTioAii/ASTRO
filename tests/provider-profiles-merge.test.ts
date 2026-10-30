@@ -278,6 +278,10 @@ test("agents nomeados com profile sobrevivem à revalidação", () => {
   const base = project();
   const withAgents = validateConfig({
     ...base,
+    providers: {
+      ...base.providers,
+      backup: { kind: "openai-compat", baseUrl: "https://backup.example/v1", credentialRef: "BACKUP_KEY" },
+    },
     modelPool: { fast: { model: "p/m1" } },
     agents: { coder: { profile: "fast" } },
   });

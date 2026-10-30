@@ -12,6 +12,10 @@ const valid = {
 
 const validWithAgents = {
   ...valid,
+  providers: {
+    ...valid.providers,
+    backup: { kind: "openai-compat", baseUrl: "https://api.openai.com/v1", credentialRef: "BACKUP_API_KEY" },
+  },
   agents: {
     planner: { model: "openai/gpt-4o-mini", maxSteps: 10, tools: ["read_file"], systemPrompt: "Planeje a tarefa" },
     coder: { model: "openai/gpt-4o-mini", maxSteps: 15, tools: ["read_file", "write_file", "run_command"] },

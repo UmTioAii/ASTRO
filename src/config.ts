@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
@@ -195,6 +197,8 @@ export interface AstroConfig {
   modelPool?: Record<string, ProfileConfig>;
   agent: AgentConfig;
   agents?: Record<string, NamedAgentConfig>;
+  /** Teto declarado de agentes ativos (A2); v1 aplica no máximo 2. */
+  maxActive?: number;
   tools?: ToolsConfig;
   telemetry?: TelemetryConfig;
   /** Limites por quotaDomain (F6-3). */
@@ -284,6 +288,34 @@ function expectBoolean(value: unknown, field: string): boolean {
     fail(`config inválida: "${field}" deve ser booleano`);
   }
   return value;
+}
+
+/**
+ * Conta de um provider (A2/A4), na mesma forma que o runtime usa em
+ * `providerIdentity`: a credencial nomeada, o arquivo OAuth expandido ou o
+ * `kind` para provider de plugin. Sem chave, o próprio provider é a conta.
+ */
+function providerAccountRef(name: string, provider: ProviderConfig): string {
+  const raw = provider as { kind: string; credentialRef?: unknown; credentialsPath?: unknown };
+  if (raw.kind === "openai-compat") {
+    return typeof raw.credentialRef === "string" && raw.credentialRef.length > 0
+      ? raw.credentialRef
+      : `provider:${name}`;
+  }
+  if (raw.kind === "codex-oauth") {
+    return typeof raw.credentialsPath === "string"
+      ? expandHome(raw.credentialsPath)
+      : `provider:${name}`;
+  }
+  if (typeof raw.credentialRef === "string") return raw.credentialRef;
+  return raw.kind;
+}
+
+/** Mesma expansão de `~` usada pelo runtime para o caminho de credenciais. */
+function expandHome(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(2));
+  return path;
 }
 
 function validateHeaders(value: unknown, field: string): Record<string, string> {
@@ -930,13 +962,32 @@ export function validateConfig(raw: unknown): AstroConfig {
     );
   }
 
-  // Validar agents nomeados (F3-1)
+  // Validar agents nomeados (F3-1). `maxActive` é reservado (A2): não é agente.
   const agents: Record<string, NamedAgentConfig> = Object.create(null);
+  let maxActive: number | undefined;
   if (root.agents !== undefined) {
     const agentsRaw = expectObject(root.agents, "agents");
     const knownTools = new Set(agent.tools);
     for (const [name, agentRaw] of Object.entries(agentsRaw)) {
+      if (name === "maxActive") {
+        maxActive = expectPositiveInteger(agentRaw, "agents.maxActive");
+        continue;
+      }
       agents[name] = validateNamedAgent(name, agentRaw, agent, knownTools, seenModels, models, modelPool);
+    }
+  }
+
+  // A2 (ADR-0008): cada agente ativo consome uma conta exclusiva (A4, ADR-0009).
+  // O teto efetivo da v1 é 2; `maxActive` só é validado quando declarado.
+  if (Object.keys(agents).length > 0) {
+    const accounts = new Set(
+      Object.entries(providers).map(([name, provider]) => providerAccountRef(name, provider)),
+    ).size;
+    const ceiling = maxActive ?? 2;
+    if (ceiling > accounts) {
+      fail(
+        `config inválida: max_active_exceeds_accounts (${ceiling} agentes ativos para ${accounts} contas declaradas)`,
+      );
     }
   }
 
@@ -989,7 +1040,7 @@ export function validateConfig(raw: unknown): AstroConfig {
 
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, tools, telemetry, quota, cache, plugins, version, team, handoff, ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
+  return { providers, models, modelPool, agent, agents, ...(maxActive === undefined ? {} : { maxActive }), tools, telemetry, quota, cache, plugins, version, team, handoff, ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */

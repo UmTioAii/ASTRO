@@ -139,7 +139,10 @@ describe("run.maxTurns no runtime (F-05, #132 parte 1)", () => {
       };
       writeFileSync(configPath, JSON.stringify({
         ...structuredClone(valid),
-        providers: { openai: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" } },
+        providers: {
+          openai: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" },
+          backup: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "BACKUP_KEY" },
+        },
         agents,
         run: { maxTurns: 2 },
       }));
