@@ -25,8 +25,9 @@ export function effectiveRecentBudget(
   window: number,
   buffer?: number | null,
   requested: number = RECENT_TOKENS,
+  systemTokens = 0,
 ): number {
-  const room = window - reserveTokens(window, buffer) - MIN_SUMMARY_BUDGET;
+  const room = window - reserveTokens(window, buffer) - MIN_SUMMARY_BUDGET - systemTokens;
   return room > 0 ? Math.min(requested, room) : requested;
 }
 
@@ -163,14 +164,15 @@ export interface CompactResult {
 
 /** Executa uma compactação: parte recente, redução do antigo, resumo e artefato. */
 export async function compactSession(input: CompactInput): Promise<CompactResult> {
+  const countOpts = input.provider === undefined ? {} : { provider: input.provider };
   const hasSystem = input.messages[0]?.role === "system";
+  const systemTokens = hasSystem ? countMessageTokens([input.messages[0]!], countOpts).tokens : 0;
   const recentStart = recentSliceStart(
     input.messages,
-    effectiveRecentBudget(input.window, input.buffer, input.recentBudget),
+    effectiveRecentBudget(input.window, input.buffer, input.recentBudget, systemTokens),
   );
   const older = input.messages.slice(hasSystem ? 1 : 0, recentStart);
   const recent = input.messages.slice(recentStart);
-  const countOpts = input.provider === undefined ? {} : { provider: input.provider };
 
   const originalTokens = countMessageTokens(input.messages, countOpts).tokens;
   if (older.length === 0) {
@@ -187,7 +189,7 @@ export async function compactSession(input: CompactInput): Promise<CompactResult
   const recentTokens = countMessageTokens(recent, countOpts).tokens;
   const budget = Math.max(
     MIN_SUMMARY_BUDGET,
-    input.window - reserveTokens(input.window, input.buffer) - recentTokens,
+    input.window - reserveTokens(input.window, input.buffer) - recentTokens - systemTokens,
   );
 
   let reduction: ReducedHistory = { level: 5, messages: [] };

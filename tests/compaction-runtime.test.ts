@@ -120,9 +120,15 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
 
   test("rejeição por tamanho compacta e retenta uma única vez", async () => {
     const { ledger, audit } = setup();
+    const messages: ChatMessage[] = [
+      { role: "system", content: "SYS" },
+      user("a".repeat(40_000)),
+      assistant("b".repeat(40_000)),
+      user("c"),
+    ];
     let calls = 0;
-    const response = await completeWithCompaction([...small], {
-      ledger, audit, run: "r1", agent: () => "a", window: () => 100_000, provider: () => "p", model: () => "m",
+    const response = await completeWithCompaction(messages, {
+      ledger, audit, run: "r1", agent: () => "a", window: () => 128_000, provider: () => "p", model: () => "m",
       compaction: { buffer: null },
       complete: async () => {
         calls++;
@@ -137,9 +143,15 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
 
   test("segunda rejeição por tamanho sobe o erro", async () => {
     const { ledger, audit } = setup();
+    const messages: ChatMessage[] = [
+      { role: "system", content: "SYS" },
+      user("a".repeat(40_000)),
+      assistant("b".repeat(40_000)),
+      user("c"),
+    ];
     let calls = 0;
-    const run = completeWithCompaction([...small], {
-      ledger, audit, run: "r1", agent: () => "a", window: () => 100_000, provider: () => "p", model: () => "m",
+    const run = completeWithCompaction(messages, {
+      ledger, audit, run: "r1", agent: () => "a", window: () => 128_000, provider: () => "p", model: () => "m",
       compaction: { buffer: null },
       complete: async () => {
         calls++;
@@ -149,6 +161,22 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
     });
     await expect(run).rejects.toThrow(/maximum context length/);
     expect(calls).toBe(2);
+  });
+
+  test("overflow sem nada para compactar não repete a request", async () => {
+    const { ledger, audit } = setup();
+    let calls = 0;
+    const run = completeWithCompaction([...small], {
+      ledger, audit, run: "r1", agent: () => "a", window: () => 128_000, provider: () => "p", model: () => "m",
+      compaction: { buffer: null },
+      complete: async () => {
+        calls++;
+        throw new ProviderError("invalid_request", "maximum context length exceeded");
+      },
+      summarize: async () => "resumo",
+    });
+    await expect(run).rejects.toThrow(/maximum context length/);
+    expect(calls).toBe(1);
   });
 
   test("breaker pausado impede a compactação e a chamada", async () => {

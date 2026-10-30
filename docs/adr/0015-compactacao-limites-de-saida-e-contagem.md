@@ -11,7 +11,7 @@ Janelas de contexto são finitas. A parte de compactação de F-08 (CMP-1..12) p
 
 ## Decisão
 
-**Gatilho e parte recente (CMP-1, CMP-2).** Compacta quando a estimativa atinge `window − reserve`; sem `buffer`, reserve = max(15% da janela, 16.000); buffer explícito substitui o default e é ignorado se ≥ janela. A parte recente tem 15.000 tokens de mensagens, sem system prompt nem `AGENTS.md`, cortada no início de mensagem de usuário; contada pelo tokenizer do modelo ativo, senão 4 chars/token marcado estimate.
+**Gatilho e parte recente (CMP-1, CMP-2).** Compacta quando a estimativa atinge `window − reserve`; sem `buffer`, reserve = max(15% da janela, 16.000); buffer explícito substitui o default e é ignorado se ≥ janela. A parte recente tem 15.000 tokens de mensagens, sem system prompt nem `AGENTS.md`, cortada no início de mensagem de usuário; sem usuário dentro da janela (run de uma tarefa só, após tools), o corte vai para o assistant dono do par tool call/result — nunca no meio do par. Contada pelo tokenizer do modelo ativo, senão 4 chars/token marcado estimate; a janela encurta a parte recente para caber system + artefato + reserva.
 
 **Integridade e artefato (CMP-3, CMP-4, CMP-5).** Nunca compacta no meio do par tool call/result. `CompactionArtifactV1` (`src/compaction/types.ts`) com seções Active, Blocked, Next Move, Relevant Files (máx 15), Important Context; campos compartilhados com handoff são copiados; o pedido de resumo não chama tools. Redução em 5 níveis: full → outputs clipados (2.000 head + 2.000 tail) → outputs removidos e inputs clipados → só texto do usuário clipado → omitido.
 

@@ -43,7 +43,7 @@ export interface CompactionRuntimeOptions {
 }
 
 /** Vocabulário de tamanho/estouro; "context caching" não é overflow. */
-const OVERFLOW_PATTERN = /context\s*(length|window)|maximum.{0,24}(token|context)|prompt is too (large|long)|too many tokens|token.{0,24}(limit|maximum)|exceeds?.{0,12}context/i;
+const OVERFLOW_PATTERN = /context\s*(length|window)|maximum.{0,24}(token|context)|prompt is too (large|long)|(input|request|message)s?.{0,16}too (long|large)|too many tokens|token.{0,24}(limit|maximum)|exceeds?.{0,12}context/i;
 
 /** O provider rejeitou por tamanho de contexto? */
 export function isContextOverflow(error: unknown): boolean {
@@ -54,16 +54,22 @@ export function isContextOverflow(error: unknown): boolean {
 type CompactReason = "trigger" | "overflow";
 
 /** Overhead estimado do artefato no contexto compactado (tokens). */
-const ARTIFACT_OVERHEAD = 500;
+const ARTIFACT_OVERHEAD = 2_000;
 
 /** A compactação consegue projetar o contexto abaixo do gatilho? */
 function projectionCanClear(messages: readonly ChatMessage[], opts: CompactionRuntimeOptions): boolean {
   const window = opts.window();
-  const start = recentSliceStart(messages, effectiveRecentBudget(window, opts.compaction.buffer));
+  const systemTokens = messages[0]?.role === "system"
+    ? countMessageTokens([messages[0]!], { provider: opts.provider() }).tokens
+    : 0;
+  const start = recentSliceStart(
+    messages,
+    effectiveRecentBudget(window, opts.compaction.buffer, undefined, systemTokens),
+  );
   const older = start - (messages[0]?.role === "system" ? 1 : 0);
   if (older <= 0) return false;
   const recentTokens = countMessageTokens(messages.slice(start), { provider: opts.provider() }).tokens;
-  return recentTokens + ARTIFACT_OVERHEAD < window - reserveTokens(window, opts.compaction.buffer);
+  return systemTokens + recentTokens + ARTIFACT_OVERHEAD < window - reserveTokens(window, opts.compaction.buffer);
 }
 
 /** Compacta, grava sucesso/falha e abre o breaker quando necessário. */
@@ -144,8 +150,10 @@ export async function completeWithCompaction(
     return await opts.complete(messages);
   } catch (error) {
     if (!isContextOverflow(error)) throw error;
-    await applyCompaction(messages, opts, "overflow");
+    const compacted = await applyCompaction(messages, opts, "overflow");
     throwIfAborted(opts.signal);
+    // Sem nada para compactar, repetir a mesma request só gastaria uma chamada.
+    if (!compacted) throw error;
     // Segunda rejeição é terminal (CMP-7): o erro sobe para a sessão.
     return await opts.complete(messages);
   }

@@ -98,6 +98,8 @@ describe("compactação na sessão (S-17, CMP-8)", () => {
       expect(ledger.readAllEntries().filter((entry) => entry.kind === "compaction")).toHaveLength(1);
       expect(ledger.readAllEntries().find((entry) => entry.kind === "compaction"))
         .toMatchObject({ failure_count: 0, manual: false });
+      // O uso do resumo também entra no ledger (custo/quota).
+      expect(ledger.readAllEntries().filter((entry) => entry.kind === "usage")).toHaveLength(2);
     } finally {
       mock.instance.stop(true);
     }
