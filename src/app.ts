@@ -725,18 +725,17 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     ...(quotaLimits === undefined ? {} : { quotaLimits }),
     ...(budget === undefined ? {} : { budget }),
   })));
-  if (multiAgentRun) {
-    toolsByName.set("spawn_agent", createSpawnAgentTool({
-      config,
-      registry,
-      ledger,
-      audit,
-      cwd,
-      spawns,
-      ...(quotaLimits === undefined ? {} : { quotaLimits }),
-      ...(budget === undefined ? {} : { budget }),
-    }));
-  }
+  toolsByName.set("spawn_agent", createSpawnAgentTool({
+    config,
+    registry,
+    ledger,
+    audit,
+    cwd,
+    spawns,
+    enabled: multiAgentRun,
+    ...(quotaLimits === undefined ? {} : { quotaLimits }),
+    ...(budget === undefined ? {} : { budget }),
+  }));
   for (const tool of loaded.tools) {
     if (!toolsByName.has(tool.manifest.name)) toolsByName.set(tool.manifest.name, tool);
   }

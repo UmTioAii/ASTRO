@@ -770,6 +770,11 @@ export async function runMultiAgentSession(
         messages.length = 0;
         messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
       }
+      if (messages.length === 0) {
+        messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+      } else {
+        messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
+      }
       // Verifier de identidade na retomada (F-26): o receptor começa em source_step+1
       verifyHandoffIdentity(
         { run: redactSecrets(opts.run), from: pending.artifact.from, to: redactSecrets(currentAgentName),
@@ -955,6 +960,8 @@ export async function runMultiAgentSession(
           // CAS (F-26, I-18): created já recebido em outro processo → devolve o existente, sem reexecutar
           if (scanHandoffs(opts.ledger, opts.run).find((h) => h.handoff_id === entry.handoff_id)?.state === "completed") continue;
           const emitterName = currentAgentName;
+          // Respostas das tools puladas ficam no histórico do EMISSOR, antes do save.
+          for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
           // Teto de escopo permanece o máximo do baseExecutor (I-02: teto do sistema)
           // currentCeiling não muda — já é o máximo do baseExecutor
           saveAgentState(emitterName);
@@ -968,6 +975,12 @@ export async function runMultiAgentSession(
           if (!restoreAgentState(currentAgentName) && opts.spawns?.get(currentAgentName) !== undefined) {
             messages.length = 0;
             messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+          }
+          // O system prompt é sempre o do agente que vai executar (inclusive 1ª visita).
+          if (messages.length === 0) {
+            messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+          } else {
+            messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
           }
           // Self-handoff mantém o mesmo agente ativo: sem destroyed/created (F-22)
           if (handoff.to !== emitterName) {
@@ -986,7 +999,6 @@ export async function runMultiAgentSession(
           if (await ackWithTimeout(entry, currentAgentName) === "timeout") throw ackTimeoutError(entry);
           opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
           activeHandoff = entry;
-          for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
           messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]${resumeDetail(opts.ledger, entry.artifact)}` });
           handoffTriggered = true;
           break; // interrompe execução das outras tools deste step

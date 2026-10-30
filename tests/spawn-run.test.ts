@@ -155,28 +155,112 @@ describe("spawn_agent ponta a ponta (S-11, C4a)", () => {
     }
   });
 
-  test("chat/single-agent não expõe spawn_agent e não deixa lock órfão", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "astro-spawn-chat-"));
-    const configPath = join(cwd, "astro.config.json");
-    writeFileSync(configPath, JSON.stringify({
-      providers: {
-        p1: { kind: "openai-compat", baseUrl: "http://127.0.0.1:1/v1", credentialRef: "KEY1" },
-        p2: { kind: "openai-compat", baseUrl: "http://127.0.0.1:1/v1", credentialRef: "KEY2" },
+  test("tools puladas no step do handoff ficam no emissor e não no filho", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-spawn-skip-"));
+    const bodies: Body[] = [];
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        bodies.push((await req.json()) as Body);
+        calls++;
+        const callsFor = (list: Array<{ name: string; args: object }>) => ({
+          choices: [{ message: { content: "", tool_calls: list.map((entry, index) => ({
+            id: `c${calls}_${index}`, type: "function",
+            function: { name: entry.name, arguments: JSON.stringify(entry.args) },
+          })) } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        });
+        if (calls === 1) return Response.json(callsFor([{ name: "spawn_agent", args: { need: "writing-code", task: "sub", tools: ["handoff"] } }]));
+        if (calls === 2) return Response.json(callsFor([
+          { name: "handoff", args: { to: "sub-1", task: "sub", objective: "o", decisions: [], constraints: [], next_steps: [] } },
+          { name: "read_file", args: { path: "x" } },
+        ]));
+        if (calls === 3) return Response.json(callsFor([
+          { name: "handoff", args: { to: "planner", task: "volta", objective: "o", decisions: [], constraints: [], next_steps: [] } },
+        ]));
+        return Response.json({ choices: [{ message: { content: "skip ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
       },
-      models: [
-        { provider: "p1", id: "m1", tags: ["writing-code", "tools"], context: 8192 },
-        { provider: "p2", id: "m2", tags: ["writing-code", "tools"], context: 8192 },
-      ],
-      modelPool: { fast: { model: "p1/m1" } },
-      agent: { model: "p1/m1", maxSteps: 2, tools: ["spawn_agent"] },
-      agents: { planner: { profile: "fast", maxSteps: 2, tools: ["spawn_agent"] } },
-      paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
-    }));
+    });
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      writeFileSync(configPath, JSON.stringify({
+        providers: {
+          p1: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY1" },
+          p2: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY2" },
+        },
+        models: [
+          { provider: "p1", id: "m1", tags: ["writing-code", "tools"], context: 8192, capabilities: { tools: true } },
+          { provider: "p2", id: "m2", tags: ["writing-code", "tools"], context: 8192, capabilities: { tools: true } },
+        ],
+        modelPool: { fast: { model: "p1/m1" }, smart: { model: "p2/m2" } },
+        agent: { model: "p1/m1", maxSteps: 6, tools: ["spawn_agent", "handoff", "read_file"] },
+        agents: { planner: { profile: "fast", maxSteps: 6, tools: ["spawn_agent", "handoff", "read_file"] } },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      }));
 
-    await expect(runTask({
-      configPath, task: "oi", cwd, env: { KEY1: "1", KEY2: "2" },
-      history: [{ role: "user", content: "oi" }],
-    })).rejects.toThrow(/spawn_agent/);
-    expect(activeLocks(new Ledger(join(cwd, ".astro", "ledger.jsonl")))).toEqual([]);
+      const report = await runTask({
+        configPath, task: "orquestrar", cwd, env: { KEY1: "1", KEY2: "2" }, approveSwap: () => true,
+      });
+      expect(report.final).toBe("skip ok");
+      // O filho não recebe a tool pulada do handoff do pai.
+      expect(bodies[2]!.messages?.some((message) => message.role === "tool")).toBe(false);
+      // O emissor restaurado mantém os dois resultados (handoff + skipped).
+      const plannerTools = bodies[3]!.messages?.filter((message) => message.role === "tool") ?? [];
+      expect(plannerTools.length).toBeGreaterThanOrEqual(2);
+      expect(plannerTools.some((message) => message.content?.includes("skipped"))).toBe(true);
+      expect(activeLocks(new Ledger(join(cwd, ".astro", "ledger.jsonl")))).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("chat/single-agent mantém spawn_agent fail-closed e não deixa lock órfão", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-spawn-chat-"));
+    const bodies: Body[] = [];
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        bodies.push((await req.json()) as Body);
+        calls++;
+        if (calls === 1) {
+          return Response.json({
+            choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function",
+              function: { name: "spawn_agent", arguments: JSON.stringify({ need: "writing-code", task: "x" }) } }] } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          });
+        }
+        return Response.json({ choices: [{ message: { content: "chat ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+      },
+    });
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      writeFileSync(configPath, JSON.stringify({
+        providers: {
+          p1: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY1" },
+          p2: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY2" },
+        },
+        models: [
+          { provider: "p1", id: "m1", tags: ["writing-code", "tools"], context: 8192 },
+          { provider: "p2", id: "m2", tags: ["writing-code", "tools"], context: 8192 },
+        ],
+        modelPool: { fast: { model: "p1/m1" } },
+        agent: { model: "p1/m1", maxSteps: 2, tools: ["spawn_agent"] },
+        agents: { planner: { profile: "fast", maxSteps: 2, tools: ["spawn_agent"] } },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      }));
+
+      const report = await runTask({
+        configPath, task: "oi", cwd, env: { KEY1: "1", KEY2: "2" },
+        history: [{ role: "user", content: "oi" }],
+      });
+      expect(report.final).toBe("chat ok");
+      const toolMessage = bodies[1]!.messages?.find((message) => message.role === "tool");
+      expect(toolMessage?.content).toContain("spawn_unavailable");
+      expect(activeLocks(new Ledger(join(cwd, ".astro", "ledger.jsonl")))).toEqual([]);
+    } finally {
+      server.stop(true);
+    }
   });
 });

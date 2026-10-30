@@ -20,6 +20,7 @@ import {
 } from "./model-choice";
 import type { QuotaLimit } from "./quota";
 import type { AgentEntry, Registry } from "./registry";
+import { ROLE_TAGS } from "./tags";
 import type { Tool, ToolContext, ToolResult } from "./tools/types";
 
 /** Teto de spawns por run (A2). */
@@ -108,6 +109,8 @@ export interface SpawnToolDeps {
   audit: Auditor;
   cwd: string;
   spawns: SpawnRegistry;
+  /** false no caminho single/chat: a tool falha fechada com `spawn_unavailable`. */
+  enabled: boolean;
   quotaLimits?: Record<string, QuotaLimit>;
   budget?: BudgetConfig;
 }
@@ -193,9 +196,21 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
     },
     async execute(input: unknown, ctx: ToolContext): Promise<ToolResult> {
       try {
+        if (!deps.enabled) {
+          return {
+            output: JSON.stringify({
+              error: "spawn_unavailable",
+              message: "spawn_agent só está disponível em run multi-agent",
+            }),
+            isError: true,
+          };
+        }
         const raw = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
         if (typeof raw.need !== "string" || raw.need.trim().length === 0) {
           return { output: JSON.stringify({ error: "invalid_need", message: "campo 'need' é obrigatório" }), isError: true };
+        }
+        if (!ROLE_TAGS.includes(raw.need)) {
+          return { output: JSON.stringify({ error: "invalid_need", message: `need "${raw.need}" não é um papel válido` }), isError: true };
         }
         if (typeof raw.task !== "string" || raw.task.trim().length === 0) {
           return { output: JSON.stringify({ error: "invalid_request", message: "campo 'task' é obrigatório" }), isError: true };
@@ -331,7 +346,11 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
             },
           });
         } catch (error) {
-          releaseAgentLock(deps.ledger, deps.audit, { run: ctx.run, agent_id: agentId, reason: "spawn_failed" });
+          try {
+            releaseAgentLock(deps.ledger, deps.audit, { run: ctx.run, agent_id: agentId, reason: "spawn_failed" });
+          } catch {
+            // preserva o erro original; a varredura de órfãos cobre a falha de I/O
+          }
           throw error;
         }
 

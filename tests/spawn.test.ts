@@ -37,7 +37,7 @@ function setup(limit?: number) {
   const registry = new Registry(cfg);
   const spawns = new SpawnRegistry(limit === undefined ? {} : { limit });
   writeFileSync(join(cwd, "AGENTS.md"), "Instruções do projeto");
-  const tool = createSpawnAgentTool({ config: cfg, registry, ledger, audit, cwd, spawns });
+  const tool = createSpawnAgentTool({ config: cfg, registry, ledger, audit, cwd, spawns, enabled: true });
   const ctx: ToolContext = { cwd, run: "r1", agent: "planner", allow: ["handoff", "read_file"], maxSteps: 3 };
   return { cwd, cfg, ledger, audit, registry, spawns, tool, ctx };
 }
