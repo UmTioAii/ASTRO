@@ -116,16 +116,19 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
   const [health, setHealth] = useState<{ provider: string; state: "ok" | "down" } | undefined>(undefined);
+  const healthToken = useRef(0);
   const activeProvider = (): string => session.providerName?.() ?? session.snapshot().model.split("/")[0]!;
   const refreshHealth = async (): Promise<void> => {
     if (session.health === undefined) return;
+    const token = ++healthToken.current;
     const provider = activeProvider();
     try {
       const report = await session.health();
+      if (token !== healthToken.current) return;
       const state = providerHealth(report, provider);
       setHealth(state === undefined ? undefined : { provider, state });
     } catch {
-      setHealth(undefined);
+      if (token === healthToken.current) setHealth(undefined);
     }
   };
   const [screen, setScreen] = useState<{ mode: "list" | "add" | "edit" | "remove"; target?: string } | undefined>(undefined);
@@ -415,13 +418,17 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         onChanged={() => {
           try {
             session.reload?.();
+            healthToken.current++;
+            setHealth(undefined);
             setStatus(statusOf(session.snapshot()));
           } catch (error) {
             setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
           }
         }}
         {...(session.probeProvider === undefined ? {} : { onTest: async (id: string) => {
+          const token = ++healthToken.current;
           const check = await session.probeProvider!(id);
+          if (token !== healthToken.current) return check;
           if (id === activeProvider()) {
             const state = providerHealth({ status: check.status === "ok" ? "ok" : "down", checks: [check] }, id);
             setHealth(state === undefined ? undefined : { provider: id, state });

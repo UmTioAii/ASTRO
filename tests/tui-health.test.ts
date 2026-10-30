@@ -64,10 +64,12 @@ test("formatProviderCheck redige credencial e remove controle/escape", () => {
   const text = formatProviderCheck({
     name: "provider:p",
     status: "down",
-    detail: "Authorization: Bearer sk-live-do-not-store-123456\n\u001b[31mkey=abc",
+    detail: "Authorization: Bearer sk-live-do-not-store-123456\n\u001b[31m\u009b\u202ekey=abc",
   });
   expect(text).not.toContain("sk-live");
   expect(text).not.toContain("\n");
   expect(text).not.toContain("\u001b");
+  expect(text).not.toContain("\u009b");
+  expect(text).not.toContain("\u202e");
   expect(text).toContain("down (auth)");
 });
