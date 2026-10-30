@@ -74,7 +74,7 @@ describe("compactação na sessão (S-17, CMP-8)", () => {
       const report = await runTask({
         configPath, task: "tarefa", cwd, env: { KEY: "k" },
         history: [
-          { role: "user", content: "a".repeat(40_000) },
+          { role: "user", content: `sk-live-0123456789abcdef ${"a".repeat(40_000)}` },
           { role: "assistant", content: "b".repeat(40_000) },
         ],
       });
@@ -85,6 +85,9 @@ describe("compactação na sessão (S-17, CMP-8)", () => {
       const summary = mock.bodies[0]!;
       expect(summary.tools).toBeUndefined();
       expect(summary.messages?.[0]?.content).toContain("Resuma");
+      // O resumo passa pela mesma redação do prompt normal (I-03).
+      expect(JSON.stringify(summary)).not.toContain("sk-live-0123456789abcdef");
+      expect(JSON.stringify(summary)).toContain("[REDACTED]");
 
       const completion = mock.bodies[1]!;
       // CMP-8: AGENTS.md volta ao contexto depois de compactar.
@@ -113,9 +116,17 @@ describe("compactação na sessão (S-17, CMP-8)", () => {
 
     const mock = server(() => ok("não deveria chamar"));
     try {
-      const configPath = writeConfig(cwd, mock.instance.port!);
+      const configPath = writeConfig(cwd, mock.instance.port!, {
+        models: [{ provider: "mock", id: "m1", tags: ["writing-code"], context: 24_000 }],
+        agent: { model: "mock/m1", maxSteps: 3, tools: [], systemPrompt: "SYS-PROMPT" },
+        compaction: { buffer: null },
+      });
       const error = await runTask({
-        configPath, task: "x".repeat(1_200), cwd, env: { KEY: "k" }, runId: "r-paused",
+        configPath, task: "oi", cwd, env: { KEY: "k" }, runId: "r-paused",
+        history: [
+          { role: "user", content: "a".repeat(40_000) },
+          { role: "assistant", content: "b".repeat(40_000) },
+        ],
       }).then(() => null, (caught: unknown) => caught);
 
       expect(error).toBeInstanceOf(CompactionPausedError);

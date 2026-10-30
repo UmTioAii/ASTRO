@@ -82,11 +82,11 @@ async function applyCompaction(
   opts: CompactionRuntimeOptions,
   reason: CompactReason,
 ): Promise<boolean> {
-  const state = compactionState(opts.ledger, opts.run);
-  if (state.paused) throw new CompactionPausedError(state.remainingMs);
   // Sem histórico anterior ou sem projeção para sair do gatilho, repetir a cada
   // step só gastaria tokens de resumo sem reduzir o contexto.
   if (reason === "trigger" && !projectionCanClear(messages, opts)) return false;
+  const state = compactionState(opts.ledger, opts.run);
+  if (state.paused) throw new CompactionPausedError(state.remainingMs);
 
   const agent = opts.agent();
   try {
@@ -121,7 +121,6 @@ async function applyCompaction(
     return true;
   } catch (error) {
     if (error instanceof CompactionPausedError) throw error;
-    // Cancelamento não é falha de compactação: não conta no breaker (CMP-6).
     if (isAbortError(error, opts.signal)) throw error;
     const after = recordCompactionFailure(opts.ledger, opts.run, agent);
     opts.audit.append({
@@ -131,8 +130,6 @@ async function applyCompaction(
       payload: { reason, error: error instanceof Error ? error.name : "unknown" },
     });
     if (after.paused) throw new CompactionPausedError(after.remainingMs);
-    // Gatilho: segue sem compactar (tenta de novo no próximo step). Overflow:
-    // sem compactar não há como atender; propaga o erro original.
     if (reason === "overflow") throw error;
     return false;
   }

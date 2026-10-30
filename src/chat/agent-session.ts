@@ -15,8 +15,10 @@ import type { ChatMessage } from "../provider/types";
 import type { FetchLike } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
+import { readAgentsMd } from "../spawn";
 import { forceCompaction } from "../compaction/breaker";
-import { DEFAULT_SYSTEM_PROMPT } from "../session";
+import { assertWithinQuota } from "../quota";
+import { DEFAULT_SYSTEM_PROMPT, safePrompt } from "../session";
 import { guardContext } from "./context-guard";
 import { isFatalSessionError } from "./session-errors";
 import { runHealthCheck, testProvider as probeProvider, type HealthCheck, type HealthReport } from "../health";
@@ -152,7 +154,12 @@ export class AgentSession {
     this.#registry = new Registry(this.#config);
     this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
     this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
-    this.#systemPrompt = opts.systemPrompt ?? this.#config.agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    const baseSystemPrompt = opts.systemPrompt ?? this.#config.agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    // CMP-8: AGENTS.md entra no system do chat/TUI e sobrevive à compactação.
+    const projectInstructions = readAgentsMd(this.#cwd);
+    this.#systemPrompt = projectInstructions.length === 0
+      ? baseSystemPrompt
+      : `${baseSystemPrompt}\n\n${projectInstructions}`;
     this.#approveSwap = opts.approveSwap;
     this.#budgetDecider = opts.onBudgetExceeded;
     this.#fetchLike = opts.fetchLike;
@@ -338,6 +345,8 @@ export class AgentSession {
     const modelEntry = this.#registry.require(this.#modelRef);
     const setup = createProvider(this.#config, modelEntry, this.#env ?? process.env);
     const provider = setup.provider;
+    // Mesma quota do caminho normal: o resumo é uma chamada paga.
+    assertWithinQuota(this.#ledger, this.#config.quota ?? {}, setup.quotaDomain);
 
     // Prepara mensagens para sumarização: remove system e tool calls
     const history = this.#messages
@@ -345,16 +354,32 @@ export class AgentSession {
       .map((m) => ({ role: m.role, content: m.content }));
 
     const summaryPrompt = "Resuma a conversa a seguir de forma concisa, preservando fatos, decisões e tarefas pendentes. Não inclua saudações nem meta-comentários.";
-    const messages: ChatMessage[] = [
+    const request: ChatMessage[] = [
       { role: "system", content: summaryPrompt },
       ...history,
     ];
 
-    // Chama provider SEM tools
+    // Chama provider SEM tools; o prompt passa pela mesma redação do send (I-03).
     const response = await provider.complete({
       model: this.#modelRef,
-      messages,
+      messages: safePrompt(request),
       tools: undefined,
+    });
+
+    this.#ledger.record({
+      run: this.id,
+      agent: "default",
+      provider: response.provider ?? modelEntry.provider,
+      model: response.model ?? this.#modelRef,
+      ...(setup.credentialRef === undefined ? {} : { credentialRef: setup.credentialRef }),
+      quotaDomain: setup.quotaDomain,
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+    }, modelEntry.price);
+    this.#append("compaction.manual", {
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+      forced: force,
     });
 
     const summary = response.content.trim();

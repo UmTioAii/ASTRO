@@ -205,7 +205,8 @@ function scrubPrompt(value: unknown): unknown {
   return typeof value === "string" ? redactSecrets(value) : value;
 }
 
-function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
+/** Redige segredos antes de qualquer prompt ir ao provider (I-03). */
+export function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
   return scrubPrompt(messages) as ChatMessage[];
 }
 

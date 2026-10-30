@@ -204,11 +204,17 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
   test("breaker pausado impede a compactação e a chamada", async () => {
     const { ledger, audit } = setup();
     for (let index = 0; index < 3; index++) recordCompactionFailure(ledger, "r1", "a");
-    const messages: ChatMessage[] = [{ role: "system", content: "SYS" }, user("x".repeat(1_200))];
+    const messages: ChatMessage[] = [
+      { role: "system", content: "SYS" },
+      user("a".repeat(30_000)),
+      assistant("b".repeat(30_000)),
+      user("c".repeat(10_000)),
+      assistant("d".repeat(8_000)),
+    ];
     let calls = 0;
     const run = completeWithCompaction(messages, {
-      ledger, audit, run: "r1", agent: () => "a", window: () => 400, provider: () => "p", model: () => "m",
-      compaction: { buffer: 100 },
+      ledger, audit, run: "r1", agent: () => "a", window: () => 24_000, provider: () => "p", model: () => "m",
+      compaction: { buffer: null },
       complete: async () => { calls++; return resp("ok"); },
       summarize: async () => "s",
     });

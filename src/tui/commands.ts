@@ -128,7 +128,7 @@ export async function runCommand(
     }
     case "compact": {
       try {
-        const summary = await session.compact();
+        const summary = await session.compact(command.force === true);
         return { entries: [{ kind: "info", text: summary }] };
       } catch (error) {
         return { entries: [{ kind: "error", text: `erro: ${messageOf(error)}` }] };

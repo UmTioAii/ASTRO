@@ -10,11 +10,13 @@ import { runCommand } from "../src/tui/commands";
 class FakeSession implements ChatSession {
   model = "p/m1";
   cleared = 0;
+  forced: boolean | undefined;
   send(): Promise<never> {
     throw new Error("não usado");
   }
-  compact(): Promise<string> {
-    return Promise.resolve("não usado");
+  compact(force?: boolean): Promise<string> {
+    this.forced = force;
+    return Promise.resolve("compactado");
   }
   clear(): void {
     this.cleared++;
@@ -177,6 +179,16 @@ describe("comandos da TUI (T2, #63)", () => {
     const bad = await runCommand({ kind: "resume", ref: "9" }, session, {}, store);
     expect(bad.entries[0]!.text).toBe("índice fora da lista; use /sessions");
     expect(session.resumed).toHaveLength(1);
+  });
+
+  test("/compact force repassa force=true ao compactar (CMP-6)", async () => {
+    const session = new FakeSession();
+    const plain = await runCommand({ kind: "compact" }, session, {}, undefined, process.cwd());
+    expect(plain.entries[0]!.text).toBe("compactado");
+    expect(session.forced).toBe(false);
+
+    await runCommand({ kind: "compact", force: true }, session, {}, undefined, process.cwd());
+    expect(session.forced).toBe(true);
   });
 
   test("export e init gravam no cwd e recusam escape", async () => {

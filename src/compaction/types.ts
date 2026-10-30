@@ -25,7 +25,8 @@ const SECTION_CLIP = 500;
 const SUMMARY_CLIP = 4_000;
 
 function clip(value: string, max = SECTION_CLIP): string {
-  return value.length <= max ? value : `${value.slice(0, max)}…`;
+  const singleLine = value.replace(/\s+/g, " ").trim();
+  return singleLine.length <= max ? singleLine : `${singleLine.slice(0, max)}…`;
 }
 
 /** Caminhos citados nos argumentos de tool calls (`{"path": "..."}`). */
@@ -74,7 +75,8 @@ export function buildCompactionArtifact(input: BuildArtifactInput): CompactionAr
   const files: string[] = [];
   for (const message of all) {
     for (const path of pathsIn(message.toolCalls ?? [])) {
-      if (!files.includes(path)) files.push(path);
+      const clean = path.replace(/\s+/g, " ").trim().slice(0, 200);
+      if (clean.length > 0 && !files.includes(clean)) files.push(clean);
     }
   }
 

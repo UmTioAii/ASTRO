@@ -274,4 +274,47 @@ describe("AgentSession resume (T2, #63)", () => {
       chat.close();
       stop();
     }
+  });
+
+  test("compact redige segredo, registra uso e força zera o breaker (I-03/CMP-6)", async () => {
+    const { cwd, bodies, session, stop } = setup();
+    const chat = session();
+    const secret = "sk-live-0123456789abcdef";
+    try {
+      await chat.send(`minha chave é ${secret}`);
+      await chat.compact();
+      const summaryBody = bodies.at(-1)!;
+      expect(JSON.stringify(summaryBody)).toContain("[REDACTED]");
+      expect(JSON.stringify(summaryBody)).not.toContain(secret);
+
+      const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
+      // send + resumo
+      expect(ledger.readAllEntries().filter((entry) => entry.kind === "usage")).toHaveLength(2);
+
+      await chat.compact(true);
+      const audit = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll();
+      expect(audit.some((event) => event.tipo === "compaction.manual" && event.payload.forced === true)).toBe(true);
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+
+  test("AGENTS.md entra no system e sobrevive à compactação (CMP-8)", async () => {
+    const { cwd, bodies, session, stop } = setup();
+    writeFileSync(join(cwd, "AGENTS.md"), "REGRAS DO PROJETO");
+    const chat = session();
+    try {
+      await chat.send("oi");
+      expect(bodies[0]!.messages?.[0]?.content).toContain("REGRAS DO PROJETO");
+      expect(bodies[0]!.messages?.[0]?.content).toContain("sys");
+
+      await chat.compact();
+      await chat.send("depois");
+      const after = bodies.at(-1)!;
+      expect(after.messages?.[0]?.content).toContain("REGRAS DO PROJETO");
+    } finally {
+      chat.close();
+      stop();
+    }
   });});

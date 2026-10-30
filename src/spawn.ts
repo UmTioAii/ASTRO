@@ -332,9 +332,9 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
           .filter((part) => part.length > 0)
           .join(": ")
           .slice(0, 200);
-        const instructions = [raw.task, readAgentsMd(deps.cwd)]
-          .filter((part) => part.length > 0)
-          .join("\n\n");
+        // AGENTS.md já entra pelo system prompt base da sessão (CMP-8); repetir
+        // aqui duplicaria as regras e o custo no filho.
+        const instructions = raw.task;
 
         acquireAgentLock(deps.ledger, deps.audit, {
           run: ctx.run,
