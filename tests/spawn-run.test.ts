@@ -77,4 +77,65 @@ describe("spawn_agent ponta a ponta (S-11, C4a)", () => {
       server.stop(true);
     }
   });
+
+  test("dois subagentes em contas distintas com handoff de ida e volta (golden §11.1/§11.2)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-spawn-two-"));
+    const bodies: Body[] = [];
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        bodies.push((await req.json()) as Body);
+        calls++;
+        const tool = (name: string, args: object) => ({
+          choices: [{ message: { content: "", tool_calls: [{ id: `c${calls}`, type: "function",
+            function: { name, arguments: JSON.stringify(args) } }] } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        });
+        const handoff = (to: string, task: string) => tool("handoff", {
+          to, task, objective: "resolver", decisions: [], constraints: [], next_steps: [],
+        });
+        if (calls === 1) return Response.json(tool("spawn_agent", { need: "writing-code", task: "sub1", tools: ["handoff"] }));
+        if (calls === 2) return Response.json(handoff("sub-1", "sub1"));
+        if (calls === 3) return Response.json(handoff("planner", "voltando"));
+        if (calls === 4) return Response.json(tool("spawn_agent", { need: "writing-code", task: "sub2", tools: [] }));
+        if (calls === 5) return Response.json(handoff("sub-2", "sub2"));
+        return Response.json({ choices: [{ message: { content: "done both" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+      },
+    });
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      writeFileSync(configPath, JSON.stringify({
+        providers: {
+          p1: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY1" },
+          p2: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY2" },
+        },
+        models: [
+          { provider: "p1", id: "m1", tags: ["writing-code", "tools"], context: 8192, capabilities: { tools: true } },
+          { provider: "p2", id: "m2", tags: ["writing-code", "tools"], context: 8192, capabilities: { tools: true } },
+        ],
+        modelPool: { fast: { model: "p1/m1" }, smart: { model: "p2/m2" } },
+        agent: { model: "p1/m1", maxSteps: 8, tools: ["spawn_agent", "handoff"] },
+        agents: { planner: { profile: "fast", maxSteps: 8, tools: ["spawn_agent", "handoff"] } },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      }));
+
+      const report = await runTask({
+        configPath, task: "orquestrar", cwd, env: { KEY1: "1", KEY2: "2" }, approveSwap: () => true,
+      });
+
+      expect(report.final).toBe("done both");
+      expect(calls).toBe(6);
+      const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
+      const tree = rebuildAgentTree(ledger, report.runId);
+      expect(tree.nodes.map((node) => node.agent_id)).toEqual(["planner", "sub-1", "sub-2"]);
+      expect(tree.nodes.find((node) => node.agent_id === "sub-1")?.reason).toBe("handoff");
+      expect(tree.nodes.find((node) => node.agent_id === "sub-2")?.reason).toBe("completed");
+      expect(activeLocks(ledger)).toEqual([]);
+      // Os dois filhos rodaram no provider p2 (conta distinta do planner).
+      expect(bodies.filter((body) => body.model === "m2").length).toBe(2);
+    } finally {
+      server.stop(true);
+    }
+  });
 });
