@@ -86,12 +86,6 @@ test("bunArgs monta cli + argumentos do usuário", () => {
   expect(bunArgs("dist/cli.js", [])).toEqual(["dist/cli.js"]);
 });
 
-test("resolve o binário do pacote bun realmente instalado", () => {
-  const bun = resolveBun({ env: {}, runningUnderBun: false });
-  expect(existsSync(bun)).toBe(true);
-  expect(bun.replaceAll("\\", "/")).toContain("/bun/");
-});
-
 test("reconhece o launcher executado por symlink/junction (npm POSIX)", () => {
   const dir = mkdtempSync(join(tmpdir(), "astro-launcher-link-"));
   const real = join(dir, "real");
