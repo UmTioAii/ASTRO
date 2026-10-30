@@ -16,7 +16,7 @@ import type { FetchLike } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
 import { readAgentsMd } from "../spawn";
-import { forceCompaction } from "../compaction/breaker";
+import { forceCompaction, recordCompactionSuccess } from "../compaction/breaker";
 import { assertWithinQuota } from "../quota";
 import { DEFAULT_SYSTEM_PROMPT, safePrompt } from "../session";
 import { guardContext } from "./context-guard";
@@ -352,10 +352,16 @@ export class AgentSession {
       this.#append("compaction.manual", { forced: true, phase: "reset" });
     }
 
-    // Prepara mensagens para sumarização: remove system e tool calls
+    // Prepara mensagens para sumarização: remove o system, mas preserva os pares
+    // tool call/result (o provider rejeita tool sem o assistant que a pediu).
     const history = this.#messages
       .filter((m) => m.role !== "system")
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.toolCallId === undefined ? {} : { toolCallId: m.toolCallId }),
+        ...(m.toolCalls === undefined ? {} : { toolCalls: m.toolCalls }),
+      }) as ChatMessage);
 
     const summaryPrompt = "Resuma a conversa a seguir de forma concisa, preservando fatos, decisões e tarefas pendentes. Não inclua saudações nem meta-comentários.";
     const request: ChatMessage[] = [
@@ -400,6 +406,8 @@ export class AgentSession {
     if (response.usage.inputTokens > 0 || response.usage.outputTokens > 0) {
       this.#costKnown = false; // preço exato depende do modelo; ledger já tem o detalhe
     }
+    // CMP-6: uma compactação manual bem-sucedida zera o contador do breaker.
+    recordCompactionSuccess(this.#ledger, this.id, "default");
 
     // Auditoria sem conteúdo do prompt
     this.#append("chat.compact", {

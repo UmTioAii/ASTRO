@@ -53,7 +53,7 @@ export interface SpawnedAgent {
   candidate: ModelCandidate;
   tools: string[];
   maxSteps: number;
-  /** AGENTS.md + task entregues ao filho (A9). */
+  /** Task entregue ao filho; `AGENTS.md` vem do system prompt base (A9/CMP-8). */
   instructions: string;
   reason: string;
   createdAt: number;

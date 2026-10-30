@@ -2,7 +2,7 @@
 
 - Status: aceita
 - Data: 2026-10-30
-- Issue: #219 (emenda ao ADR-0017; entrou no PR #134)
+- Issue: #219 (emenda ao ADR-0017; entrou no PR #245)
 - Decisões relacionadas: D-02, ADR-0001, ADR-0017
 
 ## Contexto
