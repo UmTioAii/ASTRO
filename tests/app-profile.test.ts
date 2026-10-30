@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { activeLocks } from "../src/agent-lock";
 import { runTask } from "../src/app";
+import { Ledger } from "../src/ledger";
 
 /** Servidor mock: registra os models pedidos e responde `content` ou o status dado. */
 function mockServer(status: number, content: string, seen: string[] = []) {
@@ -144,6 +146,9 @@ test("profile sem fallback de provider herda o retry da F-01 e o audit por profi
     expect(failures.map((e) => e.payload.attempt)).toEqual([1, 2]); // C6 embrulha a cadeia do profile
     expect(failures.every((e) => e.payload.profile === "p1")).toBe(true);
     expect(auditEvents(dir).some((e) => e.tipo === "profile.fallback")).toBe(true);
+    const moved = auditEvents(dir).find((e) => e.tipo === "agent.lock.moved");
+    expect(moved?.payload).toMatchObject({ from: "KEY_A", to: "KEY_B", profile: "p2", reason: "outage" });
+    expect(activeLocks(new Ledger(join(dir, ".astro", "ledger.jsonl")))).toEqual([]);
   } finally {
     down.stop(true);
     up.stop(true);

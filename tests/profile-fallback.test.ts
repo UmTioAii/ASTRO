@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
+import { AccountLockedError, type AgentLock } from "../src/agent-lock";
 import { ProfileFallbackProvider, type ProfileChainEntry } from "../src/provider/profile-fallback-provider";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type Provider } from "../src/provider/types";
 
@@ -27,9 +28,14 @@ function entry(
   model: string,
   fallback: string[],
   complete: Provider["complete"],
+  credentialRef?: string,
 ): ProfileChainEntry {
-  return { name, provider, model, fallback, create: () => ({ complete }) };
+  return { name, provider, model, fallback, ...(credentialRef === undefined ? {} : { credentialRef }), create: () => ({ complete }) };
 }
+
+const holder = (accountRef: string): AgentLock => ({
+  run: "other", agent_id: "holder", session_id: "other", accountRef, seq: 1,
+});
 
 describe("ProfileFallbackProvider (F-31)", () => {
   test("primário em outage cai para o próximo profile, reescreve o model e devolve a trilha", async () => {
@@ -200,5 +206,34 @@ describe("ProfileFallbackProvider (F-31)", () => {
     const out = await fb.complete(req("p1"));
     expect(out.content).toBe("ok");
     expect("fallbacks" in out).toBe(false);
+  });
+
+  test("destino com conta ocupada é pulado, sem entrar na trilha (A7)", async () => {
+    const audit = auditOf();
+    const calls: string[] = [];
+    const moved: string[] = [];
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2", "p3"], async () => { calls.push("p1"); throw new ProviderError("outage", "a fora"); }, "KEY_A"),
+        entry("p2", "b", "m2", ["p3"], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B"),
+        entry("p3", "c", "m3", [], async () => { calls.push("p3"); return resp("p3"); }, "KEY_C"),
+      ],
+      audit,
+      run: "r1",
+      moveAccount: (target) => {
+        if (target.name === "p2") throw new AccountLockedError("KEY_B", holder("KEY_B"));
+        moved.push(target.credentialRef ?? "");
+      },
+    });
+
+    const out = await fb.complete(req("p1"));
+    expect(calls).toEqual(["p1", "p3"]);
+    expect(moved).toEqual(["KEY_C"]);
+    expect(out.fallbacks).toEqual([
+      { profile: "p1", from_provider: "a", to_provider: "c", reason: "outage" },
+    ]);
+    const skipped = audit.readAll().find((e) => e.tipo === "profile.fallback_skipped");
+    expect(skipped?.payload).toMatchObject({ profile: "p2", provider: "b", errorClass: "account_locked" });
   });
 });

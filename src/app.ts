@@ -5,7 +5,7 @@ import { Auditor } from "./audit";
 import { isAbortError } from "./abort";
 import { SwapDeniedError, swapDelta, type SwapApprover, type SwapRequest } from "./approval";
 import type { AstroConfig, CodexOAuthProviderConfig, OpenAICompatProviderConfig, ProviderConfig } from "./config";
-import { ConfigError } from "./config";
+import { ConfigError, providerCredentialRefFor } from "./config";
 import { loadEffectiveConfig, providerIdentityFor } from "./provider/profiles";
 import { Ledger } from "./ledger";
 import { CodexOAuthProvider } from "./provider/codex-oauth";
@@ -25,7 +25,7 @@ import type { AuditEvent } from "./audit";
 import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, type BudgetStatus } from "./budget";
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
-import { recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
+import { moveAgentLock, recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
 import type { CallSelection } from "./call-profile";
 import { markProviderFailure, markProviderSuccess } from "./provider/health-state";
 import { reserveForCall } from "./model-cost";
@@ -617,12 +617,15 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   if (Object.keys(pool).length > 0) {
     const profiles: ProfileChainEntry[] = Object.entries(pool).map(([name, profile]) => {
       const profileModel = registry.resolveProfile(name);
+      const profileProvider = config.providers[profileModel.provider];
+      const credentialRef = profileProvider === undefined ? undefined : providerCredentialRefFor(profileProvider);
       let chain: Provider | undefined;
       return {
         name,
         model: profileModel.id,
         provider: profileModel.provider,
         fallback: profile.fallback ?? [],
+        ...(credentialRef === undefined ? {} : { credentialRef }),
         create: () => (chain ??= providerChain(
           config, profileModel, env, loaded.providerFactories, audit, run, ledger, quotaLimits, name, approveSwap, () => activeAgent.name,
         )),
@@ -637,6 +640,15 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       run,
       approveSwap,
       agentName: () => activeAgent.name,
+      moveAccount: (entry, reason) => moveAgentLock(ledger, audit, {
+        run,
+        agent_id: activeAgent.name,
+        provider: entry.provider,
+        model: entry.model,
+        ...(entry.credentialRef === undefined ? {} : { credentialRef: entry.credentialRef }),
+        profile: entry.name,
+        reason,
+      }),
     });
   }
 
