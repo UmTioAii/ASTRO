@@ -301,6 +301,7 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
           ...(choice.candidate.profile === undefined ? {} : { profile: choice.candidate.profile }),
           parent_agent_id: ctx.agent,
           reason,
+          need: raw.need,
           ...(snapshotId === undefined ? {} : { snapshot_id: snapshotId }),
         });
 
@@ -325,6 +326,7 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
               model: choice.candidate.model,
               ...(choice.candidate.profile === undefined ? {} : { profile: choice.candidate.profile }),
               ...(snapshotId === undefined ? {} : { snapshot_id: snapshotId }),
+              need: raw.need,
               reason,
             },
           });

@@ -58,7 +58,8 @@ describe("tool spawn_agent (S-11, A1/A2/A3/A5)", () => {
 
     const created = ledger.readAllEntries().find((e) => e.kind === "agent" && e.event === "created");
     expect(created).toMatchObject({
-      agent_id: "sub-1", parent_agent_id: "planner", model: "m1", provider: "p1", profile: "fast", reason: "default_rank",
+      agent_id: "sub-1", parent_agent_id: "planner", model: "m1", provider: "p1", profile: "fast",
+      reason: "default_rank", need: "writing-code", snapshot_id: expect.any(String),
     });
   });
 

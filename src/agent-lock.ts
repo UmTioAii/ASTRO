@@ -54,6 +54,8 @@ export interface AcquireAgentLockOptions {
   reason?: string;
   /** Snapshot de candidatos que originou a escolha (I-06). */
   snapshot_id?: string;
+  /** Papel/need que originou o spawn (I-06). */
+  need?: string;
   /** Conta calculada pelo chamador (ex.: candidato da pool); default `accountRefOf`. */
   accountRef?: string;
   /** PID dono do lock; default o processo atual. */
@@ -208,6 +210,7 @@ export function acquireAgentLock(
         ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: opts.parent_agent_id }),
         ...(opts.reason === undefined ? {} : { reason: opts.reason.slice(0, 200) }),
         ...(opts.snapshot_id === undefined ? {} : { snapshot_id: opts.snapshot_id }),
+        ...(opts.need === undefined ? {} : { need: opts.need }),
         ...(opts.pid === undefined ? {} : { pid: opts.pid }),
       });
       audit.append({
@@ -222,6 +225,7 @@ export function acquireAgentLock(
           ...(opts.parent_agent_id === undefined ? {} : { parent_agent_id: opts.parent_agent_id }),
           ...(opts.reason === undefined ? {} : { reason: opts.reason.slice(0, 200) }),
           ...(opts.snapshot_id === undefined ? {} : { snapshot_id: opts.snapshot_id }),
+          ...(opts.need === undefined ? {} : { need: opts.need }),
         },
       });
       audit.append({
