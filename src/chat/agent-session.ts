@@ -1,6 +1,6 @@
 /** Sessão de chat (T1): multi-turn sobre o mesmo run; a UI só fala com esta classe. */
 import { randomUUID } from "node:crypto";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { runTask, createProvider, shortTaskHash, type RunReport } from "../app";
 import type { SwapApprover } from "../approval";
 import { Auditor } from "../audit";
@@ -250,7 +250,13 @@ export class AgentSession {
       throw new Error(`provider "${name}" não é codex-oauth`);
     }
     const credentialsPath = (provider as { credentialsPath?: string }).credentialsPath ?? "~/.codex/auth.json";
-    const path = expandHomePath(credentialsPath);
+    const expanded = expandHomePath(credentialsPath);
+    if (!isAbsolute(expanded)) throw new Error(`credentialsPath "${credentialsPath}" precisa ser absoluto ou começar com ~`);
+    const path = resolve(expanded);
+    const rel = relative(this.#cwd, path);
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
+      throw new Error("credentialsPath não pode ficar dentro do cwd");
+    }
     const start = await startCodexLogin({ ...(signal === undefined ? {} : { signal }) });
     return {
       ...start,

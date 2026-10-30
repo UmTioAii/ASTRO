@@ -4,12 +4,15 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { throwIfAborted } from "../abort";
-import { ProviderError, type FetchLike } from "./types";
+import { codexAccountId } from "./codex-auth";
+import { ProviderError, type ErrorClass, type FetchLike } from "./types";
 
 const DEFAULT_ISSUER = "https://auth.openai.com";
 const DEFAULT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const MIN_INTERVAL_MS = 1_000;
+const MAX_INTERVAL_MS = 30_000;
+const USER_CODE = /^[A-Z0-9-]{4,32}$/;
 
 export interface CodexDeviceCode {
   deviceAuthId: string;
@@ -38,7 +41,7 @@ export interface CodexLoginOptions {
 
 export interface CodexLoginStart {
   device: CodexDeviceCode;
-  /** Resolve depois do exchange e da gravação do `auth.json`. */
+  /** Resolve depois do exchange; a gravação do `auth.json` é do chamador. */
   done: Promise<CodexLoginTokens>;
 }
 
@@ -67,6 +70,11 @@ function readClaims(token: string | undefined): Record<string, unknown> | undefi
   }
 }
 
+function statusError(status: number, action: string): ProviderError {
+  const errorClass: ErrorClass = status === 429 ? "transient_rate_limit" : status >= 500 ? "outage" : "auth";
+  return new ProviderError(errorClass, `${action} falhou (HTTP ${status})`, status);
+}
+
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted === true) {
@@ -85,36 +93,64 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+interface Deadline { deadline: number; now: () => number; signal?: AbortSignal }
+
+/** Fetch com deadline e cancelamento; distingue timeout, cancelamento e rede. */
+async function requestWithDeadline(
+  fetchLike: FetchLike,
+  url: string,
+  init: RequestInit,
+  opts: Deadline,
+): Promise<Response> {
+  const remaining = opts.deadline - opts.now();
+  if (remaining <= 0) throw new ProviderError("outage", "timeout aguardando o login do Codex");
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, remaining);
+  const onAbort = (): void => controller.abort();
+  if (opts.signal !== undefined) {
+    if (opts.signal.aborted) {
+      clearTimeout(timer);
+      throw new ProviderError("outage", "login do Codex cancelado");
+    }
+    opts.signal.addEventListener("abort", onAbort, { once: true });
+  }
+  try {
+    return await fetchLike(url, { ...init, signal: controller.signal });
+  } catch {
+    if (opts.signal?.aborted === true) throw new ProviderError("outage", "login do Codex cancelado");
+    if (timedOut) throw new ProviderError("outage", "timeout aguardando o login do Codex");
+    throw new ProviderError("outage", "falha de rede no login do Codex");
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 async function requestDevice(
   fetchLike: FetchLike,
   issuer: string,
   clientId: string,
-  signal?: AbortSignal,
+  opts: Deadline,
 ): Promise<CodexDeviceCode> {
-  let response: Response;
-  try {
-    response = await fetchLike(`${issuer}/api/accounts/deviceauth/usercode`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ client_id: clientId }),
-      ...(signal === undefined ? {} : { signal }),
-    });
-  } catch (error) {
-    if (signal?.aborted === true) throw new ProviderError("outage", "login do Codex cancelado");
-    throw new ProviderError("outage", "falha de rede ao iniciar o login do Codex");
-  }
-  if (!response.ok) {
-    throw new ProviderError(response.status >= 500 ? "outage" : "auth", `login do Codex falhou (HTTP ${response.status})`);
-  }
+  const response = await requestWithDeadline(fetchLike, `${issuer}/api/accounts/deviceauth/usercode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ client_id: clientId }),
+  }, opts);
+  if (!response.ok) throw statusError(response.status, "login do Codex");
   let payload: unknown;
   try { payload = await response.json(); } catch {
     throw new ProviderError("outage", "resposta do login do Codex não é JSON válido");
   }
   const fields = isRecord(payload) ? payload : undefined;
   const deviceAuthId = stringField(fields, "device_auth_id");
-  const userCode = stringField(fields, "user_code");
-  if (deviceAuthId === undefined || userCode === undefined) {
-    throw new ProviderError("outage", "resposta do login do Codex sem device_auth_id/user_code");
+  const userCode = stringField(fields, "user_code") ?? stringField(fields, "usercode");
+  if (deviceAuthId === undefined || userCode === undefined || !USER_CODE.test(userCode)) {
+    throw new ProviderError("outage", "resposta do login do Codex com device_auth_id/user_code inválido");
   }
   const seconds = Number.parseInt(stringField(fields, "interval") ?? "5", 10);
   return {
@@ -131,7 +167,7 @@ async function exchange(
   clientId: string,
   code: string,
   verifier: string,
-  signal?: AbortSignal,
+  opts: Deadline,
 ): Promise<CodexLoginTokens> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -140,21 +176,12 @@ async function exchange(
     client_id: clientId,
     code_verifier: verifier,
   }).toString();
-  let response: Response;
-  try {
-    response = await fetchLike(`${issuer}/oauth/token`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body,
-      ...(signal === undefined ? {} : { signal }),
-    });
-  } catch {
-    if (signal?.aborted === true) throw new ProviderError("outage", "login do Codex cancelado");
-    throw new ProviderError("outage", "falha de rede ao trocar o código do Codex");
-  }
-  if (!response.ok) {
-    throw new ProviderError(response.status >= 500 ? "outage" : "auth", `troca do código do Codex falhou (HTTP ${response.status})`);
-  }
+  const response = await requestWithDeadline(fetchLike, `${issuer}/oauth/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  }, opts);
+  if (!response.ok) throw statusError(response.status, "troca do código do Codex");
   let payload: unknown;
   try { payload = await response.json(); } catch {
     throw new ProviderError("outage", "resposta da troca do Codex não é JSON válido");
@@ -166,14 +193,12 @@ async function exchange(
     throw new ProviderError("outage", "resposta da troca do Codex sem access_token/refresh_token");
   }
   const idToken = stringField(fields, "id_token");
-  const accountId =
-    stringField(readClaims(idToken), "chatgpt_account_id") ??
-    stringField(readClaims(accessToken), "chatgpt_account_id");
+  const accountId = codexAccountId(idToken) ?? codexAccountId(accessToken);
   if (accountId === undefined) throw new ProviderError("auth", "login do Codex sem account id");
   const expiresIn = numberField(fields, "expires_in");
   const expiresAt =
     numberField(readClaims(accessToken), "exp") ??
-    Math.floor(Date.now() / 1000) + (expiresIn ?? 3600);
+    Math.floor(opts.now() / 1000) + (expiresIn ?? 3600);
   return { accessToken, refreshToken, ...(idToken === undefined ? {} : { idToken }), accountId, expiresAt };
 }
 
@@ -187,19 +212,19 @@ export async function startCodexLogin(opts: CodexLoginOptions = {}): Promise<Cod
   const sleep = opts.sleep ?? defaultSleep;
   const signal = opts.signal;
   throwIfAborted(signal);
-
-  const device = await requestDevice(fetchLike, issuer, clientId, signal);
   const deadline = now() + timeoutMs;
+
+  const device = await requestDevice(fetchLike, issuer, clientId, { deadline, now, ...(signal === undefined ? {} : { signal }) });
   const done = (async (): Promise<CodexLoginTokens> => {
+    let interval = device.intervalMs;
     while (true) {
       throwIfAborted(signal);
-      if (now() > deadline) throw new ProviderError("outage", "timeout aguardando o login do Codex");
-      const response = await fetchLike(`${issuer}/api/accounts/deviceauth/token`, {
+      if (now() >= deadline) throw new ProviderError("outage", "timeout aguardando o login do Codex");
+      const response = await requestWithDeadline(fetchLike, `${issuer}/api/accounts/deviceauth/token`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ device_auth_id: device.deviceAuthId, user_code: device.userCode }),
-        ...(signal === undefined ? {} : { signal }),
-      });
+      }, { deadline, now, ...(signal === undefined ? {} : { signal }) });
       if (response.ok) {
         let payload: unknown;
         try { payload = await response.json(); } catch {
@@ -211,13 +236,18 @@ export async function startCodexLogin(opts: CodexLoginOptions = {}): Promise<Cod
         if (code === undefined || verifier === undefined) {
           throw new ProviderError("outage", "resposta do polling do Codex sem authorization_code/code_verifier");
         }
-        return await exchange(fetchLike, issuer, clientId, code, verifier, signal);
+        return await exchange(fetchLike, issuer, clientId, code, verifier, { deadline, now, ...(signal === undefined ? {} : { signal }) });
       }
-      if (response.status === 403 || response.status === 404 || response.status === 429) {
-        await sleep(device.intervalMs, signal);
+      if (response.status === 403 || response.status === 404) {
+        await sleep(Math.min(interval, Math.max(deadline - now(), 0)), signal);
         continue;
       }
-      throw new ProviderError(response.status >= 500 ? "outage" : "auth", `polling do login do Codex falhou (HTTP ${response.status})`);
+      if (response.status === 429) {
+        interval = Math.min(interval * 2, MAX_INTERVAL_MS);
+        await sleep(Math.min(interval, Math.max(deadline - now(), 0)), signal);
+        continue;
+      }
+      throw statusError(response.status, "polling do login do Codex");
     }
   })();
   return { device, done };

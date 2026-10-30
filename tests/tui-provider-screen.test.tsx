@@ -153,6 +153,8 @@ test("l inicia o login Codex, mostra o código e ativa ao concluir", async () =>
   try {
     await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
     instance.stdin.write("l");
+    await waitFor(() => instance.lastFrame()?.includes("grava em") === true);
+    instance.stdin.write("\r");
     await waitFor(() => instance.lastFrame()?.includes("ABCD-1234") === true);
     expect(instance.lastFrame()).toContain("https://auth.openai.com/codex/device");
     finish!({});
@@ -185,6 +187,8 @@ test("esc durante o login Codex aborta a espera", async () => {
   try {
     await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
     instance.stdin.write("l");
+    await waitFor(() => instance.lastFrame()?.includes("grava em") === true);
+    instance.stdin.write("\r");
     await waitFor(() => instance.lastFrame()?.includes("WXYZ-9999") === true);
     instance.stdin.write("\u001b");
     await waitFor(() => instance.lastFrame()?.includes("login cancelado") === true);

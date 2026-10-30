@@ -1,6 +1,6 @@
 /** Tela cheia de providers (TUI): lista + formulário, sem tocar segredo. */
 import { Box, Text, useInput } from "ink";
-import { useState, useRef, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { PROVIDER_CATALOG } from "../provider/catalog";
 import type { ProfileDraft, ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ProfileModel } from "../provider/profiles";
@@ -94,8 +94,13 @@ export function ProviderScreen({
   const [testing, setTesting] = useState(false);
   const [messageOk, setMessageOk] = useState(false);
   const [login, setLogin] = useState<{ target: ProfileView; url: string; userCode: string } | undefined>(undefined);
+  const [loginTarget, setLoginTarget] = useState<ProfileView | undefined>(undefined);
+  const [loginStarting, setLoginStarting] = useState(false);
   const probeToken = useRef(0);
   const loginAbort = useRef<AbortController | undefined>(undefined);
+  const loginBusy = useRef(false);
+
+  useEffect(() => () => { loginAbort.current?.abort(); }, []);
 
 
   const list = manager.list();
@@ -179,18 +184,27 @@ export function ProviderScreen({
   };
 
   const startLogin = (profile: ProfileView): void => {
-    if (onLogin === undefined) return;
+    if (onLogin === undefined || loginBusy.current) return;
+    loginBusy.current = true;
+    setLoginStarting(true);
     const controller = new AbortController();
     loginAbort.current = controller;
     setMessage(undefined);
     void onLogin(profile.id, controller.signal)
       .then((start) => {
-        if (controller.signal.aborted) return undefined;
+        if (controller.signal.aborted) {
+          void start.done.catch(() => undefined);
+          return undefined;
+        }
+        setLoginStarting(false);
         setLogin({ target: profile, url: start.device.verificationUrl, userCode: start.device.userCode });
         return start.done;
       })
       .then(() => {
         if (controller.signal.aborted) return;
+        try {
+          if (profile.source === "global") manager.use(profile.id);
+        } catch { /* ativação da sessão abaixo cobre o perfil */ }
         setLogin(undefined);
         setMessageOk(true);
         setMessage(`${profile.id}: login concluído`);
@@ -202,12 +216,39 @@ export function ProviderScreen({
         setLogin(undefined);
         setMessageOk(false);
         setMessage(`erro: ${messageOf(error)}`);
+      })
+      .finally(() => {
+        loginBusy.current = false;
+        setLoginStarting(false);
       });
   };
 
   useInput((input, key) => {
     if (key.ctrl && (input === "c" || input === "d")) {
+      loginAbort.current?.abort();
       onClose();
+      return;
+    }
+    if (loginTarget !== undefined) {
+      if (key.escape) {
+        setLoginTarget(undefined);
+        setMessage(undefined);
+        return;
+      }
+      if (key.return) {
+        const target = loginTarget;
+        setLoginTarget(undefined);
+        startLogin(target);
+      }
+      return;
+    }
+    if (loginStarting) {
+      if (key.escape) {
+        loginAbort.current?.abort();
+        setLoginStarting(false);
+        setMessageOk(false);
+        setMessage("login cancelado");
+      }
       return;
     }
     if (login !== undefined) {
@@ -266,7 +307,8 @@ export function ProviderScreen({
       }
       if (input === "l") {
         if (onLogin !== undefined && current !== undefined && current.kind === "codex-oauth") {
-          startLogin(current);
+          setMessage(undefined);
+          setLoginTarget(current);
         }
         return;
       }
@@ -362,6 +404,25 @@ export function ProviderScreen({
     else if (step === "models") setModels((value) => value + input);
     else if (step === "credential") setCredential((value) => value + input);
   });
+
+  if (loginTarget !== undefined) {
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Login Codex: {loginTarget.name}</Text>
+        <Text>grava em {loginTarget.credentialsPath ?? "~/.codex/auth.json"}</Text>
+        <Text dimColor>enter confirmar · esc cancelar</Text>
+      </Box>
+    );
+  }
+
+  if (loginStarting) {
+    return (
+      <Box flexDirection="column" borderStyle="round" paddingX={1}>
+        <Text color={colors.warning}>Login Codex: iniciando…</Text>
+        <Text dimColor>esc cancela</Text>
+      </Box>
+    );
+  }
 
   if (login !== undefined) {
     return (
