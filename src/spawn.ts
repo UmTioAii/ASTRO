@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Auditor } from "./audit";
 import { AccountLockedError, acquireAgentLock, activeLocks, releaseAgentLock } from "./agent-lock";
+import { redactSecrets } from "./sanitize-external";
 import type { AstroConfig, BudgetConfig } from "./config";
 import { providerAccountRefFor } from "./config";
 import type { Ledger } from "./ledger";
@@ -248,21 +249,21 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
 
         if (deps.spawns.size >= deps.spawns.limit) throw new SpawnLimitError(deps.spawns.limit);
 
-        const maxActive = deps.config.maxActive ?? 2;
-        const active = activeLocks(deps.ledger).filter((lock) => lock.run === ctx.run).length;
-        if (active >= maxActive) throw new SpawnConcurrencyError(maxActive);
-
-        const isChild = deps.spawns.get(ctx.agent) !== undefined;
-        const parentAllow = ctx.allow ?? [];
         // v1 é serial: filho não spawna neto (sem canal p2p e sem histórico do pai).
-        const inherited = parentAllow.filter((tool) => !(isChild && tool === "spawn_agent"));
-        const tools = raw.tools === undefined ? inherited : raw.tools;
-        if (isChild && tools.includes("spawn_agent")) {
+        if (deps.spawns.get(ctx.agent) !== undefined) {
           return {
             output: JSON.stringify({ error: "invalid_request", message: "subagente não pode spawnar outro subagente em v1" }),
             isError: true,
           };
         }
+
+        const maxActive = deps.config.maxActive ?? 2;
+        const runKey = redactSecrets(ctx.run);
+        const active = activeLocks(deps.ledger).filter((lock) => lock.run === runKey).length;
+        if (active >= maxActive) throw new SpawnConcurrencyError(maxActive);
+
+        const parentAllow = ctx.allow ?? [];
+        const tools = raw.tools === undefined ? [...parentAllow] : raw.tools;
         const outside = tools.filter((tool) => !parentAllow.includes(tool));
         if (outside.length > 0) {
           return {

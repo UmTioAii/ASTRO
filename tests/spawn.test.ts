@@ -117,6 +117,10 @@ describe("tool spawn_agent (S-11, A1/A2/A3/A5)", () => {
     const nested = await tool.execute({ need: "writing-code", task: "b", tools: ["spawn_agent"] }, childCtx);
     expect(nested.isError).toBe(true);
     expect(JSON.parse(nested.output)).toMatchObject({ error: "invalid_request" });
+    // Mesmo omitindo tools (default herdado), o filho não spawna.
+    const inherited = await tool.execute({ need: "writing-code", task: "c" }, childCtx);
+    expect(inherited.isError).toBe(true);
+    expect(JSON.parse(inherited.output)).toMatchObject({ error: "invalid_request" });
     expect(spawns.size).toBe(1);
 
     const snapshot = listModelCandidates({ need: "writing-code", requires: ["tools"] }, { config: cfg, registry, ledger });
