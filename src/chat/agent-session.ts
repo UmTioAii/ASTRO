@@ -339,14 +339,18 @@ export class AgentSession {
 
     // Se não há histórico além do system, é no-op
     if (this.#messages.length <= 1) return "histórico vazio, nada para compactar";
-    // CMP-6: `/compact force` ignora a pausa do breaker e zera o contador.
-    if (force) forceCompaction(this.#ledger, this.id, "default");
 
     const modelEntry = this.#registry.require(this.#modelRef);
     const setup = createProvider(this.#config, modelEntry, this.#env ?? process.env);
     const provider = setup.provider;
     // Mesma quota do caminho normal: o resumo é uma chamada paga.
     assertWithinQuota(this.#ledger, this.#config.quota ?? {}, setup.quotaDomain);
+    // CMP-6: `/compact force` ignora a pausa do breaker e zera o contador,
+    // depois da checagem de quota (o reset é auditado mesmo se o resumo falhar).
+    if (force) {
+      forceCompaction(this.#ledger, this.id, "default");
+      this.#append("compaction.manual", { forced: true, phase: "reset" });
+    }
 
     // Prepara mensagens para sumarização: remove system e tool calls
     const history = this.#messages
@@ -370,7 +374,7 @@ export class AgentSession {
       run: this.id,
       agent: "default",
       provider: response.provider ?? modelEntry.provider,
-      model: response.model ?? this.#modelRef,
+      model: response.model ?? modelEntry.id,
       ...(setup.credentialRef === undefined ? {} : { credentialRef: setup.credentialRef }),
       quotaDomain: setup.quotaDomain,
       tokensIn: response.usage.inputTokens,

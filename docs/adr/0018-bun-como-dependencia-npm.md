@@ -2,7 +2,7 @@
 
 - Status: aceita
 - Data: 2026-10-30
-- Issue: #134 (correção de release; emenda ao ADR-0017)
+- Issue: #219 (emenda ao ADR-0017; entrou no PR #134)
 - Decisões relacionadas: D-02, ADR-0001, ADR-0017
 
 ## Contexto
@@ -21,7 +21,7 @@ O ADR-0017 empacotou o Bun em `optionalDependencies` de plataforma (`@oven/bun-<
 
 - Uma única dependência e uma única matriz de plataformas, herdada do pacote oficial.
 - `npm i -g` segue funcionando sem Bun global; agora há `postinstall` no caminho (antes não havia).
-- `--ignore-scripts` e `--omit=optional` deixam de garantir runtime embutido; a mensagem de erro do launcher aponta `ASTRO_BUN_PATH`/`PATH`.
+- `--ignore-scripts` e `--omit=optional` deixam de garantir runtime embutido; a mensagem de erro do launcher aponta `ASTRO_BUN_PATH` (ou um Bun no `PATH`).
 - D-02 passa a citar o ADR-0018 como exceção de dependência de runtime.
 - A decisão não muda o contrato do launcher (`bun dist/cli.js <args>`, `stdio` herdado, código/sinal propagados).
 
