@@ -19,6 +19,9 @@ logs/
 
 # Config local (o exemplo é versionado)
 astro.config.json
+.serena/
+opencode.json
+mut.ts
 
 # Worktrees e SDD (fora do repo público)
 .worktrees/
