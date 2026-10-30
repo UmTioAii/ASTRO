@@ -59,8 +59,9 @@ const ARTIFACT_OVERHEAD = 2_000;
 /** A compactação consegue projetar o contexto abaixo do gatilho? */
 function projectionCanClear(messages: readonly ChatMessage[], opts: CompactionRuntimeOptions): boolean {
   const window = opts.window();
+  const tokenOpts = { provider: opts.provider() };
   const systemTokens = messages[0]?.role === "system"
-    ? countMessageTokens([messages[0]!], { provider: opts.provider() }).tokens
+    ? countMessageTokens([messages[0]!], tokenOpts).tokens
     : 0;
   const start = recentSliceStart(
     messages,
@@ -68,7 +69,10 @@ function projectionCanClear(messages: readonly ChatMessage[], opts: CompactionRu
   );
   const older = start - (messages[0]?.role === "system" ? 1 : 0);
   if (older <= 0) return false;
-  const recentTokens = countMessageTokens(messages.slice(start), { provider: opts.provider() }).tokens;
+  // Já acima da janela: compactar é estritamente benéfico, mesmo que o corte
+  // não volte abaixo do gatilho (o provider recusaria a request atual).
+  if (countMessageTokens(messages, tokenOpts).tokens > window) return true;
+  const recentTokens = countMessageTokens(messages.slice(start), tokenOpts).tokens;
   return systemTokens + recentTokens + ARTIFACT_OVERHEAD < window - reserveTokens(window, opts.compaction.buffer);
 }
 

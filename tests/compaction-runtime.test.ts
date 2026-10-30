@@ -181,6 +181,26 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
     expect(calls).toBe(1);
   });
 
+  test("contexto já acima da janela compacta mesmo sem projetar abaixo do gatilho", async () => {
+    const { ledger, audit } = setup();
+    const messages: ChatMessage[] = [
+      { role: "system", content: "s".repeat(12_000) }, // 3.000 tokens
+      user("u".repeat(88_000)), // 22.000 tokens
+      assistant("a".repeat(2_000)), // 500 tokens
+    ];
+    let summaries = 0;
+    let seen: readonly ChatMessage[] = [];
+    await completeWithCompaction(messages, {
+      ledger, audit, run: "r1", agent: () => "a", window: () => 24_000, provider: () => "p", model: () => "m",
+      compaction: { buffer: null },
+      complete: async (current) => { seen = current; return resp("ok"); },
+      summarize: async () => { summaries++; return "resumo"; },
+    });
+    expect(summaries).toBe(1);
+    expect(seen[1]!.content).toContain("CompactionArtifactV1");
+    expect(ledger.readAllEntries().some((entry) => entry.kind === "compaction")).toBe(true);
+  });
+
   test("breaker pausado impede a compactação e a chamada", async () => {
     const { ledger, audit } = setup();
     for (let index = 0; index < 3; index++) recordCompactionFailure(ledger, "r1", "a");
