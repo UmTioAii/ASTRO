@@ -115,13 +115,15 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
-  const [health, setHealth] = useState<"ok" | "down" | undefined>(undefined);
+  const [health, setHealth] = useState<{ provider: string; state: "ok" | "down" } | undefined>(undefined);
   const activeProvider = (): string => session.providerName?.() ?? session.snapshot().model.split("/")[0]!;
   const refreshHealth = async (): Promise<void> => {
     if (session.health === undefined) return;
+    const provider = activeProvider();
     try {
       const report = await session.health();
-      setHealth(providerHealth(report, activeProvider()));
+      const state = providerHealth(report, provider);
+      setHealth(state === undefined ? undefined : { provider, state });
     } catch {
       setHealth(undefined);
     }
@@ -414,7 +416,6 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
           try {
             session.reload?.();
             setStatus(statusOf(session.snapshot()));
-            void refreshHealth();
           } catch (error) {
             setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
           }
@@ -422,7 +423,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         {...(session.probeProvider === undefined ? {} : { onTest: async (id: string) => {
           const check = await session.probeProvider!(id);
           if (id === activeProvider()) {
-            setHealth((check.detail ?? "").includes("sem check automático") ? undefined : check.status === "ok" ? "ok" : "down");
+            const state = providerHealth({ status: check.status === "ok" ? "ok" : "down", checks: [check] }, id);
+            setHealth(state === undefined ? undefined : { provider: id, state });
           }
           return check;
         } })}
@@ -452,7 +454,7 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         </Text>
       ))}
       <Text dimColor>
-        {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)} · {session.providerName?.() ?? status.model.split("/")[0]} · saúde: {health ?? "n/d"}
+        {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)} · {session.providerName?.() ?? status.model.split("/")[0]} · saúde: {health?.provider === (session.providerName?.() ?? status.model.split("/")[0]) ? health.state : "n/d"}
       </Text>
     </Box>
   );

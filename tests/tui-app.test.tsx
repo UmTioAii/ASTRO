@@ -57,7 +57,7 @@ class FakeSession implements ChatSession {
     });
   }
   providerName(): string {
-    return "p";
+    return this.model.split("/")[0]!;
   }
   resumed: string[] = [];
   resumedFrom: { id: string; startedAt: string } | undefined;
@@ -113,6 +113,23 @@ test("status bar mostra saúde n/d e atualiza após troca de provider", async ()
     instance.stdin.write("/provider use p");
     instance.stdin.write("\r");
     await waitFor(() => instance.lastFrame()?.includes("saúde: ok") === true);
+    expect(session.healthCalls).toBe(1);
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("saúde de um provider não é reaproveitada por outro após /model", async () => {
+  const session = new FakeSession();
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-health-stale-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    instance.stdin.write("/provider use p");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("saúde: ok") === true);
+    instance.stdin.write("/model p2/m2");
+    instance.stdin.write("\r");
+    await waitFor(() => instance.lastFrame()?.includes("saúde: n/d") === true);
     expect(session.healthCalls).toBe(1);
   } finally {
     instance.unmount();

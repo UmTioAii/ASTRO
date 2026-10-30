@@ -11,6 +11,7 @@ export function classifyProviderCheck(check: HealthCheck): HealthErrorClass | un
   if (check.status === "ok") return undefined;
   const detail = check.detail ?? "";
   if (detail.startsWith("defina ") || /ENOENT|EACCES|EPERM/.test(detail)) return "auth";
+  if (/^authorization:|bearer\s+\S/i.test(detail)) return "auth";
   const status = /HTTP (\d{3})/.exec(detail)?.[1];
   if (status !== undefined) {
     const code = Number(status);
@@ -26,7 +27,7 @@ export function classifyProviderCheck(check: HealthCheck): HealthErrorClass | un
 
 /** Linha curta para a tela de providers; nunca inclui credencial. */
 export function formatProviderCheck(check: HealthCheck): string {
-  const detail = check.detail?.replace(/[\u0000-\u001f\u007f]/g, " ");
+  const detail = check.detail?.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ");
   if (detail !== undefined && detail.includes("sem check automático")) return "n/d (sem check)";
   const errorClass = classifyProviderCheck(check);
   const latency = check.latencyMs === undefined ? "" : ` · ${check.latencyMs}ms`;
