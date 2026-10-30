@@ -65,8 +65,8 @@ export class FallbackProvider implements Provider {
   readonly #currentAccount?: () => string | undefined;
   readonly #canUseAccount?: (entry: FallbackChainEntry) => boolean;
   readonly #agentName?: () => string;
-  /** Provider que atendeu por último nesta execução: não volta ao primário a cada step. */
-  #activeProvider: string | undefined;
+  /** Provider que atendeu por último, por agente (não vaza entre handoffs). */
+  readonly #activeByAgent = new Map<string, { provider: string; account?: string }>();
 
   constructor(opts: FallbackProviderOptions) {
     this.#chain = [...opts.providers].sort((a, b) => a.priority - b.priority);
@@ -86,15 +86,23 @@ export class FallbackProvider implements Provider {
     let lastError: unknown;
     let previous: string | undefined;
     let previousReason: ErrorClass = "invalid_request";
-    const stickyIndex = this.#activeProvider === undefined
+    const agentKey = this.#agentName?.() ?? "";
+    const sticky = this.#activeByAgent.get(agentKey);
+    const stickyIndex = sticky === undefined
       ? -1
-      : this.#chain.findIndex((entry) => entry.name === this.#activeProvider);
+      : this.#chain.findIndex((entry) => entry.name === sticky.provider);
     const currentAccount = this.#currentAccount?.();
     const stickyEntry = stickyIndex > 0 ? this.#chain[stickyIndex] : undefined;
-    const stickyMatches = stickyEntry !== undefined &&
-      (stickyEntry.accountRef === undefined || currentAccount === undefined || stickyEntry.accountRef === currentAccount);
+    const stickyMatches = stickyEntry !== undefined && sticky !== undefined &&
+      (sticky.account === undefined || currentAccount === undefined || sticky.account === currentAccount);
     const chain = stickyMatches ? this.#chain.slice(stickyIndex) : this.#chain;
     for (const entry of chain) {
+      if (previous === undefined && this.#currentAccount !== undefined && entry.accountRef !== undefined) {
+        const current = this.#currentAccount();
+        if (current !== undefined && entry.accountRef !== current) {
+          throw new ProviderError("invalid_request", `conta do agente (${current}) diverge do provider ${entry.name} (${entry.accountRef})`);
+        }
+      }
       if (previous !== undefined && this.#canUseAccount !== undefined && !this.#canUseAccount(entry)) {
         this.#log("provider.fallback_skipped", {
           provider: entry.name,
@@ -147,7 +155,11 @@ export class FallbackProvider implements Provider {
           const response = await provider.complete(req, signal);
           this.#log("provider.success", { provider: entry.name, latencyMs: Date.now() - startedAt, attempt });
           markProviderSuccess(entry.name);
-          this.#activeProvider = entry.name;
+          const servedAccount = this.#currentAccount?.();
+          this.#activeByAgent.set(agentKey, {
+            provider: entry.name,
+            ...(servedAccount === undefined ? {} : { account: servedAccount }),
+          });
           return { ...response, provider: entry.name, model: response.model ?? req.model };
         } catch (error) {
           if (isAbortError(error, signal)) throw error;

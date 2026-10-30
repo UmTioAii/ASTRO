@@ -258,4 +258,14 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(rebuildAgentTree(shared, "r1").nodes).toHaveLength(2);
     expect(rebuildAgentTree(shared, "r2").nodes).toHaveLength(2);
   });
+
+  test("swap de runtime não invalida o resume: valida contra a identidade do created", () => {
+    const ledger = newLedger();
+    ledger.recordAgentCreated({ run: "r1", agent_id: "default", session_id: "r1", model: "m1", provider: "p1", credentialRef: "K1" });
+    ledger.recordAgentIdentity({ run: "r1", agent_id: "default", session_id: "r1", model: "m2", provider: "p2", credentialRef: "K2", reason: "outage" });
+    ledger.recordState("r1", "interrupted", { agent: "default", reason: "cancelled" });
+
+    const plan = planResume(ledger, "r1");
+    expect(plan.agent).toMatchObject({ model: "m1", provider: "p1", credentialRef: "K1" });
+  });
 });

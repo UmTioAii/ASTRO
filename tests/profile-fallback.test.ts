@@ -313,6 +313,38 @@ describe("ProfileFallbackProvider (F-31)", () => {
     expect(calls).toEqual(["p1", "p2", "p2"]);
   });
 
+  test("sticky de profile é por agente (pai e filho com o mesmo profile)", async () => {
+    let agent = "parent";
+    let current = "KEY_A";
+    const calls: string[] = [];
+    let p1Calls = 0;
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => {
+          calls.push("p1");
+          p1Calls++;
+          if (p1Calls === 1) throw new ProviderError("outage", "a fora");
+          return resp("p1");
+        }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", [], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B", "KEY_B"),
+      ],
+      agentName: () => agent,
+      currentAccount: () => current,
+      moveAccount: (target) => { current = target.accountRef ?? current; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // parent -> p2
+    expect(current).toBe("KEY_B");
+    agent = "child";
+    current = "KEY_A"; // filho adquiriu a conta primária
+    expect((await fb.complete(req("p1"))).content).toBe("p1");
+    agent = "parent";
+    current = "KEY_B";
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // sticky do pai intacto
+    expect(calls).toEqual(["p1", "p2", "p1", "p2"]);
+  });
+
   test("destino ocupado é pulado antes do gate de aprovação (A7)", async () => {
     const calls: string[] = [];
     const approvals: string[] = [];

@@ -115,6 +115,30 @@ describe("execução de resume (F-22, #131)", () => {
     }
   });
 
+  test("resume após swap de runtime volta ao modelo primário, não ao destino do fallback", async () => {
+    const { cwd, configPath, seen, server } = setup();
+    try {
+      mkdirSync(join(cwd, ".astro"), { recursive: true });
+      const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
+      ledger.recordAgentCreated({
+        run: "r1", agent_id: "coder", session_id: "r1", model: "m2", provider: "mock", credentialRef: "TEST_KEY",
+      });
+      ledger.recordAgentIdentity({
+        run: "r1", agent_id: "coder", session_id: "r1", provider: "backup", model: "m3", credentialRef: "BACKUP_KEY", reason: "outage",
+      });
+      ledger.recordState("r1", "interrupted", { agent: "coder", reason: "cancelled" });
+
+      const report = await runTask({ configPath, task: "continue", cwd, env: { TEST_KEY: "x", BACKUP_KEY: "y" }, resume: "r1" });
+
+      expect(report.resumedFrom).toBe("coder");
+      expect(report.model).toBe("mock/m2");
+      expect(seen).toEqual(["m2"]);
+      expect(rebuildAgentTree(ledger, "r1").nodes.at(-1)?.reason).toBe("completed");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("resume recupera crash duro sem run_state e libera a conta antes de recriar", async () => {
     const { cwd, configPath, seen, server } = setup();
     try {

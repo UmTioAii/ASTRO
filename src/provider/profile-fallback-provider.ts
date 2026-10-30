@@ -74,7 +74,8 @@ export class ProfileFallbackProvider implements Provider {
     const chain = this.#flatten(start);
     // Depois de uma troca, o run continua no profile que atendeu; voltar ao
     // primário a cada step usaria uma conta sem o lock (A4/A7).
-    const sticky = this.#activeProfile.get(requested);
+    const stickyKey = `${this.#agentName?.() ?? ""}::${requested}`;
+    const sticky = this.#activeProfile.get(stickyKey);
     const stickyIndex = sticky === undefined
       ? -1
       : chain.findIndex((entry) => entry.name === sticky.profile);
@@ -149,7 +150,7 @@ export class ProfileFallbackProvider implements Provider {
         attempt = { ...req, model: entry.model };
         const response = await provider.complete(attempt, signal);
         const servedAccount = this.#currentAccount?.();
-        this.#activeProfile.set(requested, {
+        this.#activeProfile.set(stickyKey, {
           profile: entry.name,
           ...(servedAccount === undefined ? {} : { account: servedAccount }),
         });
