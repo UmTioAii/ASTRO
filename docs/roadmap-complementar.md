@@ -29,7 +29,7 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-05 | Limites de execução por tarefa com corte físico (I-17) | planejado | — | F-02 | C4, C7 |
 | F-06 | Cancelamento consistente e retomada explícita (I-19) | planejado | — | F-02, F-03 | F-18, F-19, T2 |
 | F-07 | Matriz de capability por modelo, consultada antes da escolha | concluído | #81 | F-02 | F-08, C4, C6, F-27 |
-| F-08 | Estratégia de context overflow com contagem por provider (D-18) | planejado | — | F-02, F-07 | T1 |
+| F-08 | Estratégia de context overflow com contagem por provider (D-22) | em andamento | — | F-02, F-07 | T1 |
 | F-09 | Sanitização de conteúdo externo antes de logar e de entrar no contexto | concluído | #70 | — | C2, C3, F-11 |
 | F-10 | Manifesto estendido: `idempotent` e `sideEffects` (I-12) | concluído | #93 | F-03 | C1, C2, F-14, F-15, F-16 |
 | F-11 | Limites de saída por tool com metadados de truncamento | planejado | — | F-09 | F-14, F-15, C3 |

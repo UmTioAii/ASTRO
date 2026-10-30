@@ -106,6 +106,10 @@ Providers de plugin não recebem `models[].call`; a factory do plugin deve ler o
 
 Mapas sugeridos: Anthropic `{0:"low",1:"low",2:"medium",3:"high",4:"max"}`; OpenAI `{0:"minimal",1:"low",2:"medium",3:"high",4:"max"}`; DeepSeek `{0:"low",1:"low",2:"medium",3:"high",4:"high"}`; Kimi K3 `{0:"low",1:"low",2:"high",3:"high",4:"max"}`. O mapa é config, não constante do harness.
 
+## Contagem de tokens (S-19, D-22)
+
+`src/tokens.ts` conta mensagens e requests sem chamada de rede: tokenizer nativo registrado por provider (`registerTokenizer`) ou estimativa documentada de 4 chars/token. O resultado é `{tokens, source: "measured"|"estimate", tokenizer?}`; texto não vazio nunca conta zero. `countMessageTokens`/`countRequestTokens` incluem conteúdo, tool calls e definições de tools; são determinísticos e não leem ambiente nem segredo (I-03). Compaction (S-17) e o retry de overflow consomem essa contagem.
+
 ## Streaming (T3)
 
 Com `CompletionRequest.onToken`, o `openai-compat` pede `stream: true` + `stream_options.include_usage` e consome SSE (`data:`), agregando conteúdo, tool calls fatiadas e usage. Resposta 200 que não é `text/event-stream` cai no parser JSON normal (sem deltas), e frames de erro (`data: {"error":...}`) ou stream sem nenhum frame viram `ProviderError("outage")`. Depois do primeiro token não há retry nem troca de provider/profile (`streamStarted`), para não duplicar texto; o custo usa o usage do chunk final (sem chunk de usage, usage fica zero).

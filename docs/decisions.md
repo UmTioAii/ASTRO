@@ -31,6 +31,7 @@ IDs estáveis; não renumerar.
 | D-19 | **Ciclo de vida de modelo** | `ModelStatus`: `active` | `deprecated` | `disabled`. `Registry.require()` só devolve `active`. | Descontinuação segura; modelos legados ficam na config mas não são selecionáveis. |
 | D-20 | **Quota domain por provider** | `quotaDomain` agrupa credenciais que compartilham limite (ex.: mesma conta OpenRouter). Default `"default"`. | Ledger e futuras quotas operam no domínio correto. |
 | D-21 | **Perfis globais de provider** | `~/.astro/providers.json` (`ASTRO_HOME`) guarda perfis sem segredo; projeto vence por nome; ativo segue `--provider` > `ASTRO_PROVIDER` > `activeProfileId` > `agent.model`; env é efêmero e a baseline sem config é somente leitura. | CRUD pelo `/provider` e onboarding sem editar JSON (#201); a origem fica auditada em `run.started`. |
+| D-22 | **Contagem de tokens por provider** | Pura e determinística: tokenizer nativo registrado por provider; senão estimativa documentada de 4 chars/token; resultado marcado `measured`/`estimate` e nunca zero para texto não vazio. `src/tokens.ts`. | Compaction (S-17) e overflow retry usam a mesma contagem; sem chamada de provider e sem segredo (I-03). |
 
 ---
 

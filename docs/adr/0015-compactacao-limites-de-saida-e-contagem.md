@@ -19,7 +19,7 @@ Janelas de contexto são finitas. A parte de compactação de F-08 (CMP-1..12) p
 
 **Limites de saída (CMP-10..12).** Cap por saída = min(8000 tokens, 5% da janela); excedente vira arquivo com head, tail e referência de fonte (path/URL/tool-call id; irrecuperável → `truncated_unrecoverable`). `read_file` pagina 350 linhas com overlap 10; `grep` ganha `page` com `{results, total, page, hasMore}`.
 
-**Contagem por provider (Q-06).** A contagem ganha o ID novo **D-21** em `docs/decisions.md`: pura, determinística, sem chamadas a provider e sem segredo (I-03); tokenizer nativo quando existir, estimativa 4 chars/token marcada; nunca reporta zero quando desconhecida. A linha de D-21 na tabela e o ajuste de `roadmap-complementar` ficam no PR de S-19 (#136).
+**Contagem por provider (Q-06).** A contagem ganha o ID novo **D-22** em `docs/decisions.md`: pura, determinística, sem chamadas a provider e sem segredo (I-03); tokenizer nativo quando existir, estimativa 4 chars/token marcada; nunca reporta zero quando desconhecida. A linha de D-22 na tabela e o ajuste de `roadmap-complementar` ficam no PR de S-19 (#136).
 
 **Ledger.** Este ADR é dono do kind `compaction`: `failure_count`, `manual` (schema em #122).
 

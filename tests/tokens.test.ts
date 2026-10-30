@@ -67,6 +67,16 @@ describe("contagem de tokens por provider (S-19, D-21)", () => {
     expect(countRequestTokens({ model: "m1", messages })).toEqual(withoutTools);
   });
 
+  test("tokenizer que devolve zero para texto não vazio falha em vez de reportar grátis", () => {
+    registerTokenizer("native", () => 0, "broken");
+    expect(() => countMessageTokens([user("abcd")], { provider: "native" })).toThrow(/contagem inválida/);
+
+    // Sem tokenizer, o provider volta à estimativa documentada e nunca a zero.
+    unregisterTokenizer("native");
+    expect(countMessageTokens([user("abcd")], { provider: "native" }))
+      .toEqual({ tokens: 1, source: "estimate" });
+  });
+
   test("troca de tokenizer entre providers não afeta os demais", () => {
     registerTokenizer("native", (text) => text.length, "a");
     registerTokenizer("native-2", (text) => text.length * 2, "b");
