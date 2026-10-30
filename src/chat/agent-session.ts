@@ -15,6 +15,7 @@ import type { ChatMessage } from "../provider/types";
 import type { FetchLike } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
+import { forceCompaction } from "../compaction/breaker";
 import { DEFAULT_SYSTEM_PROMPT } from "../session";
 import { guardContext } from "./context-guard";
 import { isFatalSessionError } from "./session-errors";
@@ -325,9 +326,11 @@ export class AgentSession {
   }
 
   /** Compacta o histórico: pede ao provider um sumário sem tools, substitui mensagens (mantém system). */
-  async compact(): Promise<string> {
+  async compact(force = false): Promise<string> {
     if (this.#busy) throw new Error("turno em andamento");
     if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
+    // CMP-6: `/compact force` ignora a pausa do breaker e zera o contador.
+    if (force) forceCompaction(this.#ledger, this.id, "default");
 
     // Se não há histórico além do system, é no-op
     if (this.#messages.length <= 1) return "histórico vazio, nada para compactar";

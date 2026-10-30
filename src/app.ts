@@ -42,7 +42,7 @@ import { runCommandTool } from "./tools/run-command";
 import { writeFileTool } from "./tools/write-file";
 import { handoffTool } from "./tools/handoff";
 import { createListModelCandidatesTool } from "./tools/list-model-candidates";
-import { createSpawnAgentTool, SpawnRegistry } from "./spawn";
+import { createSpawnAgentTool, readAgentsMd, SpawnRegistry } from "./spawn";
 import { grepTool } from "./tools/grep";
 import { listDirTool } from "./tools/list-dir";
 import { editTool } from "./tools/edit";
@@ -485,6 +485,13 @@ function resolveTools(
  * Executa uma tarefa ponta a ponta: carrega a config, cria auditoria/ledger,
  * instancia provider e tools, roda a sessão e devolve um relatório do run.
  */
+/** AGENTS.md do projeto entra no system prompt e sobrevive à compactação (CMP-8). */
+function projectSystemPrompt(config: AstroConfig, cwd: string): string | undefined {
+  const parts = [config.agent.systemPrompt, readAgentsMd(cwd)]
+    .filter((part): part is string => part !== undefined && part.length > 0);
+  return parts.length === 0 ? undefined : parts.join("\n\n");
+}
+
 export async function runTask(opts: RunOptions): Promise<RunReport> {
   const cwd = opts.cwd ?? process.cwd();
   const env = opts.env ?? process.env;
@@ -855,7 +862,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ledger,
         audit,
         baseMaxSteps: sessionMaxSteps,
-        baseSystemPrompt: config.agent.systemPrompt,
+        baseSystemPrompt: projectSystemPrompt(config, cwd),
         entryAgent,
         ...(tracer === undefined ? {} : { tracer }),
         ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
@@ -883,6 +890,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         signal,
         ...(opts.call === undefined ? {} : { call: opts.call }),
         ...(config.outputLimit === undefined ? {} : { outputLimit: config.outputLimit }),
+        ...(config.compaction === undefined ? {} : { compaction: config.compaction }),
         spawns,
       };
       result = await runMultiAgentSession(multiOpts, task);
@@ -903,9 +911,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           ...(opts.history === undefined ? {} : { history: opts.history }),
           ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
           ...(baseProfile === undefined ? {} : { agentProfile: baseProfile }),
-          ...(config.agent.systemPrompt === undefined
-            ? {}
-            : { systemPrompt: config.agent.systemPrompt }),
+          ...(projectSystemPrompt(config, cwd) === undefined ? {} : { systemPrompt: projectSystemPrompt(config, cwd) }),
           ...(tracer === undefined ? {} : { tracer }),
           resolveIdentity,
           ...(budget === undefined ? {} : { budget }),
@@ -929,6 +935,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           signal,
           ...(opts.call === undefined ? {} : { call: opts.call }),
           ...(config.outputLimit === undefined ? {} : { outputLimit: config.outputLimit }),
+        ...(config.compaction === undefined ? {} : { compaction: config.compaction }),
         },
         task,
       );

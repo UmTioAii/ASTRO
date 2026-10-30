@@ -22,7 +22,7 @@ export interface ReplIO {
 export interface ChatSession {
   readonly model: string;
   send(prompt: string, signal?: AbortSignal, onToken?: (text: string) => void): Promise<TurnResult>;
-  compact(): Promise<string>;
+  compact(force?: boolean): Promise<string>;
   clear(): void;
   resume(snapshot: SessionSnapshot): void;
   setModel(ref: string): string;
@@ -333,7 +333,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
       }
       if (command.kind === "compact") {
         try {
-          const summary = await session.compact();
+          const summary = await session.compact(command.force === true);
           io.write(summary);
         } catch (error) {
           io.write(`erro: ${messageOf(error)}`);

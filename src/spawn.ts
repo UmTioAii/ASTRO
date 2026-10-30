@@ -140,7 +140,7 @@ function candidateDeps(deps: SpawnToolDeps): CandidateDeps {
   };
 }
 
-function readAgentsMd(cwd: string): string {
+export function readAgentsMd(cwd: string): string {
   try {
     const text = readFileSync(join(cwd, "AGENTS.md"), "utf8");
     return text.length > MAX_AGENTS_MD ? text.slice(0, MAX_AGENTS_MD) : text;

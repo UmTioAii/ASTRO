@@ -1062,6 +1062,24 @@ function validateOutputLimit(value: unknown): OutputLimitConfig {
 }
 
 /**
+ * Valida `compaction` (S-17, CMP-1): `buffer` inteiro >= 0 ou null (default).
+ */
+function validateCompaction(value: unknown): CompactionConfig {
+  if (value === undefined) return { ...DEFAULT_COMPACTION_CONFIG };
+  if (!isPlainObject(value)) fail('config inválida: "compaction" deve ser um objeto');
+  const raw = value as Record<string, unknown>;
+  for (const key of Object.keys(raw)) {
+    if (key !== "buffer") fail(`config inválida: "compaction.${key}" desconhecido`);
+  }
+  if (raw.buffer === undefined || raw.buffer === null) return { buffer: null };
+  const buffer = raw.buffer;
+  if (typeof buffer !== "number" || !Number.isInteger(buffer) || buffer < 0) {
+    fail('config inválida: "compaction.buffer" deve ser inteiro >= 0 ou null');
+  }
+  return { buffer };
+}
+
+/**
  * Valida a configuração crua (tipicamente vinda de JSON) e aplica os defaults:
  * `status: "active"` por modelo e `quotaDomain: "default"` por provider.
  */
@@ -1207,7 +1225,7 @@ export function validateConfig(raw: unknown): AstroConfig {
 
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, ...(maxActive === undefined ? {} : { maxActive }), tools, telemetry, quota, cache, plugins, version, team, handoff, outputLimit: validateOutputLimit(root.outputLimit), ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
+  return { providers, models, modelPool, agent, agents, ...(maxActive === undefined ? {} : { maxActive }), tools, telemetry, quota, cache, plugins, version, team, handoff, outputLimit: validateOutputLimit(root.outputLimit), compaction: validateCompaction(root.compaction), ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */

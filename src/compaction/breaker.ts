@@ -1,8 +1,8 @@
 /**
  * Circuit breaker de compactação (CMP-6): 3 falhas consecutivas pausam por
- * 5 minutos; o contador vive no ledger e sobrevive ao `--resume`. Stub RED.
+ * 5 minutos; o contador vive no ledger e sobrevive ao `--resume`.
  */
-import type { Ledger } from "../ledger";
+import type { Ledger, LedgerCompactionEntry } from "../ledger";
 
 export const COMPACTION_FAILURE_LIMIT = 3;
 export const COMPACTION_PAUSE_MS = 5 * 60_000;
@@ -27,22 +27,39 @@ export class CompactionPausedError extends Error {
   }
 }
 
+function lastFor(ledger: Ledger, run: string): { failures: number; ts: string } | undefined {
+  const entry = ledger.readAllEntries()
+    .filter((item): item is LedgerCompactionEntry => item.kind === "compaction" && item.run === run)
+    .at(-1);
+  return entry === undefined ? undefined : { failures: entry.failure_count, ts: entry.ts };
+}
+
 /** Estado derivado do último evento `compaction` do run. */
-export function compactionState(_ledger: Ledger, _run: string, _now?: number): CompactionState {
-  throw new Error("não implementado");
+export function compactionState(ledger: Ledger, run: string, now = Date.now()): CompactionState {
+  const last = lastFor(ledger, run);
+  if (last === undefined) return { failures: 0, paused: false, remainingMs: 0 };
+  if (last.failures < COMPACTION_FAILURE_LIMIT) {
+    return { failures: last.failures, paused: false, remainingMs: 0 };
+  }
+  const remainingMs = new Date(last.ts).getTime() + COMPACTION_PAUSE_MS - now;
+  return remainingMs > 0
+    ? { failures: last.failures, paused: true, remainingMs }
+    : { failures: last.failures, paused: false, remainingMs: 0 };
 }
 
 /** Registra falha; abre o breaker no limite. */
-export function recordCompactionFailure(_ledger: Ledger, _run: string, _agent: string): CompactionState {
-  throw new Error("não implementado");
+export function recordCompactionFailure(ledger: Ledger, run: string, agent: string): CompactionState {
+  const failures = compactionState(ledger, run).failures + 1;
+  ledger.recordCompaction({ run, agent, failure_count: failures, manual: false });
+  return compactionState(ledger, run);
 }
 
 /** Registra sucesso (zera o contador). */
-export function recordCompactionSuccess(_ledger: Ledger, _run: string, _agent: string): void {
-  throw new Error("não implementado");
+export function recordCompactionSuccess(ledger: Ledger, run: string, agent: string): void {
+  ledger.recordCompaction({ run, agent, failure_count: 0, manual: false });
 }
 
 /** `/compact force`: zera o contador e marca `compaction.manual`. */
-export function forceCompaction(_ledger: Ledger, _run: string, _agent: string): void {
-  throw new Error("não implementado");
+export function forceCompaction(ledger: Ledger, run: string, agent: string): void {
+  ledger.recordCompaction({ run, agent, failure_count: 0, manual: true });
 }

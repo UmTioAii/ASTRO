@@ -103,6 +103,8 @@ Model pools and agent profiles are also supported. A full example with three pro
 
 Tool output is bounded: `outputLimit` (`{ "maxTokens": 8000, "shareOfWindow": 0.05 }` by default) caps each tool result at `min(maxTokens, shareOfWindow × model context)`. Oversized output is written to `.astro/outputs/<run>/` and the model receives the head, the tail and a source reference; `read_file` pages 350 lines with a 10-line overlap, and `grep` returns `{results, total, page, hasMore}` with 100 matches per page.
 
+Sessions compact themselves before the context window fills: the trigger is `window − reserve`, where `reserve` is `max(15% of the window, 16.000)` or `compaction.buffer` when declared. The recent tail (15.000 tokens, cut at a user message) is preserved; the older history is summarized without tools into a `CompactionArtifactV1` (Active, Blocked, Next Move, Relevant Files, Important Context) and `AGENTS.md` stays in the system prompt. Three failed compactions pause it for five minutes (`Compaction paused (3 failures, retry in Xs)`); `/compact force` clears the pause and records `compaction.manual`.
+
 | Variable | Required | Purpose |
 |---|---|---|
 | `<credentialRef>` (e.g. `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) | For OpenAI-compatible providers | Provider API key, named by your configuration. |

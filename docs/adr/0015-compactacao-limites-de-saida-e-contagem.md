@@ -21,6 +21,8 @@ Janelas de contexto são finitas. A parte de compactação de F-08 (CMP-1..12) p
 
 **Contagem por provider (Q-06).** A contagem ganha o ID novo **D-22** em `docs/decisions.md`: pura, determinística, sem chamadas a provider e sem segredo (I-03); tokenizer nativo quando existir, estimativa 4 chars/token marcada; nunca reporta zero quando desconhecida. A linha de D-22 na tabela e o ajuste de `roadmap-complementar` ficam no PR de S-19 (#136).
 
+**Implementação (S-17, #134).** `src/compaction/` implementa gatilho/reserva, parte recente, níveis 1–5, artefato (`types.ts`), breaker no ledger (`breaker.ts`) e o runtime que compacta antes da chamada e retenta uma vez por overflow (`runtime.ts`). Janela que não comporta a reserva (ex.: 8k com default 16k) não compacta. `/compact force` grava `compaction.manual` e zera o contador.
+
 **Ledger.** Este ADR é dono do kind `compaction`: `failure_count`, `manual` (schema em #122).
 
 ## Consequências

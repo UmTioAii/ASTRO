@@ -37,9 +37,9 @@ describe("gatilho e reserva da janela (S-17, CMP-1)", () => {
 
   test("shouldCompact usa o tokenizer nativo do provider quando existe", () => {
     registerTokenizer("native", (value) => value.length, "chars");
-    // identidade: 901 chars = 901 tokens > 900
-    expect(shouldCompact([user(text(901))], 1_000, 100, { provider: "native" })).toBe(true);
-    expect(shouldCompact([user(text(900))], 1_000, 100, { provider: "native" })).toBe(false);
+    // identidade: 900 chars = 900 tokens atinge o limiar (window - reserve).
+    expect(shouldCompact([user(text(900))], 1_000, 100, { provider: "native" })).toBe(true);
+    expect(shouldCompact([user(text(899))], 1_000, 100, { provider: "native" })).toBe(false);
   });
 });
 
@@ -115,10 +115,10 @@ describe("compactSession (S-17, CMP-3/CMP-4)", () => {
   test("substitui o antigo por artefato + recente, preserva system e não chama tools", async () => {
     const messages: ChatMessage[] = [
       { role: "system", content: "SYS-PROMPT" },
-      user("tarefa antiga"),
-      assistant("resposta antiga"),
-      user("tarefa atual"),
-      assistant("próximo passo"),
+      user(`tarefa antiga ${text(2_000)}`),
+      assistant(`resposta antiga ${text(2_000)}`),
+      user(`tarefa atual ${text(2_000)}`),
+      assistant(`próximo passo ${text(2_000)}`),
     ];
     const seen: ChatMessage[][] = [];
     const result = await compactSession({
@@ -126,7 +126,7 @@ describe("compactSession (S-17, CMP-3/CMP-4)", () => {
       messages,
       window: 1_000,
       buffer: 900,
-      recentBudget: 8,
+      recentBudget: 1_000,
       summarize: async (input) => {
         seen.push(input);
         return "resumo";
