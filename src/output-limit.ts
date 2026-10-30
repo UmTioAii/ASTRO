@@ -51,7 +51,8 @@ export interface LimitedOutput {
 
 /** Id seguro para cabeçalho/nome de arquivo (call ids vêm do modelo). */
 function safeLabel(value: string): string {
-  const clean = value.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 64);
+  // Sem `:` e sem nomes de device do Windows: o label vira nome de arquivo.
+  const clean = value.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 64);
   return clean.length === 0 ? "call" : clean;
 }
 
@@ -81,7 +82,10 @@ export function limitToolOutput(output: string, opts: OutputLimitOptions): Limit
     written = false;
   }
 
-  const chars = opts.capTokens * 4;
+  // Cabeçalho, marcador e origem são aditivos ao orçamento (CMP-10 pedia
+  // head+tail+referência); desconta-se uma reserva fixa para não estourar o cap
+  // de forma grosseira em saídas muito grandes.
+  const chars = Math.max(200, opts.capTokens * 4 - 512);
   const headChars = Math.floor(chars / 2);
   const tailChars = chars - headChars;
   const head = sanitized.slice(0, headChars);

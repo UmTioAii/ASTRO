@@ -191,6 +191,8 @@ export class ToolExecutor {
       artifactDir: join(ctx.cwd, ".astro", "outputs", safeRunDir(ctx.run)),
       displayPath: (path) => relative(ctx.cwd, path),
     });
+    // A sanitização para o contexto acontece na sessão; aqui o truncamento
+    // precisa preservar a saída bruta para handoff/paths/ids.
     return limited.truncated ? { ...result, output: limited.output } : result;
   }
 }

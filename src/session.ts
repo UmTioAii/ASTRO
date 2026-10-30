@@ -392,7 +392,7 @@ export async function runSession(
           call,
         );
         tracer?.end(toolSpan, { isError: result.isError === true });
-        messages.push({ role: "tool", content: result.output, toolCallId: call.id });
+        messages.push({ role: "tool", content: redactSecrets(result.output), toolCallId: call.id });
 
         // Detectar handoff no resultado
         const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
@@ -943,7 +943,7 @@ export async function runMultiAgentSession(
           call,
         );
         tracer?.end(toolSpan, { isError: result.isError === true });
-        messages.push({ role: "tool", content: result.output, toolCallId: call.id });
+        messages.push({ role: "tool", content: redactSecrets(result.output), toolCallId: call.id });
 
         const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {

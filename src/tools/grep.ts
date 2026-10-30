@@ -122,6 +122,8 @@ export const grepTool: Tool = {
       const from = (pageNumber - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE;
       const results: GrepMatch[] = [];
+      // `total` exige varrer tudo; só a página pedida fica em memória. O
+      // timeout do manifesto continua sendo o teto de custo da busca.
       let total = 0;
 
       walk(root, (absPath) => {

@@ -60,6 +60,21 @@ describe("read_file paginado (S-16, CMP-11)", () => {
     expect(result.output).toBe(`linhas 1-10 de 10\n${numbered(10)}`.trimEnd());
   });
 
+  test("arquivo vazio devolve página vazia; CRLF e sem newline final contam linhas corretamente", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-read-edge-"));
+    writeFileSync(join(cwd, "empty.txt"), "");
+    const empty = await readFileTool.execute({ path: "empty.txt" }, ctx(cwd, 8000));
+    expect(empty.output).toBe("linhas 1-0 de 0");
+
+    writeFileSync(join(cwd, "crlf.txt"), "a\r\nb\r\n");
+    expect((await readFileTool.execute({ path: "crlf.txt" }, ctx(cwd, 8000))).output)
+      .toBe("linhas 1-2 de 2\na\nb");
+
+    writeFileSync(join(cwd, "no-final.txt"), "a\nb");
+    expect((await readFileTool.execute({ path: "no-final.txt" }, ctx(cwd, 8000))).output)
+      .toBe("linhas 1-2 de 2\na\nb");
+  });
+
   test("offset além do total devolve fim do arquivo sem erro", async () => {
     const cwd = workspace(numbered(10));
     const result = await readFileTool.execute({ path: "file.txt", offset: 11 }, ctx(cwd, 8000));

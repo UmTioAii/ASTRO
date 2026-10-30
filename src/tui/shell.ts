@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Auditor } from "../audit";
 import { headerEnvNames } from "../mcp/headers";
+import { effectiveOutputCap } from "../output-limit";
 import { loadEffectiveConfig } from "../provider/profiles";
 import { redactSecrets } from "../sanitize-external";
 import { ToolExecutor } from "../tools/executor";
@@ -62,6 +63,7 @@ export function createShellRunner(opts: ShellOptions): ShellRunner {
       if (!SYSTEM_ENV.has(name.toUpperCase())) secretEnvNames.push(name);
     }
   }
+  const modelEntry = config.models.find((model) => `${model.provider}/${model.id}` === config.agent.model);
   return {
     enabled: true,
     run: async (command, signal) => {
@@ -78,6 +80,8 @@ export function createShellRunner(opts: ShellOptions): ShellRunner {
           {
             cwd: opts.cwd, run: randomUUID(), agent: "default",
             env: opts.env ?? process.env, secretEnvNames,
+            // Mesmo cap do run: `!cmd` também entra no contexto da TUI.
+            outputLimitTokens: effectiveOutputCap(config.outputLimit, modelEntry?.context),
             ...(signal === undefined ? {} : { signal }),
           },
           { id: randomUUID(), name: "run_command", arguments: JSON.stringify({ command: input }) },

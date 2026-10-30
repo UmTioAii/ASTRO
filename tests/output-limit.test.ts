@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { effectiveOutputCap, limitToolOutput } from "../src/output-limit";
@@ -89,5 +89,12 @@ describe("limite de saída por tool (S-16, CMP-10)", () => {
 
     expect(a.artifactPath).toBe(b.artifactPath);
     expect(a.artifactPath).not.toBe(c.artifactPath);
+  });
+
+  test("call id com ':' ou '/' gera artefato válido em qualquer SO", () => {
+    const result = limitToolOutput(bigOutput(), { capTokens: 50, toolCallId: "a:b/c", artifactDir: dir() });
+    expect(result.truncated).toBe(true);
+    expect(result.unrecoverable).toBeUndefined();
+    expect(existsSync(result.artifactPath!)).toBe(true);
   });
 });

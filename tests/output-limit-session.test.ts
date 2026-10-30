@@ -52,6 +52,45 @@ describe("limite de saída no executor e na sessão (CMP-10)", () => {
     expect(result.output).toBe("ok");
   });
 
+  test("sessão sanitiza a saída da tool antes de entrar no contexto (I-03)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-output-session-secret-"));
+    const secret = "sk-live-0123456789abcdef";
+    writeFileSync(join(cwd, "secret.txt"), `valor: ${secret}\n`);
+    const bodies: Array<{ messages?: Array<{ role?: string; content?: string }> }> = [];
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        bodies.push((await req.json()) as { messages?: Array<{ role?: string; content?: string }> });
+        calls++;
+        if (calls === 1) {
+          return Response.json({
+            choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function",
+              function: { name: "read_file", arguments: JSON.stringify({ path: "secret.txt" }) } }] } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          });
+        }
+        return Response.json({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+      },
+    });
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      writeFileSync(configPath, JSON.stringify({
+        providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "KEY" } },
+        models: [{ provider: "mock", id: "m1", tags: ["writing-code"], context: 100_000 }],
+        agent: { model: "mock/m1", maxSteps: 2, tools: ["read_file"] },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      }));
+
+      await runTask({ configPath, task: "x", cwd, env: { KEY: "k" } });
+      const toolMessage = bodies[1]!.messages?.find((message) => message.role === "tool")?.content ?? "";
+      expect(toolMessage).toContain("[REDACTED]");
+      expect(toolMessage).not.toContain(secret);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("sessão aplica min(maxTokens, 5% da janela) ao output da tool", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "astro-output-session-"));
     mkdirSync(join(cwd, ".astro"), { recursive: true });
