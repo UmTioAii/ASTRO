@@ -19,6 +19,8 @@ ADR-0008 deu ao orchestrator as tools de escolha (`list_model_candidates`/`spawn
 
 **Replay (M4, M8).** O `--resume` lê a escolha gravada na árvore de `agent` events; nada é recalculado (I-06). Identidade é composta `provider/id` (S-06, #123): `nvidia/x` e `openrouter/x` são modelos distintos; só o par exato é duplicado.
 
+**Implementação (S-09, #126).** `src/model-choice.ts` implementa o filtro/ranking/snapshot e `resolveModelChoice`; a tool `list_model_candidates` é registrada no run. Snapshot TTL 5 min, invalidado por `markModelHealthChanged`; a escolha (`default_rank` ou rank explícito) é passada como `reason` ao `agent.created` (≤200 chars) pelo spawn (#128).
+
 ## Consequências
 
 - Ganho: escolha runtime auditável e reproduzível; as mesmas regras valem para spawn — handoff para agent declarado mantém o modelo escolhido pela config (ADR-0007 intacto).

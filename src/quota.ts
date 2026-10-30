@@ -45,6 +45,24 @@ function usageFor(ledger: Ledger, quotaDomain: string, now: Date): Usage {
 }
 
 /**
+ * Verifica se o domínio ainda tem quota, sem lançar; usado pelo filtro de
+ * candidatos (S-09). Domínio sem limite declarado está disponível.
+ */
+export function quotaAvailable(
+  ledger: Ledger,
+  limits: Record<string, QuotaLimit>,
+  quotaDomain: string,
+  now: Date = new Date(),
+): boolean {
+  const limit = limits[quotaDomain];
+  if (limit === undefined) return true;
+  const usage = usageFor(ledger, quotaDomain, now);
+  if (limit.dailyTokens !== undefined && usage.todayTokens >= limit.dailyTokens) return false;
+  if (limit.monthlyCostUsd !== undefined && usage.monthCostUsd >= limit.monthlyCostUsd) return false;
+  return true;
+}
+
+/**
  * Verifica se o domínio ainda tem quota; lança QuotaExceededError quando o
  * uso atual já atingiu o limite (chamadas novas são bloqueadas antes de gastar).
  * Domínio sem limite declarado passa direto.

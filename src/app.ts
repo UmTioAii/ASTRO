@@ -38,6 +38,7 @@ import { readFileTool } from "./tools/read-file";
 import { runCommandTool } from "./tools/run-command";
 import { writeFileTool } from "./tools/write-file";
 import { handoffTool } from "./tools/handoff";
+import { createListModelCandidatesTool } from "./tools/list-model-candidates";
 import { grepTool } from "./tools/grep";
 import { listDirTool } from "./tools/list-dir";
 import { editTool } from "./tools/edit";
@@ -718,6 +719,14 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
   const toolsByName = new Map(TOOLS_BY_NAME);
+  // S-09: candidatos dependem do config/ledger/registry deste run.
+  toolsByName.set("list_model_candidates", createListModelCandidatesTool(() => ({
+    config,
+    registry,
+    ledger,
+    ...(quotaLimits === undefined ? {} : { quotaLimits }),
+    ...(budget === undefined ? {} : { budget }),
+  })));
   for (const tool of loaded.tools) {
     if (!toolsByName.has(tool.manifest.name)) toolsByName.set(tool.manifest.name, tool);
   }
