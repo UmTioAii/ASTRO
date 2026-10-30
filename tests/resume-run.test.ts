@@ -75,6 +75,36 @@ describe("execução de resume (F-22, #131)", () => {
     }
   });
 
+  test("resume recupera agente órfão como crash_recovered e libera o lock antes de recriar", async () => {
+    const { cwd, configPath, seen, server } = setup();
+    try {
+      const ledger = seedInterrupted(cwd);
+      await runTask({ configPath, task: "continue", cwd, env: { TEST_KEY: "x" }, resume: "r1" });
+
+      const events = ledger
+        .readAllEntries()
+        .filter((e) => e.kind === "agent" && e.run === "r1");
+      const recoveredAt = events.findIndex(
+        (e) => (e as { event?: string }).event === "destroyed" && (e as { reason?: string }).reason === "crash_recovered",
+      );
+      const recreatedAt = events.findIndex(
+        (e, index) => index > recoveredAt && (e as { event?: string }).event === "created",
+      );
+      expect(recoveredAt).toBeGreaterThanOrEqual(0);
+      expect(events[recoveredAt]).toMatchObject({ agent_id: "coder", reason: "crash_recovered" });
+      expect(recreatedAt).toBeGreaterThan(recoveredAt);
+      expect(seen).toEqual(["m2"]);
+
+      const released = new Auditor(join(cwd, ".astro", "audit.jsonl"))
+        .readAll()
+        .filter((e) => e.tipo === "agent.lock.released" && e.payload.reason === "crash_recovered");
+      expect(released).toHaveLength(1);
+      expect(released[0]!.payload).toMatchObject({ agent_id: "coder" });
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("single-agent interrompido retoma no 'default' com o modelo gravado", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "astro-resume-single-"));
     const seen: string[] = [];
