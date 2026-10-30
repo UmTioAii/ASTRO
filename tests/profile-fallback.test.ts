@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
+import { AccountLockedError, type AgentLock } from "../src/agent-lock";
 import { ProfileFallbackProvider, type ProfileChainEntry } from "../src/provider/profile-fallback-provider";
 import { ProviderError, type CompletionRequest, type CompletionResponse, type Provider } from "../src/provider/types";
 
@@ -27,9 +28,20 @@ function entry(
   model: string,
   fallback: string[],
   complete: Provider["complete"],
+  credentialRef?: string,
+  accountRef?: string,
 ): ProfileChainEntry {
-  return { name, provider, model, fallback, create: () => ({ complete }) };
+  return {
+    name, provider, model, fallback,
+    ...(credentialRef === undefined ? {} : { credentialRef }),
+    ...(accountRef === undefined ? {} : { accountRef }),
+    create: () => ({ complete }),
+  };
 }
+
+const holder = (accountRef: string): AgentLock => ({
+  run: "other", agent_id: "holder", session_id: "other", accountRef, seq: 1,
+});
 
 describe("ProfileFallbackProvider (F-31)", () => {
   test("primário em outage cai para o próximo profile, reescreve o model e devolve a trilha", async () => {
@@ -200,5 +212,155 @@ describe("ProfileFallbackProvider (F-31)", () => {
     const out = await fb.complete(req("p1"));
     expect(out.content).toBe("ok");
     expect("fallbacks" in out).toBe(false);
+  });
+
+  test("destino com conta ocupada é pulado, sem entrar na trilha (A7)", async () => {
+    const audit = auditOf();
+    const calls: string[] = [];
+    const moved: string[] = [];
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2", "p3"], async () => { calls.push("p1"); throw new ProviderError("outage", "a fora"); }, "KEY_A"),
+        entry("p2", "b", "m2", ["p3"], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B"),
+        entry("p3", "c", "m3", [], async () => { calls.push("p3"); return resp("p3"); }, "KEY_C"),
+      ],
+      audit,
+      run: "r1",
+      moveAccount: (target) => {
+        if (target.name === "p2") throw new AccountLockedError("KEY_B", holder("KEY_B"));
+        moved.push(target.credentialRef ?? "");
+      },
+    });
+
+    const out = await fb.complete(req("p1"));
+    expect(calls).toEqual(["p1", "p3"]);
+    expect(moved).toEqual(["KEY_C"]);
+    expect(out.fallbacks).toEqual([
+      { profile: "p1", from_provider: "a", to_provider: "c", reason: "outage" },
+    ]);
+    const skipped = audit.readAll().find((e) => e.tipo === "profile.fallback_skipped");
+    expect(skipped?.payload).toMatchObject({ profile: "p2", provider: "b", errorClass: "account_locked" });
+  });
+
+  test("após fallback, o próximo completion continua no profile que atendeu (A4)", async () => {
+    const calls: string[] = [];
+    let p1Calls = 0;
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => {
+          calls.push("p1");
+          p1Calls++;
+          if (p1Calls === 1) throw new ProviderError("outage", "a fora");
+          return resp("p1");
+        }),
+        entry("p2", "b", "m2", [], async () => { calls.push("p2"); return resp("p2"); }),
+      ],
+    });
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect(calls).toEqual(["p1", "p2", "p2"]);
+  });
+
+  test("sticky de profile não vaza para outro agente com a conta primária", async () => {
+    let current = "KEY_A";
+    const calls: string[] = [];
+    let p1Calls = 0;
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => {
+          calls.push("p1");
+          p1Calls++;
+          if (p1Calls === 1) throw new ProviderError("outage", "a fora");
+          return resp("p1");
+        }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", [], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B", "KEY_B"),
+      ],
+      currentAccount: () => current,
+      moveAccount: (target) => { current = target.accountRef ?? current; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect(current).toBe("KEY_B");
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // mesmo agente, sticky
+    current = "KEY_A"; // handoff: novo agente adquiriu a conta primária
+    expect((await fb.complete(req("p1"))).content).toBe("p1");
+    expect(calls).toEqual(["p1", "p2", "p2", "p1"]);
+  });
+
+  test("sticky de profile acompanha a conta efetiva servida pelo C6", async () => {
+    let current = "KEY_A";
+    const calls: string[] = [];
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => { calls.push("p1"); throw new ProviderError("outage", "a"); }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", [], async () => {
+          calls.push("p2");
+          current = "KEY_C"; // C6 de p2 moveu de KEY_B para KEY_C
+          return resp("p2");
+        }, "KEY_B", "KEY_B"),
+      ],
+      currentAccount: () => current,
+      moveAccount: (target) => { if (target.name === "p2") current = "KEY_B"; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect(current).toBe("KEY_C");
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // sticky pela conta KEY_C
+    expect(calls).toEqual(["p1", "p2", "p2"]);
+  });
+
+  test("sticky de profile é por agente (pai e filho com o mesmo profile)", async () => {
+    let agent = "parent";
+    let current = "KEY_A";
+    const calls: string[] = [];
+    let p1Calls = 0;
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => {
+          calls.push("p1");
+          p1Calls++;
+          if (p1Calls === 1) throw new ProviderError("outage", "a fora");
+          return resp("p1");
+        }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", [], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B", "KEY_B"),
+      ],
+      agentName: () => agent,
+      currentAccount: () => current,
+      moveAccount: (target) => { current = target.accountRef ?? current; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // parent -> p2
+    expect(current).toBe("KEY_B");
+    agent = "child";
+    current = "KEY_A"; // filho adquiriu a conta primária
+    expect((await fb.complete(req("p1"))).content).toBe("p1");
+    agent = "parent";
+    current = "KEY_B";
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // sticky do pai intacto
+    expect(calls).toEqual(["p1", "p2", "p1", "p2"]);
+  });
+
+  test("destino ocupado é pulado antes do gate de aprovação (A7)", async () => {
+    const calls: string[] = [];
+    const approvals: string[] = [];
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2", "p3"], async () => { calls.push("p1"); throw new ProviderError("outage", "a"); }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", ["p3"], async () => { calls.push("p2"); return resp("p2"); }, "KEY_B", "KEY_B"),
+        entry("p3", "c", "m3", [], async () => { calls.push("p3"); return resp("p3"); }, "KEY_C", "KEY_C"),
+      ],
+      canUseAccount: (entry) => entry.name !== "p2",
+      approveSwap: async (request) => { approvals.push(request.to.profile ?? ""); return true; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p3");
+    expect(calls).toEqual(["p1", "p3"]);
+    expect(approvals).toEqual(["p3"]);
   });
 });

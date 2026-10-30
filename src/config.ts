@@ -316,6 +316,21 @@ export function providerAccountRefFor(name: string, provider: ProviderConfig): s
   return raw.kind;
 }
 
+/**
+ * Credencial efetiva do provider para o ledger/lock: nome da env, caminho OAuth
+ * expandido ou `kind` do plugin; ausente para provider local sem chave.
+ */
+export function providerCredentialRefFor(provider: ProviderConfig): string | undefined {
+  const raw = provider as { kind: string; credentialRef?: unknown; credentialsPath?: unknown };
+  if (raw.kind === "openai-compat") {
+    return typeof raw.credentialRef === "string" && raw.credentialRef.length > 0 ? raw.credentialRef : undefined;
+  }
+  if (raw.kind === "codex-oauth") {
+    return typeof raw.credentialsPath === "string" ? expandHome(raw.credentialsPath) : undefined;
+  }
+  return typeof raw.credentialRef === "string" && raw.credentialRef.length > 0 ? raw.credentialRef : raw.kind;
+}
+
 /** Mesma expansão de `~` usada pelo runtime para o caminho de credenciais. */
 function expandHome(path: string): string {
   if (path === "~") return homedir();

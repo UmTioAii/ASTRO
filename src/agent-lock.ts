@@ -283,6 +283,79 @@ export function releaseAgentLock(
 }
 
 /**
+ * Move o lock do agente para outra conta (A7): exige a conta de destino livre,
+ * grava `identity` (o lock segue o agente) e audita a troca. A conta antiga
+ * deixa de estar presa; a nova passa a ser liberada no destroy.
+ */
+export function moveAgentLock(
+  ledger: Ledger,
+  audit: Auditor,
+  opts: {
+    run: string;
+    agent_id: string;
+    provider: string;
+    model: string;
+    credentialRef?: string;
+    profile?: string;
+    reason: string;
+  },
+): AgentLock {
+  return ledger.withFileLock(() => {
+    const current = activeLocks(ledger).find((lock) => sameAgent(lock, opts.run, opts.agent_id));
+    if (current === undefined) {
+      throw new Error(`agente "${opts.agent_id}" não está ativo no run "${opts.run}"`);
+    }
+    const accountRef = accountRefOf(opts);
+    if (
+      current.accountRef === accountRef &&
+      current.provider === opts.provider &&
+      current.model === opts.model &&
+      current.profile === opts.profile
+    ) {
+      return current;
+    }
+    const holder = activeLocks(ledger).find(
+      (lock) => lock.accountRef === accountRef && !sameAgent(lock, opts.run, opts.agent_id),
+    );
+    if (holder !== undefined) throw new AccountLockedError(accountRef, holder);
+
+    ledger.recordAgentIdentity({
+      run: opts.run,
+      agent_id: opts.agent_id,
+      session_id: current.session_id,
+      provider: opts.provider,
+      model: opts.model,
+      ...(opts.credentialRef === undefined ? {} : { credentialRef: opts.credentialRef }),
+      ...(opts.profile === undefined ? {} : { profile: opts.profile }),
+      reason: opts.reason,
+    });
+    if (accountRef !== current.accountRef) {
+      audit.append({
+        run: opts.run,
+        agent: opts.agent_id,
+        tipo: "agent.lock.moved",
+        payload: {
+          agent_id: opts.agent_id,
+          from: current.accountRef,
+          to: accountRef,
+          provider: opts.provider,
+          model: opts.model,
+          ...(opts.profile === undefined ? {} : { profile: opts.profile }),
+          reason: opts.reason,
+        },
+      });
+    }
+    return {
+      ...current,
+      accountRef,
+      provider: opts.provider,
+      model: opts.model,
+      ...(opts.profile === undefined ? {} : { profile: opts.profile }),
+    };
+  }, { failClosed: true });
+}
+
+/**
  * Varre o ledger inteiro e libera locks cujo processo dono morreu (A4). Chamado
  * no início de todo run: um crash duro do processo anterior não pode deixar a
  * conta cativa para sempre. Locks de processo vivo nunca são tocados.

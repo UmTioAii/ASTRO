@@ -561,6 +561,7 @@ export class Ledger {
     provider?: string;
     credentialRef?: string;
     profile?: string;
+    reason?: string;
   }): LedgerAgentEntry {
     const entry: LedgerAgentEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
@@ -574,6 +575,7 @@ export class Ledger {
       ...(opts.provider === undefined ? {} : { provider: redactSecrets(opts.provider) }),
       ...(opts.credentialRef === undefined ? {} : { credentialRef: redactSecrets(opts.credentialRef) }),
       ...(opts.profile === undefined ? {} : { profile: redactSecrets(opts.profile) }),
+      ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
       seq: this.takeSeq(),
     };
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");

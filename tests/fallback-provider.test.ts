@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { join } from "node:path";
 import { ConfigError, validateConfig, type PriceConfig } from "../src/config";
+import { AccountLockedError, activeLocks, type AgentLock } from "../src/agent-lock";
+import { Ledger } from "../src/ledger";
 import { Registry } from "../src/registry";
 import { Auditor } from "../src/audit";
 import { FallbackProvider } from "../src/provider/fallback-provider";
@@ -176,6 +178,8 @@ describe("FallbackProvider (C6)", () => {
       const audit = readFileSync(join(dir, ".astro", "audit.jsonl"), "utf8");
       expect(audit).toContain("provider.failure");
       expect(audit).toContain("provider.success");
+      expect(audit).toContain("agent.lock.moved");
+      expect(activeLocks(new Ledger(join(dir, ".astro", "ledger.jsonl")))).toEqual([]);
       expect(audit).not.toContain("test-key"); // I-03
     } finally {
       down.stop(true); up.stop(true);
@@ -220,5 +224,122 @@ describe("FallbackProvider (C6)", () => {
     for (const tipo of ["provider.failure", "provider.success"] as const) {
       expect(audit.readAll().find((e) => e.tipo === tipo)!.payload).toMatchObject({ profile: "premium" });
     }
+  });
+
+  test("após fallback, o próximo completion continua no provider que atendeu (A4)", async () => {
+    const calls: string[] = [];
+    let aCalls = 0;
+    const a: Provider = { complete: async () => {
+      calls.push("a");
+      aCalls++;
+      if (aCalls === 1) throw new ProviderError("outage", "a fora");
+      return resp({ content: "de-a" });
+    } };
+    const b: Provider = { complete: async () => { calls.push("b"); return resp({ content: "de-b" }); } };
+    const fb = new FallbackProvider({
+      providers: [{ name: "a", priority: 1, create: () => a }, { name: "b", priority: 2, create: () => b }],
+      maxRetries: 0,
+      retryBackoffMs: 1,
+    });
+    expect((await fb.complete(req)).provider).toBe("b");
+    expect((await fb.complete(req)).provider).toBe("b");
+    expect(calls).toEqual(["a", "b", "b"]);
+  });
+
+  test("sticky de C6 não vaza para outro agente com a conta primária", async () => {
+    let current = "KEY_A";
+    const calls: string[] = [];
+    let aCalls = 0;
+    const a: Provider = { complete: async () => {
+      calls.push("a");
+      aCalls++;
+      if (aCalls === 1) throw new ProviderError("outage", "a fora");
+      return resp({ content: "de-a" });
+    } };
+    const b: Provider = { complete: async () => { calls.push("b"); return resp({ content: "de-b" }); } };
+    const fb = new FallbackProvider({
+      providers: [
+        { name: "a", priority: 1, create: () => a, accountRef: "KEY_A" },
+        { name: "b", priority: 2, create: () => b, accountRef: "KEY_B" },
+      ],
+      maxRetries: 0,
+      retryBackoffMs: 1,
+      currentAccount: () => current,
+      moveAccount: (entry) => { current = entry.accountRef ?? current; },
+    });
+
+    expect((await fb.complete(req)).provider).toBe("b");
+    expect(current).toBe("KEY_B");
+    expect((await fb.complete(req)).provider).toBe("b");
+    current = "KEY_A"; // handoff: novo agente adquiriu a conta primária
+    expect((await fb.complete(req)).provider).toBe("a");
+    expect(calls).toEqual(["a", "b", "b", "a"]);
+  });
+
+  test("sticky de C6 é por agente (pai e filho com o mesmo provider)", async () => {
+    let agent = "parent";
+    let current = "KEY_A";
+    const calls: string[] = [];
+    let aCalls = 0;
+    const a: Provider = { complete: async () => {
+      calls.push("a");
+      aCalls++;
+      if (aCalls === 1) throw new ProviderError("outage", "a fora");
+      return resp({ content: "de-a" });
+    } };
+    const b: Provider = { complete: async () => { calls.push("b"); return resp({ content: "de-b" }); } };
+    const fb = new FallbackProvider({
+      providers: [
+        { name: "a", priority: 1, create: () => a, accountRef: "KEY_A" },
+        { name: "b", priority: 2, create: () => b, accountRef: "KEY_B" },
+      ],
+      maxRetries: 0,
+      retryBackoffMs: 1,
+      agentName: () => agent,
+      currentAccount: () => current,
+      moveAccount: (entry) => { current = entry.accountRef ?? current; },
+    });
+
+    expect((await fb.complete(req)).provider).toBe("b"); // parent -> b
+    expect(current).toBe("KEY_B");
+    agent = "child";
+    current = "KEY_A";
+    expect((await fb.complete(req)).provider).toBe("a");
+    agent = "parent";
+    current = "KEY_B";
+    expect((await fb.complete(req)).provider).toBe("b"); // sticky do pai intacto
+    expect(calls).toEqual(["a", "b", "a", "b"]);
+  });
+
+  test("destino C6 com conta ocupada é pulado e o lock move para o próximo (A7)", async () => {
+    const calls: string[] = [];
+    const moved: string[] = [];
+    const a: Provider = { complete: async () => { calls.push("a"); throw new ProviderError("outage", "a fora"); } };
+    const b: Provider = { complete: async () => { calls.push("b"); return resp(); } };
+    const c: Provider = { complete: async () => { calls.push("c"); return resp(); } };
+    const audit = auditOf();
+    const holder: AgentLock = { run: "other", agent_id: "holder", session_id: "other", accountRef: "KEY_B", seq: 1 };
+    const fb = new FallbackProvider({
+      providers: [
+        { name: "a", priority: 1, create: () => a, credentialRef: "KEY_A" },
+        { name: "b", priority: 2, create: () => b, credentialRef: "KEY_B" },
+        { name: "c", priority: 3, create: () => c, credentialRef: "KEY_C" },
+      ],
+      maxRetries: 0,
+      retryBackoffMs: 1,
+      audit,
+      run: "r1",
+      approveSwap: async () => true,
+      moveAccount: (entry) => {
+        if (entry.name === "b") throw new AccountLockedError("KEY_B", holder);
+        moved.push(entry.name);
+      },
+    });
+
+    const out = await fb.complete(req);
+    expect(out.provider).toBe("c");
+    expect(calls).toEqual(["a", "c"]);
+    expect(moved).toEqual(["c"]);
+    expect(audit.readAll().some((e) => e.tipo === "provider.fallback_skipped")).toBe(true);
   });
 });

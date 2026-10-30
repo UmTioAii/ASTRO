@@ -23,6 +23,10 @@ export interface AgentNode {
   provider?: string;
   credentialRef?: string;
   profile?: string;
+  /** Identidade original do `created`; o resume compara com a config (não com o swap runtime). */
+  originModel?: string;
+  originProvider?: string;
+  originCredentialRef?: string;
   createdSeq: number;
   destroyedSeq?: number;
   reason?: string;
@@ -80,6 +84,9 @@ export function rebuildAgentTree(ledger: Ledger, run: string): AgentTree {
         ...(event.provider === undefined ? {} : { provider: event.provider }),
         ...(event.credentialRef === undefined ? {} : { credentialRef: event.credentialRef }),
         ...(event.profile === undefined ? {} : { profile: event.profile }),
+        ...(event.model === undefined ? {} : { originModel: event.model }),
+        ...(event.provider === undefined ? {} : { originProvider: event.provider }),
+        ...(event.provider === undefined ? {} : { originCredentialRef: event.credentialRef }),
         createdSeq: event.seq,
       });
       continue;
@@ -166,7 +173,16 @@ export function planResume(ledger: Ledger, run: string): ResumePlan {
     : tree.nodes.find((node) => node.agent_id === lastEvent.agent_id);
   const agent = tree.active ?? stateAgent ?? lastTouched;
   if (agent === undefined) throw new ReplayIncompleteError(`run "${run}" sem agente para retomar; replay incompleto`);
-  return { run, state: last?.state ?? "interrupted", tree, agent };
+  // Um swap de runtime (profile/C6) grava `identity`; a config continua sendo a
+  // do `created`. A retomada reabre o agente no primário, então valida contra a
+  // identidade original — nunca contra o destino do fallback.
+  const resumeAgent: AgentNode = { ...agent };
+  if (agent.originModel !== undefined) resumeAgent.model = agent.originModel;
+  if (agent.originProvider !== undefined) {
+    resumeAgent.provider = agent.originProvider;
+    resumeAgent.credentialRef = agent.originCredentialRef;
+  }
+  return { run, state: last?.state ?? "interrupted", tree, agent: resumeAgent };
 }
 
 /**

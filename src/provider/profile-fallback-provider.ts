@@ -1,6 +1,7 @@
 /** Fallback por profile (F-31, ADR-0007): reusa a política F-01/D-14; ordem declarada, sem repetir profile. */
 import type { Auditor } from "../audit";
 import { isAbortError } from "../abort";
+import { AccountLockedError } from "../agent-lock";
 import { streamStarted } from "./types";
 import { SwapDeniedError, type SwapApprover, type SwapRequest } from "../approval";
 import { DEFAULT_LIMITS, errorPolicy } from "./policy";
@@ -11,6 +12,10 @@ export interface ProfileChainEntry {
   model: string;
   provider: string;
   fallback: string[];
+  /** Credencial do profile (nome/caminho/kind), usada no lock de destino (A7). */
+  credentialRef?: string;
+  /** Conta exclusiva do profile; usada para validar o sticky do agente (A4). */
+  accountRef?: string;
   create: () => Provider;
 }
 
@@ -21,6 +26,12 @@ export interface ProfileFallbackProviderOptions {
   run?: string;
   /** Gate de aprovação (F-19): obrigatório no runtime; ausente = sem gate (componente interno). */
   approveSwap?: SwapApprover;
+  /** Move o lock da conta para o profile de destino (A7); lança AccountLockedError se ocupada. */
+  moveAccount?: (entry: ProfileChainEntry, reason: ErrorClass) => void;
+  /** Conta que o agente corrente detém; valida o sticky entre agentes (A4). */
+  currentAccount?: () => string | undefined;
+  /** Pré-checagem de conta livre (A7) para não pedir aprovação de destino ocupado. */
+  canUseAccount?: (entry: ProfileChainEntry) => boolean;
   /** Nome do agente corrente no multi-agent (atribui swap.* corretamente). */
   agentName?: () => string;
 }
@@ -33,7 +44,12 @@ export class ProfileFallbackProvider implements Provider {
   readonly #audit?: Auditor;
   readonly #run?: string;
   readonly #approveSwap?: SwapApprover;
+  readonly #moveAccount?: (entry: ProfileChainEntry, reason: ErrorClass) => void;
+  readonly #currentAccount?: () => string | undefined;
+  readonly #canUseAccount?: (entry: ProfileChainEntry) => boolean;
   readonly #agentName?: () => string;
+  /** Profile que atendeu por último nesta execução: não volta ao primário a cada step. */
+  readonly #activeProfile = new Map<string, { profile: string; account?: string }>();
 
   constructor(opts: ProfileFallbackProviderOptions) {
     this.#base = opts.base;
@@ -41,6 +57,9 @@ export class ProfileFallbackProvider implements Provider {
     this.#audit = opts.audit;
     this.#run = opts.run;
     this.#approveSwap = opts.approveSwap;
+    this.#moveAccount = opts.moveAccount;
+    this.#currentAccount = opts.currentAccount;
+    this.#canUseAccount = opts.canUseAccount;
     this.#agentName = opts.agentName;
   }
 
@@ -53,22 +72,69 @@ export class ProfileFallbackProvider implements Provider {
     }
 
     const chain = this.#flatten(start);
+    // Depois de uma troca, o run continua no profile que atendeu; voltar ao
+    // primário a cada step usaria uma conta sem o lock (A4/A7).
+    const stickyKey = `${this.#agentName?.() ?? ""}::${requested}`;
+    const sticky = this.#activeProfile.get(stickyKey);
+    const stickyIndex = sticky === undefined
+      ? -1
+      : chain.findIndex((entry) => entry.name === sticky.profile);
+    const currentAccount = this.#currentAccount?.();
+    const stickyEntry = stickyIndex > 0 ? chain[stickyIndex] : undefined;
+    // O sticky guarda a conta que REALMENTE atendeu (pode ser o fallback C6 do
+    // profile); ele só vale enquanto o agente detém essa conta.
+    const stickyMatches = stickyEntry !== undefined && sticky !== undefined &&
+      (sticky.account === undefined || currentAccount === undefined || sticky.account === currentAccount);
+    const effectiveChain = stickyMatches ? chain.slice(stickyIndex) : chain;
     const fallbacks: FallbackRecord[] = [];
     let lastError: unknown;
     let lastReason: ErrorClass = "invalid_request";
-    for (let i = 0; i < chain.length; i++) {
-      const entry = chain[i]!;
-      if (i > 0 && this.#approveSwap !== undefined) {
-        const fromEntry = chain[i - 1]!;
-        const request: SwapRequest = {
-          run: this.#run ?? "",
-          ...(this.#agentName === undefined ? {} : { agent: this.#agentName() }),
-          from: { provider: fromEntry.provider, model: fromEntry.model, profile: fromEntry.name },
-          to: { provider: entry.provider, model: entry.model, profile: entry.name },
-          reason: lastReason,
-        };
-        if (!(await this.#approveSwap(request))) throw new SwapDeniedError(request, "denied");
+    /** Último profile efetivamente tentado (destinos ocupados não contam). */
+    let previousIndex = -1;
+    for (let i = 0; i < effectiveChain.length; i++) {
+      const entry = effectiveChain[i]!;
+      if (previousIndex >= 0) {
+        const fromEntry = effectiveChain[previousIndex]!;
+        if (this.#canUseAccount !== undefined && !this.#canUseAccount(entry)) {
+          this.#log("profile.fallback_skipped", {
+            profile: entry.name,
+            provider: entry.provider,
+            reason: lastReason,
+            errorClass: "account_locked",
+          });
+          continue;
+        }
+        if (this.#approveSwap !== undefined) {
+          const request: SwapRequest = {
+            run: this.#run ?? "",
+            ...(this.#agentName === undefined ? {} : { agent: this.#agentName() }),
+            from: { provider: fromEntry.provider, model: fromEntry.model, profile: fromEntry.name },
+            to: { provider: entry.provider, model: entry.model, profile: entry.name },
+            reason: lastReason,
+          };
+          if (!(await this.#approveSwap(request))) throw new SwapDeniedError(request, "denied");
+        }
+        // A7: destino precisa de conta livre; ocupado é pulado sem tentar.
+        if (this.#moveAccount !== undefined) {
+          try {
+            this.#moveAccount(entry, lastReason);
+          } catch (error) {
+            if (error instanceof AccountLockedError) {
+              this.#log("profile.fallback_skipped", {
+                profile: entry.name,
+                provider: entry.provider,
+                reason: lastReason,
+                errorClass: "account_locked",
+              });
+              continue;
+            }
+            throw error;
+          }
+        }
+        this.#hop(fallbacks, fromEntry, entry, lastReason);
       }
+      previousIndex = i;
+
       let provider: Provider;
       try {
         provider = entry.create();
@@ -77,13 +143,17 @@ export class ProfileFallbackProvider implements Provider {
         lastError = error;
         lastReason = "invalid_request";
         this.#log("profile.failure", { profile: entry.name, provider: entry.provider, errorClass: "invalid_request" });
-        this.#hop(fallbacks, chain, i, "invalid_request");
         continue;
       }
       let attempt: CompletionRequest | undefined;
       try {
         attempt = { ...req, model: entry.model };
         const response = await provider.complete(attempt, signal);
+        const servedAccount = this.#currentAccount?.();
+        this.#activeProfile.set(stickyKey, {
+          profile: entry.name,
+          ...(servedAccount === undefined ? {} : { account: servedAccount }),
+        });
         return { ...response, provider: response.provider ?? entry.provider, model: response.model ?? entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
         if (isAbortError(error, signal)) throw error;
@@ -97,17 +167,13 @@ export class ProfileFallbackProvider implements Provider {
         // Erro não classificado vem da fábrica/config (C6); a política abortaria
         // `invalid_request`, mas aqui ele é pulado como no C6.
         if (error instanceof ProviderError && errorPolicy(errorClass, EXHAUSTED_ATTEMPT) === "abort") throw error;
-        this.#hop(fallbacks, chain, i, errorClass);
       }
     }
     throw lastError;
   }
 
   /** Registra a troca para o próximo profile, quando existe. */
-  #hop(fallbacks: FallbackRecord[], chain: ProfileChainEntry[], index: number, reason: ErrorClass): void {
-    const from = chain[index]!;
-    const to = chain[index + 1];
-    if (to === undefined) return;
+  #hop(fallbacks: FallbackRecord[], from: ProfileChainEntry, to: ProfileChainEntry, reason: ErrorClass): void {
     const record: FallbackRecord = { profile: from.name, from_provider: from.provider, to_provider: to.provider, reason };
     fallbacks.push(record);
     this.#log("profile.fallback", { ...record });
@@ -130,7 +196,7 @@ export class ProfileFallbackProvider implements Provider {
     return out;
   }
 
-  #log(tipo: "profile.failure" | "profile.fallback", payload: Record<string, unknown>): void {
+  #log(tipo: "profile.failure" | "profile.fallback" | "profile.fallback_skipped", payload: Record<string, unknown>): void {
     if (this.#audit === undefined || this.#run === undefined) return;
     this.#audit.append({ run: this.#run, tipo, payload });
   }

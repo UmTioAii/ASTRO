@@ -10,6 +10,7 @@ import {
   recoverCrashedAgents,
   recoverDeadAgentLocks,
   releaseAgentLock,
+  moveAgentLock,
 } from "../src/agent-lock";
 import { Auditor } from "../src/audit";
 import { Ledger } from "../src/ledger";
@@ -344,5 +345,60 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
       run: "r1", agent_id: "planner", reason: "crash_recovered", pid: 6001,
     })).toBe(false);
     expect(activeLocks(ledger)[0]!.pid).toBe(process.pid);
+  });
+
+  test("mover a conta troca o dono, libera a antiga e grava identity/audit (A7)", () => {
+    const { ledger, audit } = setup();
+    acquireAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", session_id: "r1", provider: "nvidia", credentialRef: "A_KEY",
+    });
+
+    const moved = moveAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", provider: "openrouter", model: "m2", credentialRef: "B_KEY", profile: "fast", reason: "outage",
+    });
+    expect(moved.accountRef).toBe("B_KEY");
+    expect(activeLocks(ledger)[0]).toMatchObject({
+      accountRef: "B_KEY", provider: "openrouter", model: "m2", profile: "fast",
+    });
+    const identity = ledger.readAllEntries().find((e) => e.kind === "agent" && e.event === "identity");
+    expect(identity).toMatchObject({ provider: "openrouter", credentialRef: "B_KEY", reason: "outage" });
+    expect(audit.readAll().find((e) => e.tipo === "agent.lock.moved")?.payload).toMatchObject({
+      from: "A_KEY", to: "B_KEY", profile: "fast", reason: "outage",
+    });
+
+    // A conta antiga ficou livre para outro agente.
+    expect(() => acquireAgentLock(ledger, audit, {
+      run: "r2", agent_id: "coder", session_id: "r2", provider: "nvidia", credentialRef: "A_KEY",
+    })).not.toThrow();
+  });
+
+  test("mover para conta ocupada falha e preserva o lock atual", () => {
+    const { ledger, audit } = setup();
+    acquireAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", session_id: "r1", provider: "nvidia", credentialRef: "A_KEY",
+    });
+    acquireAgentLock(ledger, audit, {
+      run: "r2", agent_id: "coder", session_id: "r2", provider: "openrouter", credentialRef: "B_KEY",
+    });
+
+    expect(() => moveAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", provider: "openrouter", model: "m2", credentialRef: "B_KEY", reason: "outage",
+    })).toThrow(AccountLockedError);
+    expect(activeLocks(ledger).find((l) => l.run === "r1")?.accountRef).toBe("A_KEY");
+  });
+
+  test("mover para a mesma conta/modelo é no-op e agente inativo falha", () => {
+    const { ledger, audit } = setup();
+    acquireAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", session_id: "r1", provider: "nvidia", model: "m1", credentialRef: "A_KEY",
+    });
+    const before = ledger.readAllEntries().length;
+    moveAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", provider: "nvidia", model: "m1", credentialRef: "A_KEY", reason: "same",
+    });
+    expect(ledger.readAllEntries()).toHaveLength(before); // sem identity/audit
+    expect(() => moveAgentLock(ledger, audit, {
+      run: "r1", agent_id: "ghost", provider: "nvidia", model: "m1", credentialRef: "A_KEY", reason: "x",
+    })).toThrow(/não está ativo/);
   });
 });

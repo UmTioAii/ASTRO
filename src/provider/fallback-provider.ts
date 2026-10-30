@@ -8,10 +8,11 @@
  */
 import type { Auditor } from "../audit";
 import { isAbortError } from "../abort";
+import { AccountLockedError } from "../agent-lock";
 import { markProviderFailure, markProviderSuccess } from "./health-state";
 import { streamStarted } from "./types";
 import { SwapDeniedError, type SwapApprover, type SwapRequest } from "../approval";
-import { ProviderError, type CompletionRequest, type CompletionResponse, type Provider } from "./types";
+import { ProviderError, type CompletionRequest, type CompletionResponse, type ErrorClass, type Provider } from "./types";
 
 const RETRYABLE: ReadonlySet<string> = new Set(["transient_rate_limit", "outage"]);
 /** Prioridade padrão quando o provider não declara (D-15). */
@@ -20,6 +21,10 @@ export const DEFAULT_PRIORITY = 100;
 export interface FallbackChainEntry {
   name: string;
   priority: number;
+  /** Credencial do provider, usada no lock de destino (A7); ausente em keyless. */
+  credentialRef?: string;
+  /** Conta exclusiva do provider; usada para validar o sticky do agente (A4). */
+  accountRef?: string;
   /** Fábrica preguiçosa: credenciais só são resolvidas quando o provider entra na cadeia. */
   create: () => Provider;
 }
@@ -36,6 +41,12 @@ export interface FallbackProviderOptions {
   profile?: string;
   /** Gate de aprovação (F-19): obrigatório no runtime; ausente = sem gate (componente interno). */
   approveSwap?: SwapApprover;
+  /** Move o lock para a conta do provider de destino (A7); lança AccountLockedError se ocupada. */
+  moveAccount?: (entry: FallbackChainEntry, reason: ErrorClass) => void;
+  /** Conta que o agente corrente detém; valida o sticky entre agentes (A4). */
+  currentAccount?: () => string | undefined;
+  /** Pré-checagem de conta livre (A7) para não pedir aprovação de destino ocupado. */
+  canUseAccount?: (entry: FallbackChainEntry) => boolean;
   /** Nome do agente corrente no multi-agent (atribui swap.* corretamente). */
   agentName?: () => string;
 }
@@ -50,7 +61,12 @@ export class FallbackProvider implements Provider {
   readonly #run?: string;
   readonly #profile?: string;
   readonly #approveSwap?: SwapApprover;
+  readonly #moveAccount?: (entry: FallbackChainEntry, reason: ErrorClass) => void;
+  readonly #currentAccount?: () => string | undefined;
+  readonly #canUseAccount?: (entry: FallbackChainEntry) => boolean;
   readonly #agentName?: () => string;
+  /** Provider que atendeu por último, por agente (não vaza entre handoffs). */
+  readonly #activeByAgent = new Map<string, { provider: string; account?: string }>();
 
   constructor(opts: FallbackProviderOptions) {
     this.#chain = [...opts.providers].sort((a, b) => a.priority - b.priority);
@@ -60,14 +76,41 @@ export class FallbackProvider implements Provider {
     this.#run = opts.run;
     this.#profile = opts.profile;
     this.#approveSwap = opts.approveSwap;
+    this.#moveAccount = opts.moveAccount;
+    this.#currentAccount = opts.currentAccount;
+    this.#canUseAccount = opts.canUseAccount;
     this.#agentName = opts.agentName;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     let lastError: unknown;
     let previous: string | undefined;
-    let previousReason = "error";
-    for (const entry of this.#chain) {
+    let previousReason: ErrorClass = "invalid_request";
+    const agentKey = this.#agentName?.() ?? "";
+    const sticky = this.#activeByAgent.get(agentKey);
+    const stickyIndex = sticky === undefined
+      ? -1
+      : this.#chain.findIndex((entry) => entry.name === sticky.provider);
+    const currentAccount = this.#currentAccount?.();
+    const stickyEntry = stickyIndex > 0 ? this.#chain[stickyIndex] : undefined;
+    const stickyMatches = stickyEntry !== undefined && sticky !== undefined &&
+      (sticky.account === undefined || currentAccount === undefined || sticky.account === currentAccount);
+    const chain = stickyMatches ? this.#chain.slice(stickyIndex) : this.#chain;
+    for (const entry of chain) {
+      if (previous === undefined && this.#currentAccount !== undefined && entry.accountRef !== undefined) {
+        const current = this.#currentAccount();
+        if (current !== undefined && entry.accountRef !== current) {
+          throw new ProviderError("invalid_request", `conta do agente (${current}) diverge do provider ${entry.name} (${entry.accountRef})`);
+        }
+      }
+      if (previous !== undefined && this.#canUseAccount !== undefined && !this.#canUseAccount(entry)) {
+        this.#log("provider.fallback_skipped", {
+          provider: entry.name,
+          reason: previousReason,
+          errorClass: "account_locked",
+        });
+        continue;
+      }
       if (previous !== undefined && this.#approveSwap !== undefined) {
         const request: SwapRequest = {
           run: this.#run ?? "",
@@ -77,6 +120,21 @@ export class FallbackProvider implements Provider {
           reason: previousReason,
         };
         if (!(await this.#approveSwap(request))) throw new SwapDeniedError(request, "denied");
+      }
+      if (previous !== undefined && this.#moveAccount !== undefined) {
+        try {
+          this.#moveAccount(entry, previousReason);
+        } catch (error) {
+          if (error instanceof AccountLockedError) {
+            this.#log("provider.fallback_skipped", {
+              provider: entry.name,
+              reason: previousReason,
+              errorClass: "account_locked",
+            });
+            continue;
+          }
+          throw error;
+        }
       }
       let provider: Provider;
       try {
@@ -90,13 +148,18 @@ export class FallbackProvider implements Provider {
         previousReason = "invalid_request";
         continue;
       }
-      let lastClass = "error";
+      let lastClass: ErrorClass = "invalid_request";
       for (let attempt = 1; attempt <= this.#maxRetries + 1; attempt++) {
         const startedAt = Date.now();
         try {
           const response = await provider.complete(req, signal);
           this.#log("provider.success", { provider: entry.name, latencyMs: Date.now() - startedAt, attempt });
           markProviderSuccess(entry.name);
+          const servedAccount = this.#currentAccount?.();
+          this.#activeByAgent.set(agentKey, {
+            provider: entry.name,
+            ...(servedAccount === undefined ? {} : { account: servedAccount }),
+          });
           return { ...response, provider: entry.name, model: response.model ?? req.model };
         } catch (error) {
           if (isAbortError(error, signal)) throw error;
@@ -121,7 +184,7 @@ export class FallbackProvider implements Provider {
     throw lastError;
   }
 
-  #log(tipo: "provider.success" | "provider.failure", payload: Record<string, unknown>): void {
+  #log(tipo: "provider.success" | "provider.failure" | "provider.fallback_skipped", payload: Record<string, unknown>): void {
     if (this.#audit === undefined || this.#run === undefined) return;
     this.#audit.append({
       run: this.#run,
