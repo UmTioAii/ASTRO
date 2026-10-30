@@ -49,7 +49,7 @@ export class ProfileFallbackProvider implements Provider {
   readonly #canUseAccount?: (entry: ProfileChainEntry) => boolean;
   readonly #agentName?: () => string;
   /** Profile que atendeu por último nesta execução: não volta ao primário a cada step. */
-  readonly #activeProfile = new Map<string, string>();
+  readonly #activeProfile = new Map<string, { profile: string; account?: string }>();
 
   constructor(opts: ProfileFallbackProviderOptions) {
     this.#base = opts.base;
@@ -75,13 +75,15 @@ export class ProfileFallbackProvider implements Provider {
     // Depois de uma troca, o run continua no profile que atendeu; voltar ao
     // primário a cada step usaria uma conta sem o lock (A4/A7).
     const sticky = this.#activeProfile.get(requested);
-    const stickyIndex = sticky === undefined ? -1 : chain.findIndex((entry) => entry.name === sticky);
+    const stickyIndex = sticky === undefined
+      ? -1
+      : chain.findIndex((entry) => entry.name === sticky.profile);
     const currentAccount = this.#currentAccount?.();
     const stickyEntry = stickyIndex > 0 ? chain[stickyIndex] : undefined;
-    // O sticky só vale se a conta que o agente detém é a do profile sticky;
-    // em um handoff o agente seguinte adquiriu a conta primária.
-    const stickyMatches = stickyEntry !== undefined &&
-      (stickyEntry.accountRef === undefined || currentAccount === undefined || stickyEntry.accountRef === currentAccount);
+    // O sticky guarda a conta que REALMENTE atendeu (pode ser o fallback C6 do
+    // profile); ele só vale enquanto o agente detém essa conta.
+    const stickyMatches = stickyEntry !== undefined && sticky !== undefined &&
+      (sticky.account === undefined || currentAccount === undefined || sticky.account === currentAccount);
     const effectiveChain = stickyMatches ? chain.slice(stickyIndex) : chain;
     const fallbacks: FallbackRecord[] = [];
     let lastError: unknown;
@@ -146,7 +148,11 @@ export class ProfileFallbackProvider implements Provider {
       try {
         attempt = { ...req, model: entry.model };
         const response = await provider.complete(attempt, signal);
-        this.#activeProfile.set(requested, entry.name);
+        const servedAccount = this.#currentAccount?.();
+        this.#activeProfile.set(requested, {
+          profile: entry.name,
+          ...(servedAccount === undefined ? {} : { account: servedAccount }),
+        });
         return { ...response, provider: response.provider ?? entry.provider, model: response.model ?? entry.model, ...(fallbacks.length === 0 ? {} : { fallbacks }) };
       } catch (error) {
         if (isAbortError(error, signal)) throw error;

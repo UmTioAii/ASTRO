@@ -290,6 +290,29 @@ describe("ProfileFallbackProvider (F-31)", () => {
     expect(calls).toEqual(["p1", "p2", "p2", "p1"]);
   });
 
+  test("sticky de profile acompanha a conta efetiva servida pelo C6", async () => {
+    let current = "KEY_A";
+    const calls: string[] = [];
+    const fb = new ProfileFallbackProvider({
+      base: { complete: async () => resp("base") },
+      profiles: [
+        entry("p1", "a", "m1", ["p2"], async () => { calls.push("p1"); throw new ProviderError("outage", "a"); }, "KEY_A", "KEY_A"),
+        entry("p2", "b", "m2", [], async () => {
+          calls.push("p2");
+          current = "KEY_C"; // C6 de p2 moveu de KEY_B para KEY_C
+          return resp("p2");
+        }, "KEY_B", "KEY_B"),
+      ],
+      currentAccount: () => current,
+      moveAccount: (target) => { if (target.name === "p2") current = "KEY_B"; },
+    });
+
+    expect((await fb.complete(req("p1"))).content).toBe("p2");
+    expect(current).toBe("KEY_C");
+    expect((await fb.complete(req("p1"))).content).toBe("p2"); // sticky pela conta KEY_C
+    expect(calls).toEqual(["p1", "p2", "p2"]);
+  });
+
   test("destino ocupado é pulado antes do gate de aprovação (A7)", async () => {
     const calls: string[] = [];
     const approvals: string[] = [];
