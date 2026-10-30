@@ -80,7 +80,7 @@ export function createShellRunner(opts: ShellOptions): ShellRunner {
           {
             cwd: opts.cwd, run: randomUUID(), agent: "default",
             env: opts.env ?? process.env, secretEnvNames,
-            // Mesmo cap do run: `!cmd` também entra no contexto da TUI.
+            // Mesmo cap do run (default quando o agent usa profile de outro modelo).
             outputLimitTokens: effectiveOutputCap(config.outputLimit, modelEntry?.context),
             ...(signal === undefined ? {} : { signal }),
           },

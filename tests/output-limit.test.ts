@@ -91,6 +91,13 @@ describe("limite de saída por tool (S-16, CMP-10)", () => {
     expect(a.artifactPath).not.toBe(c.artifactPath);
   });
 
+  test("cap minúsculo não duplica head e tail", () => {
+    const content = "ABCDEFGHIJ".repeat(10); // 100 chars
+    const result = limitToolOutput(content, { capTokens: 10, toolCallId: "c5", artifactDir: dir() });
+    expect(result.truncated).toBe(true);
+    expect((result.output.match(/ABCDEFGHIJ/g) ?? []).length).toBeLessThanOrEqual(10);
+  });
+
   test("call id com ':' ou '/' gera artefato válido em qualquer SO", () => {
     const result = limitToolOutput(bigOutput(), { capTokens: 50, toolCallId: "a:b/c", artifactDir: dir() });
     expect(result.truncated).toBe(true);

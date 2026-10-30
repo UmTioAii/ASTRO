@@ -185,6 +185,9 @@ export class ToolExecutor {
   private limitOutput(ctx: ToolContext, call: ToolCall, result: ToolResult): ToolResult {
     const capTokens = ctx.outputLimitTokens;
     if (capTokens === undefined || result.output.length === 0) return result;
+    // O artefato de handoff é parseado pela sessão antes de virar mensagem e já
+    // é compactado (compactDraft); truncar aqui perderia o handoff em silêncio.
+    if (call.name === "handoff") return result;
     const limited = limitToolOutput(result.output, {
       capTokens,
       toolCallId: call.id,

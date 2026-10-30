@@ -9,10 +9,10 @@ import type { Tool, ToolResult } from "../src/tools/types";
 
 const big = (): string => Array.from({ length: 400 }, (_, index) => `linha ${index + 1} ${"y".repeat(80)}`).join("\n");
 
-function fakeTool(output: string): Tool {
+function fakeTool(output: string, name = "fake"): Tool {
   return {
     manifest: {
-      name: "fake", description: "fake", parameters: { type: "object" },
+      name, description: "fake", parameters: { type: "object" },
       risk: "low", permission: "read", timeoutMs: 1000, retryable: false, idempotent: true, sideEffects: "none",
     },
     async execute(): Promise<ToolResult> {
@@ -52,8 +52,20 @@ describe("limite de saída no executor e na sessão (CMP-10)", () => {
     expect(result.output).toBe("ok");
   });
 
-  test("sessão sanitiza a saída da tool antes de entrar no contexto (I-03)", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "astro-output-session-secret-"));
+  test("resultado de handoff não é truncado antes do parse da sessão", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-output-handoff-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const payload = JSON.stringify({ to: "coder", task: "t", objective: "o", decisions: ["d".repeat(2000)] });
+    const executor = new ToolExecutor({ tools: [fakeTool(payload, "handoff")], allow: ["handoff"], audit });
+
+    const result = await executor.run(
+      { cwd, run: "r1", agent: "planner", outputLimitTokens: 10 },
+      { id: "c1", name: "handoff", arguments: "{}" },
+    );
+    expect(result.output).toBe(payload);
+  });
+
+  test("sessão sanitiza a saída da tool antes de entrar no contexto (I-03)", async () => {    const cwd = mkdtempSync(join(tmpdir(), "astro-output-session-secret-"));
     const secret = "sk-live-0123456789abcdef";
     writeFileSync(join(cwd, "secret.txt"), `valor: ${secret}\n`);
     const bodies: Array<{ messages?: Array<{ role?: string; content?: string }> }> = [];

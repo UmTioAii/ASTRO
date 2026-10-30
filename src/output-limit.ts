@@ -82,10 +82,11 @@ export function limitToolOutput(output: string, opts: OutputLimitOptions): Limit
     written = false;
   }
 
-  // Cabeçalho, marcador e origem são aditivos ao orçamento (CMP-10 pedia
-  // head+tail+referência); desconta-se uma reserva fixa para não estourar o cap
-  // de forma grosseira em saídas muito grandes.
-  const chars = Math.max(200, opts.capTokens * 4 - 512);
+  // Cabeçalho, marcador e origem são aditivos ao orçamento; desconta-se uma
+  // reserva fixa e nunca se pede mais do que o conteúdo tem (evita repetir
+  // head/tail inteiros em caps minúsculos).
+  const budget = Math.max(200, opts.capTokens * 4 - 512);
+  const chars = Math.min(sanitized.length - 1, budget);
   const headChars = Math.floor(chars / 2);
   const tailChars = chars - headChars;
   const head = sanitized.slice(0, headChars);

@@ -47,7 +47,7 @@ function fileLines(content: string): string[] {
 function page(lines: string[], offset: number | undefined, capTokens: number | undefined): string {
   const total = lines.length;
   const start = offset ?? 1;
-  if (total === 0) return "linhas 1-0 de 0";
+  if (total === 0) return "linhas 0-0 de 0";
   if (start > total) return `fim do arquivo (${total} linhas)`;
 
   let size = PAGE_LINES;

@@ -64,7 +64,7 @@ describe("read_file paginado (S-16, CMP-11)", () => {
     const cwd = mkdtempSync(join(tmpdir(), "astro-read-edge-"));
     writeFileSync(join(cwd, "empty.txt"), "");
     const empty = await readFileTool.execute({ path: "empty.txt" }, ctx(cwd, 8000));
-    expect(empty.output).toBe("linhas 1-0 de 0");
+    expect(empty.output).toBe("linhas 0-0 de 0");
 
     writeFileSync(join(cwd, "crlf.txt"), "a\r\nb\r\n");
     expect((await readFileTool.execute({ path: "crlf.txt" }, ctx(cwd, 8000))).output)
