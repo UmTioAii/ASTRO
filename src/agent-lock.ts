@@ -59,6 +59,10 @@ export interface ReleaseAgentLockOptions {
   agent_id: string;
   session_id?: string;
   reason: string;
+  /** Dono esperado do lock; se divergir, não libera (snapshot de recuperação). */
+  pid?: number;
+  /** `seq` do `created` esperado; prova que o lock é o mesmo do snapshot. */
+  seq?: number;
 }
 
 /** Identidade da conta: credencial nomeada ou o provider quando não há chave. */
@@ -229,7 +233,7 @@ export function acquireAgentLock(
   );
 }
 
-/** Libera a conta do agente; `false` quando o agente já não está ativo. */
+/** Libera a conta do agente; `false` quando já não está ativo ou o dono mudou. */
 export function releaseAgentLock(
   ledger: Ledger,
   audit: Auditor,
@@ -238,6 +242,10 @@ export function releaseAgentLock(
   return ledger.withFileLock(() => {
     const lock = activeLocks(ledger).find((l) => sameAgent(l, opts.run, opts.agent_id));
     if (lock === undefined) return false;
+    // Recoveries usam snapshot: outro processo pode ter liberado e re-adquirido
+    // entre a leitura e a escrita. Só destrói o lock que foi observado.
+    if (opts.pid !== undefined && lock.pid !== opts.pid) return false;
+    if (opts.seq !== undefined && lock.seq !== opts.seq) return false;
     ledger.recordAgentDestroyed({
       run: opts.run,
       agent_id: opts.agent_id,
@@ -279,6 +287,8 @@ export function recoverDeadAgentLocks(
       agent_id: lock.agent_id,
       session_id: lock.session_id,
       reason: "crash_recovered",
+      ...(lock.pid === undefined ? {} : { pid: lock.pid }),
+      seq: lock.seq,
     });
   }
   return dead;
@@ -307,6 +317,8 @@ export function recoverCrashedAgents(
       agent_id: lock.agent_id,
       session_id: lock.session_id,
       reason: "crash_recovered",
+      ...(lock.pid === undefined ? {} : { pid: lock.pid }),
+      seq: lock.seq,
     });
   }
   return orphans;

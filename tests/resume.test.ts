@@ -95,6 +95,27 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(() => planResume(newLedger(), "r1")).toThrow(ReplayIncompleteError);
   });
 
+  test("planResume: handoff de volta usa o agente do run_state, não o último criado", () => {
+    const seed = (ledger: Ledger, withState: boolean): void => {
+      ledger.recordAgentCreated({ run: "r1", agent_id: "planner", session_id: "r1", model: "m1" });
+      ledger.recordAgentDestroyed({ run: "r1", agent_id: "planner", session_id: "r1", reason: "handoff" });
+      ledger.recordAgentCreated({ run: "r1", agent_id: "coder", parent_agent_id: "planner", session_id: "r1", model: "m2" });
+      ledger.recordAgentDestroyed({ run: "r1", agent_id: "coder", session_id: "r1", reason: "handoff" });
+      ledger.recordAgentCreated({ run: "r1", agent_id: "planner", parent_agent_id: "coder", session_id: "r1", model: "m1" });
+      ledger.recordAgentDestroyed({ run: "r1", agent_id: "planner", session_id: "r1", reason: "cancelled" });
+      if (withState) ledger.recordState("r1", "interrupted", { agent: "planner", reason: "cancelled" });
+    };
+
+    const withState = newLedger();
+    seed(withState, true);
+    expect(planResume(withState, "r1").agent.agent_id).toBe("planner");
+
+    // Sem run_state (crash duro): o último evento `agent` também é o planner reaberto.
+    const withoutState = newLedger();
+    seed(withoutState, false);
+    expect(planResume(withoutState, "r1").agent.agent_id).toBe("planner");
+  });
+
   test("cancelamento libera a conta; planResume retoma o último agente (F-06 + F-22)", async () => {
     const controller = new AbortController();
     const provider: Provider = { complete: async () => {

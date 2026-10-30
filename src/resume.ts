@@ -113,10 +113,19 @@ export function planResume(ledger: Ledger, run: string): ResumePlan {
   const last = ledger.lastState(run);
   if (last?.state === "completed") throw new ReplayIncompleteError(`run "${run}" já concluído; nada a retomar`);
   const tree = rebuildAgentTree(ledger, run);
-  // Run interrompido por erro/cancelamento já liberou o lock e fechou o agente;
-  // nesse caso a retomada recria o último agente da árvore. Crash duro sem
-  // `run_state` também cai aqui (estado tratado como interrupted).
-  const agent = tree.active ?? tree.nodes.at(-1);
+  // Run interrompido por erro/cancelamento já liberou o lock e fechou o agente.
+  // O alvo é o agente registrado no `run_state` (quem foi interrompido), não o
+  // último criado: em handoff de volta o nó reaberto mantém o createdSeq
+  // original. Sem `run_state`, vale o último evento `agent` do run (reapertura
+  // conta), que é onde o crash parou.
+  const stateAgent = last?.agent === undefined
+    ? undefined
+    : tree.nodes.find((node) => node.agent_id === last.agent);
+  const lastEvent = eventsOfRun(ledger, run).at(-1);
+  const lastTouched = lastEvent === undefined
+    ? undefined
+    : tree.nodes.find((node) => node.agent_id === lastEvent.agent_id);
+  const agent = tree.active ?? stateAgent ?? lastTouched;
   if (agent === undefined) throw new ReplayIncompleteError(`run "${run}" sem agente para retomar; replay incompleto`);
   return { run, state: last?.state ?? "interrupted", tree, agent };
 }

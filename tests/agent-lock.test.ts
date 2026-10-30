@@ -291,4 +291,39 @@ describe("lock exclusivo de conta por agente ativo (A4, PS-5)", () => {
     ).toThrow(AccountLockedError);
     expect(activeLocks(ledger)[0]!.accountRef).toBe("A_KEY");
   });
+
+  test("recuperação com snapshot antigo não libera lock re-adquirido por outro dono", () => {
+    const { ledger, audit } = setup();
+    const first = acquireAgentLock(ledger, audit, {
+      run: "r1",
+      agent_id: "planner",
+      session_id: "r1",
+      provider: "nvidia",
+      credentialRef: "A_KEY",
+      pid: 6001,
+    });
+    expect(releaseAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", reason: "crash_recovered", pid: 6001, seq: first.seq,
+    })).toBe(true);
+
+    const second = acquireAgentLock(ledger, audit, {
+      run: "r1",
+      agent_id: "planner",
+      session_id: "r1",
+      provider: "nvidia",
+      credentialRef: "A_KEY",
+      pid: process.pid,
+    });
+    expect(second.seq).not.toBe(first.seq);
+
+    // Snapshot velho: mesmo run+agente, dono/seq diferentes → não derruba.
+    expect(releaseAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", reason: "crash_recovered", pid: 6001, seq: first.seq,
+    })).toBe(false);
+    expect(activeLocks(ledger)).toHaveLength(1);
+    expect(releaseAgentLock(ledger, audit, {
+      run: "r1", agent_id: "planner", reason: "crash_recovered", pid: 6001,
+    })).toBe(false);
+    expect(activeLocks(ledger)[0]!.pid).toBe(process.pid);
+  });
 });

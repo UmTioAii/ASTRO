@@ -458,7 +458,8 @@ function lockReason(error: unknown, signal?: AbortSignal): string {
 /**
  * Libera a conta do agente quando o run termina em erro (A4): sem isso o
  * `agent.created` fica sem `destroyed` e o próximo run falha `account_locked`.
- * Falha na liberação não mascara o erro original; a varredura de órfãos cobre.
+ * Falha na liberação não mascara o erro original; a varredura de órfãos cobre
+ * processo morto (não uma falha de I/O no PID atual).
  */
 function releaseOnFailure(
   ledger: Ledger,
@@ -509,10 +510,19 @@ function ensureAgentCreated(
   });
 }
 
-/** Garante um `agent.destroyed` e libera o lock (só se ativo; ledger → audit, ADR-0008 A5). */
+/** Garante um `agent.destroyed` e libera o lock (só se ativo e nosso; ledger → audit, ADR-0008 A5). */
 function ensureAgentDestroyed(ledger: Ledger, audit: Auditor, run: string, agentId: string, reason: string): void {
-  if (!agentActive(ledger, run, agentId)) return;
-  releaseAgentLock(ledger, audit, { run, agent_id: agentId, reason });
+  const lock = findAgentLock(ledger, run, agentId);
+  if (lock === undefined) return;
+  // Lock de outro processo vivo não é nosso: a aquisição falhou e nada a liberar.
+  if (lock.pid !== undefined && lock.pid !== process.pid) return;
+  releaseAgentLock(ledger, audit, {
+    run,
+    agent_id: agentId,
+    reason,
+    ...(lock.pid === undefined ? {} : { pid: lock.pid }),
+    seq: lock.seq,
+  });
 }
 
 /** Opções para sessão multi-agent. */
