@@ -882,6 +882,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
         signal,
         ...(opts.call === undefined ? {} : { call: opts.call }),
+        ...(config.outputLimit === undefined ? {} : { outputLimit: config.outputLimit }),
         spawns,
       };
       result = await runMultiAgentSession(multiOpts, task);
@@ -927,6 +928,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           secretEnvNames,
           signal,
           ...(opts.call === undefined ? {} : { call: opts.call }),
+          ...(config.outputLimit === undefined ? {} : { outputLimit: config.outputLimit }),
         },
         task,
       );

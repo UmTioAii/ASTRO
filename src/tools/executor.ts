@@ -1,9 +1,17 @@
 import type { Auditor } from "../audit";
 import { callId } from "../call-id";
+import { limitToolOutput } from "../output-limit";
+import { join, relative } from "node:path";
 import type { ToolCall, ToolDef } from "../provider/types";
 import type { Tool, ToolContext, ToolResult } from "./types";
 
 const TIMEOUT = Symbol("timeout");
+
+/** Nome de diretório seguro para o run id (nunca escapa do cwd). */
+function safeRunDir(run: string): string {
+  const clean = run.replace(/[^A-Za-z0-9_.-]/g, "_").replace(/^\.+/, "_").slice(0, 64);
+  return clean.length === 0 ? "run" : clean;
+}
 
 function failure(message: string): ToolResult {
   return { output: message, isError: true };
@@ -164,12 +172,25 @@ export class ToolExecutor {
           `timeout: a tool "${call.name}" excedeu ${tool.manifest.timeoutMs}ms`,
         );
       }
-      return outcome;
+      return this.limitOutput(ctx, call, outcome);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return failure(`erro na tool "${call.name}": ${message}`);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  /** Cap de saída por tool (CMP-10): head+tail+origem, artefato em `.astro/outputs`. */
+  private limitOutput(ctx: ToolContext, call: ToolCall, result: ToolResult): ToolResult {
+    const capTokens = ctx.outputLimitTokens;
+    if (capTokens === undefined || result.output.length === 0) return result;
+    const limited = limitToolOutput(result.output, {
+      capTokens,
+      toolCallId: call.id,
+      artifactDir: join(ctx.cwd, ".astro", "outputs", safeRunDir(ctx.run)),
+      displayPath: (path) => relative(ctx.cwd, path),
+    });
+    return limited.truncated ? { ...result, output: limited.output } : result;
   }
 }

@@ -32,7 +32,7 @@ Status possíveis: `concluído`, `em andamento`, `planejado`, `bloqueado`.
 | F-08 | Estratégia de context overflow com contagem por provider (D-22) | em andamento | #136 | F-02, F-07 | T1 |
 | F-09 | Sanitização de conteúdo externo antes de logar e de entrar no contexto | concluído | #70 | — | C2, C3, F-11 |
 | F-10 | Manifesto estendido: `idempotent` e `sideEffects` (I-12) | concluído | #93 | F-03 | C1, C2, F-14, F-15, F-16 |
-| F-11 | Limites de saída por tool com metadados de truncamento | planejado | — | F-09 | F-14, F-15, C3 |
+| F-11 | Limites de saída por tool com metadados de truncamento | em andamento | #133 | F-09 | F-14, F-15, C3 |
 | F-12 | ADR de dependências de runtime | concluído | #63 | — | T2 |
 | F-14 | `git_status` e `git_diff` estruturadas | planejado | — | F-11 | C5, T3 |
 | F-15 | `run_tests` (fonte do gate de conclusão) | planejado | — | F-11 | C5 |

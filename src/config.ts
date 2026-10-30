@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
 import { PROTECTED_FORBIDDEN_ROOTS, type CallConfig, type EffortLevel, type ThinkingMode } from "./call-profile";
-import type { OutputLimitConfig } from "./output-limit";
+import { DEFAULT_OUTPUT_LIMIT, type OutputLimitConfig } from "./output-limit";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
 import { urlProblem } from "./url-safety";
@@ -1032,6 +1032,33 @@ function validateTools(value: unknown): ToolsConfig {
 }
 
 /**
+ * Valida `outputLimit` (S-16, CMP-10): `maxTokens` inteiro positivo e
+ * `shareOfWindow` em (0, 1]; cada campo ausente recebe o default.
+ */
+function validateOutputLimit(value: unknown): OutputLimitConfig {
+  if (value === undefined) return { ...DEFAULT_OUTPUT_LIMIT };
+  if (!isPlainObject(value)) fail('config inválida: "outputLimit" deve ser um objeto');
+  const raw = value as Record<string, unknown>;
+  for (const key of Object.keys(raw)) {
+    if (key !== "maxTokens" && key !== "shareOfWindow") {
+      fail(`config inválida: "outputLimit.${key}" desconhecido`);
+    }
+  }
+  const maxTokens = raw.maxTokens === undefined
+    ? DEFAULT_OUTPUT_LIMIT.maxTokens
+    : expectPositiveInteger(raw.maxTokens, "outputLimit.maxTokens");
+  let shareOfWindow = DEFAULT_OUTPUT_LIMIT.shareOfWindow;
+  if (raw.shareOfWindow !== undefined) {
+    const share = raw.shareOfWindow;
+    if (typeof share !== "number" || !Number.isFinite(share) || share <= 0 || share > 1) {
+      fail('config inválida: "outputLimit.shareOfWindow" deve ser um número em (0, 1]');
+    }
+    shareOfWindow = share;
+  }
+  return { maxTokens, shareOfWindow };
+}
+
+/**
  * Valida a configuração crua (tipicamente vinda de JSON) e aplica os defaults:
  * `status: "active"` por modelo e `quotaDomain: "default"` por provider.
  */
@@ -1177,7 +1204,7 @@ export function validateConfig(raw: unknown): AstroConfig {
 
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, ...(maxActive === undefined ? {} : { maxActive }), tools, telemetry, quota, cache, plugins, version, team, handoff, ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
+  return { providers, models, modelPool, agent, agents, ...(maxActive === undefined ? {} : { maxActive }), tools, telemetry, quota, cache, plugins, version, team, handoff, outputLimit: validateOutputLimit(root.outputLimit), ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */

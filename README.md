@@ -101,6 +101,8 @@ Model pools and agent profiles are also supported. A full example with three pro
 
 **Secrets never live in configuration files and are never logged.** OpenAI-compatible keys come only from the environment variable named by `credentialRef`. The `codex-oauth` provider reads a local credentials file (`credentialsPath`).
 
+Tool output is bounded: `outputLimit` (`{ "maxTokens": 8000, "shareOfWindow": 0.05 }` by default) caps each tool result at `min(maxTokens, shareOfWindow × model context)`. Oversized output is written to `.astro/outputs/<run>/` and the model receives the head, the tail and a source reference; `read_file` pages 350 lines with a 10-line overlap, and `grep` returns `{results, total, page, hasMore}` with 100 matches per page.
+
 | Variable | Required | Purpose |
 |---|---|---|
 | `<credentialRef>` (e.g. `NVIDIA_API_KEY`, `OPENROUTER_API_KEY`) | For OpenAI-compatible providers | Provider API key, named by your configuration. |
