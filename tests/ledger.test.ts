@@ -126,7 +126,7 @@ describe("schemaVersion (F-02, ADR-0002)", () => {
     const e = l.record(structuredClone(entry), undefined);
     expect(e.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(e.kind).toBe("usage");
-    expect(LEDGER_SCHEMA_VERSION).toBe(2);
+    expect(LEDGER_SCHEMA_VERSION).toBe(3);
   });
 
   test("entrada antiga sem schemaVersion ainda soma em total()", () => {
@@ -226,13 +226,13 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
         lvl: 2,
         effort: "high",
         thinking: "enabled",
-        "param.stripped": ["forbidden_param"],
+        "param.stripped": [{ name: "forbidden_param", reason: "forbidden" }],
       }, { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false });
 
       expect(e.lvl).toBe(2);
       expect(e.effort).toBe("high");
       expect(e.thinking).toBe("enabled");
-      expect(e["param.stripped"]).toEqual(["forbidden_param"]);
+      expect(e["param.stripped"]).toEqual([{ name: "forbidden_param", reason: "forbidden" }]);
       expect(e.kind).toBe("usage");
       expect(e.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     });
@@ -260,7 +260,7 @@ describe("novos kinds e campos de usage (S-05, #122)", () => {
         lvl: 1,
         effort: "low",
         thinking: "off",
-        "param.stripped": [secret],
+        "param.stripped": [{ name: secret, reason: "forbidden" }],
       }, undefined);
 
       const content = readFileSync(path, "utf8");

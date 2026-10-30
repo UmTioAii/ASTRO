@@ -7,7 +7,7 @@ import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./ha
 import { redactSecrets } from "./sanitize-external";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
-export const LEDGER_SCHEMA_VERSION = 2;
+export const LEDGER_SCHEMA_VERSION = 3;
 
 /** Timeout do lock de arquivo (F-26/A4); depois segue em melhor esforço ou falha fechado. */
 const LEDGER_LOCK_TIMEOUT_MS = 1_000;
@@ -63,7 +63,7 @@ export interface LedgerEntry {
   /** Modo de thinking (E2). Ausente em entradas legadas. */
   thinking?: string;
   /** Parâmetros proibidos removidos antes do envio (E8). Ausente em entradas legadas. */
-  "param.stripped"?: string[];
+  "param.stripped"?: Array<{ name: string; reason: string } | string>;
 }
 
 /** Estado de execução de um run gravado no ledger (F-02). */
@@ -245,7 +245,9 @@ export class Ledger {
     }
     const stripped = e["param.stripped"] === undefined
       ? undefined
-      : e["param.stripped"].map((s) => redactSecrets(s));
+      : e["param.stripped"].map((s) => typeof s === "string"
+        ? redactSecrets(s)
+        : { name: redactSecrets(s.name), reason: redactSecrets(s.reason) });
     const entry: LedgerEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
       kind: "usage",

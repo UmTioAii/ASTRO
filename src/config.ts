@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capability } from "./capabilities";
+import { PROTECTED_FORBIDDEN_ROOTS, type CallConfig, type EffortLevel, type ThinkingMode } from "./call-profile";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
 import { urlProblem } from "./url-safety";
@@ -66,6 +67,8 @@ export interface ModelConfig {
   price?: PriceConfig;
   /** Matriz de capability (F-07): chaves do vocabulário fechado; ausente = não tem. */
   capabilities?: Partial<Record<Capability, boolean>>;
+  /** Call profile (E1–E8): effort, thinking e parâmetros proibidos. */
+  call?: CallConfig;
 }
 
 /** Profile da model pool (F-27, ADR-0007): alias declarativo para um modelo de `models[]`. */
@@ -431,12 +434,97 @@ function validateCapabilities(value: unknown, field: string): Partial<Record<Cap
   return result;
 }
 
+const THINKING_MODES: ReadonlySet<string> = new Set(["toggle", "always", "adaptive", "none"]);
+const EFFORT_LEVELS: readonly EffortLevel[] = ["0", "1", "2", "3", "4"];
+const CALL_KEYS: ReadonlySet<string> = new Set(["thinking", "effort", "forbidden"]);
+const THINKING_KEYS: ReadonlySet<string> = new Set(["mode", "param", "on", "off"]);
+
+/** Valida `models[].call` (D-CFG1): non-discard em todo campo (E1–E8). */
+function validateCall(value: unknown, field: string): CallConfig {
+  const raw = expectObject(value, field);
+  for (const key of Object.keys(raw)) {
+    if (!CALL_KEYS.has(key)) fail(`config inválida: "${field}.${key}" desconhecido em call`);
+  }
+
+  let thinking: CallConfig["thinking"];
+  if (raw.thinking !== undefined) {
+    const f = `${field}.thinking`;
+    const t = expectObject(raw.thinking, f);
+    for (const key of Object.keys(t)) {
+      if (!THINKING_KEYS.has(key)) fail(`config inválida: "${f}.${key}" desconhecido em call.thinking`);
+    }
+    const mode = expectString(t.mode, `${f}.mode`);
+    if (!THINKING_MODES.has(mode)) {
+      fail(`config inválida: "${f}.mode" deve ser toggle, always, adaptive ou none`);
+    }
+    const param = expectString(t.param, `${f}.param`);
+    const on = t.on === undefined ? undefined : expectString(t.on, `${f}.on`);
+    const off = t.off === undefined ? undefined : expectString(t.off, `${f}.off`);
+    if (mode !== "none" && on === undefined) {
+      fail(`config inválida: "${f}.on" é obrigatório no modo "${mode}"`);
+    }
+    if (mode === "toggle" && off === undefined) {
+      fail(`config inválida: "${f}.off" é obrigatório no modo "toggle"`);
+    }
+    thinking = {
+      mode: mode as ThinkingMode,
+      param,
+      ...(on === undefined ? {} : { on }),
+      ...(off === undefined ? {} : { off }),
+    };
+  }
+
+  let effort: CallConfig["effort"];
+  if (raw.effort !== undefined) {
+    const f = `${field}.effort`;
+    const e = expectObject(raw.effort, f);
+    for (const key of Object.keys(e)) {
+      if (key !== "param" && key !== "map") fail(`config inválida: "${f}.${key}" desconhecido em call.effort`);
+    }
+    const param = expectString(e.param, `${f}.param`);
+    const mapRaw = expectObject(e.map, `${f}.map`);
+    for (const key of Object.keys(mapRaw)) {
+      if (!(EFFORT_LEVELS as readonly string[]).includes(key)) {
+        fail(`config inválida: "${f}.map.${key}" não é um nível de esforço (0..4)`);
+      }
+    }
+    const map = {} as Record<EffortLevel, string>;
+    for (const level of EFFORT_LEVELS) {
+      map[level] = expectString(mapRaw[level], `${f}.map.${level}`);
+    }
+    effort = { param, map };
+  }
+
+  let forbidden: string[] | undefined;
+  if (raw.forbidden !== undefined) {
+    if (!Array.isArray(raw.forbidden)) {
+      fail(`config inválida: "${field}.forbidden" deve ser uma lista de parâmetros`);
+    }
+    forbidden = raw.forbidden.map((item: unknown, index: number) =>
+      expectString(item, `${field}.forbidden[${index}]`));
+    const seen = new Set<string>();
+    for (const name of forbidden) {
+      if (seen.has(name)) fail(`config inválida: "${field}.forbidden" contém "${name}" duplicado`);
+      seen.add(name);
+      const root = name.split(".")[0]!;
+      if ((PROTECTED_FORBIDDEN_ROOTS as readonly string[]).includes(root)) {
+        fail(`config inválida: "${field}.forbidden" não pode remover "${root}"`);
+      }
+    }
+  }
+
+  return {
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(effort === undefined ? {} : { effort }),
+    ...(forbidden === undefined ? {} : { forbidden }),
+  };
+}
+
 function validateModel(value: unknown, index: number): ModelConfig {
   const field = `models[${index}]`;
   const raw = expectObject(value, field);
   const provider = expectString(raw.provider, `${field}.provider`);
   const id = expectString(raw.id, `${field}.id`);
-
   if (!Array.isArray(raw.tags)) {
     fail(`config inválida: "${field}.tags" deve ser uma lista de tags`);
   }
@@ -458,6 +546,7 @@ function validateModel(value: unknown, index: number): ModelConfig {
     raw.capabilities === undefined
       ? undefined
       : validateCapabilities(raw.capabilities, `${field}.capabilities`);
+  const call = raw.call === undefined ? undefined : validateCall(raw.call, `${field}.call`);
 
   return {
     provider,
@@ -467,6 +556,7 @@ function validateModel(value: unknown, index: number): ModelConfig {
     status,
     ...(price === undefined ? {} : { price }),
     ...(capabilities === undefined ? {} : { capabilities }),
+    ...(call === undefined ? {} : { call }),
   };
 }
 

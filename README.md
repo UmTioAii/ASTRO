@@ -80,7 +80,7 @@ The launcher and smoke commands require Node 18+ on `PATH`; the published CLI br
 | Key | Shape | Default | Where |
 |---|---|---|---|
 | `providers` | `Record<string, { kind, credentialRef?, baseUrl?, credentialsPath?, quotaDomain?, priority?, fallback?, maxRetries?, retryBackoffMs? }>` | — | `src/config.ts` |
-| `models` | `{ provider, id, tags, context, price? }[]` | — | `src/config.ts` |
+| `models` | `{ provider, id, tags, context, price?, capabilities?, call? }[]` | — | `src/config.ts`, `src/call-profile.ts` |
 | `modelPool` | `Record<profile, { model, capabilities?, fallback? }>` | absent | `src/registry.ts` |
 | `agent` | `{ model XOR profile, maxSteps, tools, entryAgent? }` | — | `src/config.ts` |
 | `agents` | `{ maxActive?, <name>: { model XOR profile, maxSteps?, tools?, systemPrompt? } }`; named agents require at least 2 declared accounts | absent | `src/config.ts`, `src/agent-lock.ts` |

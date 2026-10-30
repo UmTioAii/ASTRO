@@ -21,6 +21,8 @@ Providers divergem em parâmetros de esforço e raciocínio (Anthropic `thinking
 
 **E6 na implementação.** A reverificação dos valores oficiais por provider (Anthropic/OpenAI/DeepSeek/Kimi) acontece antes de codar, em S-08 (#125); divergência registrada, valor oficial vigente vence.
 
+**Implementação (S-08, #125).** `src/call-profile.ts` resolve `lvl`/effort/thinking e remove `forbidden` antes do envio; `models[].call` é validado no startup e aplicado pelos providers builtin. O `usage` grava `lvl`, `effort`, `thinking` e `param.stripped` como `[{name, reason}]` (ledger schema v3). A tabela E6 verificada fica em `docs/providers.md`; provider não verificado (GLM via NIM) exige config explícita.
+
 ## Consequências
 
 - Ganho: superfície uniforme entre providers; auditoria do que foi enviado e do que foi proibido.

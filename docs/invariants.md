@@ -14,7 +14,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 |---|---|---|
 | I-01 | Todo agente declara papel, tools, pool de modelos, orçamento e sandbox; nada fora da declaração é acessível | Parcial: allowlist negada por padrão (`src/tools/executor.ts:72`); declaração completa de papéis pendente (#58) |
 | I-02 | Subagente tem escopo igual ou menor que o pai; nunca maior | Pendente (#58) |
-| I-03 | Segredos nunca entram em contexto de modelo, log, cache, auditoria ou memória; só `credentialRef` | `tests/provider.test.ts`, `tests/audit.test.ts`, `tests/app.test.ts:52`; pendência: env herdado pelo `run_command` sem sandbox (`F-00`) |
+| I-03 | Segredos nunca entram em contexto de modelo, log, cache, auditoria ou memória; só `credentialRef` | `tests/provider.test.ts`, `tests/audit.test.ts`, `tests/app.test.ts:52`, `tests/call-profile-session.test.ts` (reasoning text não persistido); pendência: env herdado pelo `run_command` sem sandbox (`F-00`) |
 | I-04 | Toda decisão relevante gera evento de auditoria sanitizado | Coberto: `src/audit.ts:21` (`sanitize`); trocas emitem `swap.requested/approved/denied/pending`, `run.stopped` e o lock emite `agent.lock.acquired/released/denied` (#124) |
 | I-05 | Contrato antes de código; módulo sem contrato e critério não entra | `docs/workflow.md:7` (issue com critério testável) |
 | I-06 | Placement reproduzível: mesmo run + mesma semente, mesma escolha de modelo e credencial | Pendente (#60) |

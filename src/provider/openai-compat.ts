@@ -1,4 +1,5 @@
 import { isAbortError } from "../abort";
+import { applyCallToBody, type AppliedCallProfile, type CallConfig } from "../call-profile";
 import { redactSecrets } from "../sanitize-external";
 import type {
   ChatMessage,
@@ -22,6 +23,8 @@ interface OpenAICompatProviderOptions {
   headers?: Record<string, string>;
   retry?: RetryOptions;
   fetchFn?: FetchLike;
+  /** Call profile do modelo (E1–E8). */
+  call?: CallConfig;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -203,11 +206,13 @@ export class OpenAICompatProvider implements Provider {
   private readonly maxAttempts: number;
   private readonly windowMs: number;
   private readonly fetchFn: FetchLike;
+  private readonly call: CallConfig | undefined;
 
   constructor(opts: OpenAICompatProviderOptions) {
     this.url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`;
     this.apiKey = opts.apiKey ?? "";
     this.fetchFn = opts.fetchFn ?? fetch;
+    this.call = opts.call;
 
     const headers = new Headers();
     for (const [name, value] of Object.entries(opts.headers ?? {})) {
@@ -250,12 +255,13 @@ export class OpenAICompatProvider implements Provider {
   }
 
   private async request(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
+    const { body, call } = this.bodyFor(req);
     let response: Response;
     try {
       response = await this.fetchFn(this.url, {
         method: "POST",
         headers: this.headers,
-        body: JSON.stringify(this.bodyFor(req)),
+        body: JSON.stringify(body),
         signal,
       });
     } catch (error) {
@@ -278,7 +284,8 @@ export class OpenAICompatProvider implements Provider {
 
     const sse = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
     if (req.onToken !== undefined && sse) {
-      return await this.streamResponse(req, response, req.onToken);
+      const streamed = await this.streamResponse(req, response, req.onToken);
+      return { ...streamed, call };
     }
 
     let text: string;
@@ -293,7 +300,7 @@ export class OpenAICompatProvider implements Provider {
       );
     }
 
-    return parseCompletion(text);
+    return { ...parseCompletion(text), call };
   }
 
   /** Lê SSE (`data: {...}`) e entrega cada delta; devolve a resposta consolidada. */
@@ -410,7 +417,7 @@ export class OpenAICompatProvider implements Provider {
     };
   }
 
-  private bodyFor(req: CompletionRequest): WireRequestBody {
+  private bodyFor(req: CompletionRequest): { body: WireRequestBody; call: AppliedCallProfile } {
     const body: WireRequestBody = {
       model: req.model,
       messages: toWireMessages(req.messages),
@@ -429,7 +436,8 @@ export class OpenAICompatProvider implements Provider {
       body.stream = true;
       body.stream_options = { include_usage: true };
     }
-    return body;
+    const call = applyCallToBody(body as unknown as Record<string, unknown>, this.call, req.call);
+    return { body, call };
   }
 
   private errorFromResponse(response: Response, text: string): ProviderError {

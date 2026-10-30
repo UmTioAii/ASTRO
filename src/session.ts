@@ -19,6 +19,7 @@ import type { SpanHandle, TracerLike } from "./tracing";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
 import { acquireAgentLock, findAgentLock, releaseAgentLock } from "./agent-lock";
+import type { AppliedCallProfile, CallSelection } from "./call-profile";
 
 /** Identidade efetiva de quem atendeu o completion (F-31d). */
 export interface EffectiveIdentity {
@@ -40,6 +41,8 @@ export interface SessionOptions {
   cwd: string;
   provider: Provider;
   model: ModelEntry;
+  /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
+  call?: CallSelection;
   /** Recebe deltas de texto quando o provider suporta streaming (T3). */
   onToken?: (text: string) => void;
   executor: ToolExecutor;
@@ -307,6 +310,7 @@ export async function runSession(
         messages: safePrompt(messages),
         tools: opts.executor.defs(),
         ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
+        ...(opts.call === undefined ? {} : { call: opts.call }),
         ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
       }, opts.signal);
       tracer?.end(providerSpan, {
@@ -332,6 +336,7 @@ export async function runSession(
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
           callHashes: hashToolCalls(response.toolCalls),
+          ...callUsageFields(response.call),
         },
         identity.price,
       );
@@ -439,6 +444,22 @@ function errorHasHandoffName(error: unknown): boolean {
     error !== null &&
     (error as { name?: unknown }).name === "HandoffSignal"
   );
+}
+
+/** Campos de usage do call profile (E7); vazio quando o provider não ecoa. */
+function callUsageFields(call: AppliedCallProfile | undefined): {
+  lvl?: number;
+  effort?: string;
+  thinking?: string;
+  "param.stripped"?: AppliedCallProfile["stripped"];
+} {
+  if (call === undefined) return {};
+  return {
+    ...(call.lvl === undefined ? {} : { lvl: call.lvl }),
+    ...(call.effort === undefined ? {} : { effort: call.effort }),
+    ...(call.thinking === undefined ? {} : { thinking: call.thinking }),
+    ...(call.stripped.length === 0 ? {} : { "param.stripped": call.stripped }),
+  };
 }
 
 /** Razão registrada no `run_state interrupted`: abort vira "cancelled" (F-06). */
@@ -573,6 +594,8 @@ export interface MultiAgentSessionOptions {
   resolveIdentity?: IdentityResolver;
   /** Sinal de cancelamento para interromper a sessão (F-06). */
   signal?: AbortSignal;
+  /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
+  call?: CallSelection;
   /** Gate de aprovação de troca (F-19): o runtime injeta; ausente = sem gate (componente interno). */
   approveSwap?: SwapApprover;
   /** Provider por modelo/agent (F-31d): sem ele, todos usam `provider`. */
@@ -783,6 +806,7 @@ export async function runMultiAgentSession(
         messages: safePrompt(messages),
         tools: executor.defs(),
         ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
+        ...(opts.call === undefined ? {} : { call: opts.call }),
         ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
       }, opts.signal);
       tracer?.end(providerSpan, {
@@ -808,6 +832,7 @@ export async function runMultiAgentSession(
           tokensIn: response.usage.inputTokens,
           tokensOut: response.usage.outputTokens,
           callHashes: hashToolCalls(response.toolCalls),
+          ...callUsageFields(response.call),
         },
         identity.price,
       );

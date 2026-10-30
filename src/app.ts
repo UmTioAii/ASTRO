@@ -26,6 +26,7 @@ import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, 
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
 import { recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
+import type { CallSelection } from "./call-profile";
 import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
@@ -78,6 +79,8 @@ export interface RunOptions {
   suppressRunEvents?: boolean;
   /** Recebe deltas de texto do provider (T3); ausente = resposta única. */
   onToken?: (text: string) => void;
+  /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
+  call?: CallSelection;
 }
 
 export interface RunReport {
@@ -207,6 +210,7 @@ export function createProvider(
         baseUrl: providerConfig.baseUrl,
         ...(apiKey === undefined ? {} : { apiKey }),
         ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
+        ...(model.call === undefined ? {} : { call: model.call }),
       }),
       ...(credentialRef === undefined ? {} : { credentialRef }),
       quotaDomain,
@@ -223,6 +227,7 @@ export function createProvider(
         credentialsPath,
         ...(providerConfig.baseUrl === undefined ? {} : { baseUrl: providerConfig.baseUrl }),
         ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
+        ...(model.call === undefined ? {} : { call: model.call }),
       }),
       credentialRef,
       quotaDomain,
@@ -773,6 +778,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         // Handoff (F-24): timeout do ack; default 30000ms (D-15)
         ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
         signal,
+        ...(opts.call === undefined ? {} : { call: opts.call }),
       };
       result = await runMultiAgentSession(multiOpts, task);
     } else {
@@ -816,6 +822,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           protectedPaths: [ledgerPath, auditPath],
           secretEnvNames,
           signal,
+          ...(opts.call === undefined ? {} : { call: opts.call }),
         },
         task,
       );
