@@ -12,6 +12,7 @@ const resp = (content = "ok"): CompletionResponse => ({
   content, toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 },
 });
 const user = (content: string): ChatMessage => ({ role: "user", content });
+const assistant = (content: string): ChatMessage => ({ role: "assistant", content });
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "astro-compaction-runtime-"));
@@ -32,6 +33,7 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
     expect(isContextOverflow(new ProviderError("invalid_request", "maximum context length exceeded"))).toBe(true);
     expect(isContextOverflow(new ProviderError("invalid_request", "prompt is too long: 200000 tokens"))).toBe(true);
     expect(isContextOverflow(new ProviderError("invalid_request", "tool schema inválido"))).toBe(false);
+    expect(isContextOverflow(new ProviderError("invalid_request", "model does not support the context caching parameter"))).toBe(false);
     expect(isContextOverflow(new ProviderError("outage", "maximum context length exceeded"))).toBe(false);
     expect(isContextOverflow(new Error("maximum context length exceeded"))).toBe(false);
   });
@@ -51,12 +53,19 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
 
   test("dispara quando a estimativa atinge o limiar e grava sucesso no ledger", async () => {
     const { ledger, audit } = setup();
-    const messages: ChatMessage[] = [{ role: "system", content: "SYS" }, user("x".repeat(1_200))]; // 300 tokens
+    // janela 24k, reserva 16k → limiar 8k; recente clampado para 6k.
+    const messages: ChatMessage[] = [
+      { role: "system", content: "SYS" },
+      user("a".repeat(30_000)),
+      assistant("b".repeat(30_000)),
+      user("c".repeat(10_000)),
+      assistant("d".repeat(8_000)),
+    ];
     let seen: readonly ChatMessage[] = [];
     let summaries = 0;
     await completeWithCompaction(messages, {
-      ledger, audit, run: "r1", agent: () => "a", window: () => 400, provider: () => "p", model: () => "m",
-      compaction: { buffer: 100 }, // limiar 300
+      ledger, audit, run: "r1", agent: () => "a", window: () => 24_000, provider: () => "p", model: () => "m",
+      compaction: { buffer: null },
       complete: async (current) => { seen = current; return resp("ok"); },
       summarize: async () => { summaries++; return "resumo"; },
     });
@@ -66,6 +75,47 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
     expect(seen[1]!.content).toContain("CompactionArtifactV1");
     expect(ledger.readAllEntries().filter((e) => e.kind === "compaction")).toHaveLength(1);
     expect(audit.readAll().some((e) => e.tipo === "compaction.applied")).toBe(true);
+  });
+
+  test("não repete quando não há histórico anterior para substituir", async () => {
+    const { ledger, audit } = setup();
+    const messages: ChatMessage[] = [{ role: "system", content: "SYS" }, user("x".repeat(40_000))];
+    let summaries = 0;
+    let calls = 0;
+    await completeWithCompaction(messages, {
+      ledger, audit, run: "r1", agent: () => "a", window: () => 24_000, provider: () => "p", model: () => "m",
+      compaction: { buffer: null },
+      complete: async () => { calls++; return resp("ok"); },
+      summarize: async () => { summaries++; return "s"; },
+    });
+    expect(summaries).toBe(0);
+    expect(calls).toBe(1);
+    expect(ledger.readAllEntries().some((e) => e.kind === "compaction")).toBe(false);
+  });
+
+  test("cancelamento durante o resumo não conta como falha do breaker", async () => {
+    const { ledger, audit } = setup();
+    const controller = new AbortController();
+    const messages: ChatMessage[] = [
+      { role: "system", content: "SYS" },
+      user("a".repeat(30_000)),
+      assistant("b".repeat(30_000)),
+      user("c".repeat(10_000)),
+      assistant("d".repeat(8_000)),
+    ];
+    const run = completeWithCompaction(messages, {
+      ledger, audit, run: "r1", agent: () => "a", window: () => 24_000, provider: () => "p", model: () => "m",
+      compaction: { buffer: null },
+      signal: controller.signal,
+      complete: async () => resp("ok"),
+      summarize: async () => {
+        controller.abort();
+        throw new DOMException("cancelado", "AbortError");
+      },
+    });
+    await expect(run).rejects.toBeDefined();
+    expect(ledger.readAllEntries().some((e) => e.kind === "compaction")).toBe(false);
+    expect(audit.readAll().some((e) => e.tipo === "compaction.failed")).toBe(false);
   });
 
   test("rejeição por tamanho compacta e retenta uma única vez", async () => {
@@ -119,11 +169,17 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
 
   test("falha do resumo abaixo do limite conta no breaker e deixa o run seguir", async () => {
     const { ledger, audit } = setup();
-    const messages: ChatMessage[] = [{ role: "system", content: "SYS" }, user("x".repeat(1_200))];
+    const messages: ChatMessage[] = [
+      { role: "system", content: "SYS" },
+      user("a".repeat(30_000)),
+      assistant("b".repeat(30_000)),
+      user("c".repeat(10_000)),
+      assistant("d".repeat(8_000)),
+    ];
     let calls = 0;
     await completeWithCompaction(messages, {
-      ledger, audit, run: "r1", agent: () => "a", window: () => 400, provider: () => "p", model: () => "m",
-      compaction: { buffer: 100 },
+      ledger, audit, run: "r1", agent: () => "a", window: () => 24_000, provider: () => "p", model: () => "m",
+      compaction: { buffer: null },
       complete: async () => { calls++; return resp("ok"); },
       summarize: async () => { throw new Error("resumo quebrou"); },
     });

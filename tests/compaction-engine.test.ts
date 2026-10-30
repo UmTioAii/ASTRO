@@ -35,6 +35,11 @@ describe("gatilho e reserva da janela (S-17, CMP-1)", () => {
     expect(shouldCompact([user(text(3_600))], 1_000, 100)).toBe(true);
   });
 
+  test("janela que não comporta a reserva não compacta", () => {
+    expect(shouldCompact([user(text(100_000))], 8_000, null)).toBe(false);
+    expect(shouldCompact([user(text(100_000))], 8_000, 4_000)).toBe(true);
+  });
+
   test("shouldCompact usa o tokenizer nativo do provider quando existe", () => {
     registerTokenizer("native", (value) => value.length, "chars");
     // identidade: 900 chars = 900 tokens atinge o limiar (window - reserve).
@@ -64,8 +69,8 @@ describe("parte recente (S-17, CMP-2)", () => {
       { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read_file", arguments: "{}" }] },
       { role: "tool", content: text(40), toolCallId: "c1" },
     ];
-    // Ao cair no tool result, recua até a mensagem de usuário anterior.
-    expect(recentSliceStart(messages, 5)).toBe(1);
+    // Ao cair no tool result, recua ao assistant dono do par (sem usuário na janela).
+    expect(recentSliceStart(messages, 5)).toBe(2);
   });
 
   test("sem mensagem de usuário, mantém ao menos a última mensagem", () => {
@@ -126,7 +131,7 @@ describe("compactSession (S-17, CMP-3/CMP-4)", () => {
       messages,
       window: 1_000,
       buffer: 900,
-      recentBudget: 1_000,
+      recentBudget: 1_010,
       summarize: async (input) => {
         seen.push(input);
         return "resumo";
@@ -166,6 +171,45 @@ describe("compactSession (S-17, CMP-3/CMP-4)", () => {
     });
     expect(result.reduction).toBeGreaterThan(1);
     expect(seen[0]!.some((message) => message.role === "tool" && message.content.length > 5_000)).toBe(false);
+  });
+
+  test("encolhe a parte recente o suficiente para sair do gatilho", async () => {
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      user(text(30_000)),
+      assistant(text(30_000)),
+      user(text(10_000)),
+      assistant(text(8_000)),
+    ];
+    const result = await compactSession({
+      run: "r1",
+      messages,
+      window: 24_000,
+      buffer: null,
+      summarize: async () => "resumo",
+    });
+
+    expect(result.olderCount).toBe(2);
+    expect(result.returnedTokens).toBeLessThan(24_000 - reserveTokens(24_000, null));
+    expect(shouldCompact(result.messages, 24_000, null)).toBe(false);
+  });
+
+  test("sem histórico anterior não chama o resumo e devolve o contexto igual", async () => {
+    const messages: ChatMessage[] = [{ role: "system", content: "sys" }, user(text(100_000))];
+    let calls = 0;
+    const result = await compactSession({
+      run: "r1",
+      messages,
+      window: 24_000,
+      buffer: null,
+      summarize: async () => {
+        calls++;
+        return "s";
+      },
+    });
+    expect(result.olderCount).toBe(0);
+    expect(calls).toBe(0);
+    expect(result.messages).toEqual(messages);
   });
 
   test("nível 5 omite o antigo sem chamar o resumidor", async () => {

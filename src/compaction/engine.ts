@@ -17,6 +17,19 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = { buffer: null };
 /** Parte recente preservada, em tokens (CMP-2). */
 export const RECENT_TOKENS = 15_000;
 
+/**
+ * Orçamento da parte recente: 15k, encolhido quando a janela não comporta
+ * 15k + reserva + resumo (senão a compactação não baixaria do gatilho).
+ */
+export function effectiveRecentBudget(
+  window: number,
+  buffer?: number | null,
+  requested: number = RECENT_TOKENS,
+): number {
+  const room = window - reserveTokens(window, buffer) - MIN_SUMMARY_BUDGET;
+  return room > 0 ? Math.min(requested, room) : requested;
+}
+
 /** Instrução do resumo; a chamada não expõe tools (CMP-4). */
 export const SUMMARY_PROMPT =
   "Resuma o histórico a seguir de forma concisa, preservando fatos, decisões, arquivos e tarefas pendentes. Não inclua saudações nem meta-comentários.";
@@ -49,23 +62,31 @@ export function shouldCompact(
 }
 
 /**
- * Índice onde começa a parte recente: acumula do fim até o orçamento e recua
- * até o início de uma mensagem de usuário (nunca no meio de tool call/result).
+ * Índice onde começa a parte recente: acumula do fim até o orçamento (corte
+ * bruto) e então avança até a primeira mensagem de usuário dentro da janela.
+ * Sem usuário na janela (run de uma tarefa só), usa o início do par
+ * tool call/result — nunca no meio dele.
  */
 export function recentSliceStart(messages: readonly ChatMessage[], budget: number = RECENT_TOKENS): number {
   if (messages.length <= 1) return messages.length;
   let sum = 0;
-  let start = messages.length;
+  let cut = messages.length;
   for (let index = messages.length - 1; index >= 1; index--) {
     const tokens = countMessageTokens([messages[index]!]).tokens;
-    if (sum + tokens > budget && start < messages.length) break;
+    if (sum + tokens > budget && cut < messages.length) break;
     sum += tokens;
-    start = index;
+    cut = index;
   }
 
-  let probe = start;
-  while (probe >= 1 && messages[probe]!.role !== "user") probe--;
-  return probe >= 1 ? probe : start;
+  // Usuário dentro da janela: começa nele (corte determinístico do CMP-2).
+  for (let index = cut; index < messages.length; index++) {
+    if (messages[index]!.role === "user") return index;
+  }
+
+  // Sem usuário: volta ao assistant dono do tool result, se o corte caiu nele.
+  let start = cut;
+  while (start > 1 && messages[start]!.role === "tool") start--;
+  return start;
 }
 
 /** Nível de redução (1–5) e mensagens do histórico antigo para o resumo. */
@@ -136,17 +157,33 @@ export interface CompactResult {
   reduction: ReducedHistory["level"];
   originalTokens: number;
   returnedTokens: number;
+  /** Mensagens antigas substituídas; 0 = nada a compactar. */
+  olderCount: number;
 }
 
 /** Executa uma compactação: parte recente, redução do antigo, resumo e artefato. */
 export async function compactSession(input: CompactInput): Promise<CompactResult> {
   const hasSystem = input.messages[0]?.role === "system";
-  const recentStart = recentSliceStart(input.messages, input.recentBudget ?? RECENT_TOKENS);
+  const recentStart = recentSliceStart(
+    input.messages,
+    effectiveRecentBudget(input.window, input.buffer, input.recentBudget),
+  );
   const older = input.messages.slice(hasSystem ? 1 : 0, recentStart);
   const recent = input.messages.slice(recentStart);
   const countOpts = input.provider === undefined ? {} : { provider: input.provider };
 
   const originalTokens = countMessageTokens(input.messages, countOpts).tokens;
+  if (older.length === 0) {
+    // Nada anterior para substituir: não chama o resumo nem reescreve o contexto.
+    return {
+      messages: [...input.messages],
+      artifact: buildCompactionArtifact({ run: input.run, older: [], recent, summary: "" }),
+      reduction: 1,
+      originalTokens,
+      returnedTokens: originalTokens,
+      olderCount: 0,
+    };
+  }
   const recentTokens = countMessageTokens(recent, countOpts).tokens;
   const budget = Math.max(
     MIN_SUMMARY_BUDGET,
@@ -182,5 +219,6 @@ export async function compactSession(input: CompactInput): Promise<CompactResult
     reduction: reduction.level,
     originalTokens,
     returnedTokens: countMessageTokens(compacted, countOpts).tokens,
+    olderCount: older.length,
   };
 }

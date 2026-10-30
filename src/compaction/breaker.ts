@@ -3,6 +3,7 @@
  * 5 minutos; o contador vive no ledger e sobrevive ao `--resume`.
  */
 import type { Ledger, LedgerCompactionEntry } from "../ledger";
+import { redactSecrets } from "../sanitize-external";
 
 export const COMPACTION_FAILURE_LIMIT = 3;
 export const COMPACTION_PAUSE_MS = 5 * 60_000;
@@ -29,7 +30,7 @@ export class CompactionPausedError extends Error {
 
 function lastFor(ledger: Ledger, run: string): { failures: number; ts: string } | undefined {
   const entry = ledger.readAllEntries()
-    .filter((item): item is LedgerCompactionEntry => item.kind === "compaction" && item.run === run)
+    .filter((item): item is LedgerCompactionEntry => item.kind === "compaction" && item.run === redactSecrets(run))
     .at(-1);
   return entry === undefined ? undefined : { failures: entry.failure_count, ts: entry.ts };
 }

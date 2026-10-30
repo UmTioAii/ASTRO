@@ -46,6 +46,16 @@ describe("CompactionArtifactV1 (S-17, CMP-4)", () => {
     expect(new Set(artifact.relevantFiles).size).toBe(artifact.relevantFiles.length);
   });
 
+  test("Blocked é limitado às últimas 5 falhas", () => {
+    const older: ChatMessage[] = Array.from({ length: 8 }, (_, index) => ({
+      role: "tool", content: `erro ${index}`, toolCallId: `c${index}`,
+    }));
+    const artifact = buildCompactionArtifact({ run: "r1", older, recent: [user("u")], summary: "s" });
+    expect(artifact.blocked).toHaveLength(5);
+    expect(artifact.blocked[0]).toContain("erro 3");
+    expect(artifact.blocked.at(-1)).toContain("erro 7");
+  });
+
   test("renderiza as seções como mensagem de sistema estável", () => {
     const text = renderCompactionArtifact({
       schemaVersion: 1,

@@ -69,7 +69,8 @@ export function buildCompactionArtifact(input: BuildArtifactInput): CompactionAr
   );
   const blocked = all
     .filter((message) => message.role === "tool" && isErrorOutput(message.content))
-    .map((message) => clip(message.content, 300));
+    .map((message) => clip(message.content, 300))
+    .slice(-5);
   const files: string[] = [];
   for (const message of all) {
     for (const path of pathsIn(message.toolCalls ?? [])) {

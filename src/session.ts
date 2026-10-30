@@ -219,6 +219,20 @@ export async function runSession(
   task: string,
 ): Promise<{ final: string; steps: number; messages: ChatMessage[] }> {
   const tracer = opts.tracer;
+  /** Uso de uma chamada auxiliar (resumo de compactação) entra no ledger/custo. */
+  const recordAuxUsage = (response: CompletionResponse, model: ModelEntry, agent: string): void => {
+    const identity = effectiveIdentityFor(opts.resolveIdentity, response, model, opts.credentialRef, opts.quotaDomain);
+    opts.ledger.record({
+      run: opts.run,
+      agent,
+      provider: identity.provider,
+      model: identity.model,
+      ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
+      quotaDomain: identity.quotaDomain,
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+    }, identity.price);
+  };
   const rootSpan = tracer?.start(
     "run",
     { agent: redactSecrets(opts.agent), model: `${opts.model.provider}/${opts.model.id}`, run: redactSecrets(opts.run) },
@@ -337,7 +351,10 @@ export async function runSession(
           messages: safePrompt(input),
           tools: undefined,
           ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
-        }, opts.signal).then((summary) => summary.content),
+        }, opts.signal).then((summary) => {
+          recordAuxUsage(summary, opts.model, opts.agent);
+          return summary.content;
+        }),
       });
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
@@ -774,6 +791,20 @@ export async function runMultiAgentSession(
     run: redactSecrets(opts.run),
     multi: true,
   });
+  /** Uso do resumo de compactação entra no ledger/custo (mesma identidade efetiva). */
+  const recordAuxUsage = (response: CompletionResponse, model: ModelEntry, agent: string): void => {
+    const identity = effectiveIdentityFor(opts.resolveIdentity, response, model, opts.credentialRef, opts.quotaDomain);
+    opts.ledger.record({
+      run: opts.run,
+      agent,
+      provider: identity.provider,
+      model: identity.model,
+      ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
+      quotaDomain: identity.quotaDomain,
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+    }, identity.price);
+  };
 
   try {
     // Varredura de retomada (F-24): pendências do run no ledger do cwd corrente
@@ -907,7 +938,11 @@ export async function runMultiAgentSession(
           messages: safePrompt(input),
           tools: undefined,
           ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
-        }, opts.signal).then((summary) => summary.content),
+        }, opts.signal).then((summary) => {
+          recordAuxUsage(summary, currentModel, currentAgentName);
+          return summary.content;
+        }),
+        onCompacted: () => saveAgentState(currentAgentName),
       });
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
@@ -1074,10 +1109,12 @@ export async function runMultiAgentSession(
     if (
       activeHandoff !== undefined &&
       !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&
-      // Negação de troca ou corte de budget não é falha do handoff já recebido:
-      // o estado interrupted permite retomar e re-perguntar (I-08/I-17 + I-19).
+      // Negação de troca, corte de budget ou pausa de compactação não são falha
+      // do handoff já recebido: o estado interrupted permite retomar e
+      // re-perguntar/retentar (I-08/I-17/I-19, CMP-6).
       !(error instanceof SwapDeniedError) &&
       !(error instanceof BudgetExceededError) &&
+      !(error instanceof CompactionPausedError) &&
       !isAbortError(error, opts.signal)
     ) {
       recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {

@@ -329,11 +329,11 @@ export class AgentSession {
   async compact(force = false): Promise<string> {
     if (this.#busy) throw new Error("turno em andamento");
     if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
-    // CMP-6: `/compact force` ignora a pausa do breaker e zera o contador.
-    if (force) forceCompaction(this.#ledger, this.id, "default");
 
     // Se não há histórico além do system, é no-op
     if (this.#messages.length <= 1) return "histórico vazio, nada para compactar";
+    // CMP-6: `/compact force` ignora a pausa do breaker e zera o contador.
+    if (force) forceCompaction(this.#ledger, this.id, "default");
 
     const modelEntry = this.#registry.require(this.#modelRef);
     const setup = createProvider(this.#config, modelEntry, this.#env ?? process.env);

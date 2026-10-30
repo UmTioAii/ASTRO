@@ -3,7 +3,7 @@
  * chamada, retenta UMA vez quando o provider rejeita por tamanho e respeita a
  * pausa do breaker.
  */
-import { throwIfAborted } from "../abort";
+import { throwIfAborted, isAbortError } from "../abort";
 import type { Auditor } from "../audit";
 import type { Ledger } from "../ledger";
 import { ProviderError, type ChatMessage, type CompletionResponse } from "../provider/types";
@@ -13,7 +13,16 @@ import {
   recordCompactionFailure,
   recordCompactionSuccess,
 } from "./breaker";
-import { compactSession, shouldCompact, type CompactionConfig } from "./engine";
+import {
+  RECENT_TOKENS,
+  compactSession,
+  effectiveRecentBudget,
+  recentSliceStart,
+  reserveTokens,
+  shouldCompact,
+  type CompactionConfig,
+} from "./engine";
+import { countMessageTokens } from "../tokens";
 
 export interface CompactionRuntimeOptions {
   ledger: Ledger;
@@ -29,9 +38,12 @@ export interface CompactionRuntimeOptions {
   complete: (messages: readonly ChatMessage[]) => Promise<CompletionResponse>;
   /** Resumo sem tools. */
   summarize: (messages: ChatMessage[]) => Promise<string>;
+  /** Chamado após uma compactação aplicada (ex.: atualizar histórico do agente). */
+  onCompacted?: (messages: readonly ChatMessage[]) => void;
 }
 
-const OVERFLOW_PATTERN = /context|too long|too large|maximum.{0,20}token|token.{0,20}(limit|maximum)|prompt is too large|length limit/i;
+/** Vocabulário de tamanho/estouro; "context caching" não é overflow. */
+const OVERFLOW_PATTERN = /context\s*(length|window)|maximum.{0,24}(token|context)|prompt is too (large|long)|too many tokens|token.{0,24}(limit|maximum)|exceeds?.{0,12}context/i;
 
 /** O provider rejeitou por tamanho de contexto? */
 export function isContextOverflow(error: unknown): boolean {
@@ -41,6 +53,19 @@ export function isContextOverflow(error: unknown): boolean {
 
 type CompactReason = "trigger" | "overflow";
 
+/** Overhead estimado do artefato no contexto compactado (tokens). */
+const ARTIFACT_OVERHEAD = 500;
+
+/** A compactação consegue projetar o contexto abaixo do gatilho? */
+function projectionCanClear(messages: readonly ChatMessage[], opts: CompactionRuntimeOptions): boolean {
+  const window = opts.window();
+  const start = recentSliceStart(messages, effectiveRecentBudget(window, opts.compaction.buffer));
+  const older = start - (messages[0]?.role === "system" ? 1 : 0);
+  if (older <= 0) return false;
+  const recentTokens = countMessageTokens(messages.slice(start), { provider: opts.provider() }).tokens;
+  return recentTokens + ARTIFACT_OVERHEAD < window - reserveTokens(window, opts.compaction.buffer);
+}
+
 /** Compacta, grava sucesso/falha e abre o breaker quando necessário. */
 async function applyCompaction(
   messages: ChatMessage[],
@@ -49,6 +74,9 @@ async function applyCompaction(
 ): Promise<boolean> {
   const state = compactionState(opts.ledger, opts.run);
   if (state.paused) throw new CompactionPausedError(state.remainingMs);
+  // Sem histórico anterior ou sem projeção para sair do gatilho, repetir a cada
+  // step só gastaria tokens de resumo sem reduzir o contexto.
+  if (reason === "trigger" && !projectionCanClear(messages, opts)) return false;
 
   const agent = opts.agent();
   try {
@@ -60,9 +88,15 @@ async function applyCompaction(
       provider: opts.provider(),
       summarize: opts.summarize,
     });
+    if (result.olderCount === 0) {
+      // Nada anterior para substituir (ex.: primeira tarefa já grande): não há
+      // compactação possível e repetir a cada step só gastaria tokens.
+      return false;
+    }
     messages.length = 0;
     messages.push(...result.messages);
     recordCompactionSuccess(opts.ledger, opts.run, agent);
+    opts.onCompacted?.(messages);
     opts.audit.append({
       run: opts.run,
       agent,
@@ -77,6 +111,8 @@ async function applyCompaction(
     return true;
   } catch (error) {
     if (error instanceof CompactionPausedError) throw error;
+    // Cancelamento não é falha de compactação: não conta no breaker (CMP-6).
+    if (isAbortError(error, opts.signal)) throw error;
     const after = recordCompactionFailure(opts.ledger, opts.run, agent);
     opts.audit.append({
       run: opts.run,

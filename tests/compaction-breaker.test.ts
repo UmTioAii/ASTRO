@@ -48,6 +48,13 @@ describe("circuit breaker de compactação (S-17, CMP-6)", () => {
     expect(compactionState(l, "r1", Date.now() + COMPACTION_PAUSE_MS + 1_000).paused).toBe(false);
   });
 
+  test("run id que o ledger redige continua vendo o próprio breaker", () => {
+    const l = ledger();
+    const run = "sk-abcdefgh12345678";
+    for (let index = 0; index < 3; index++) recordCompactionFailure(l, run, "a");
+    expect(compactionState(l, run)).toMatchObject({ failures: 3, paused: true });
+  });
+
   test("sucesso zera o contador", () => {
     const l = ledger();
     recordCompactionFailure(l, "r1", "a");
