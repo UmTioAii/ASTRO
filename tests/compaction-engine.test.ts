@@ -73,6 +73,18 @@ describe("parte recente (S-17, CMP-2)", () => {
     expect(recentSliceStart(messages, 5)).toBe(2);
   });
 
+  test("força o último usuário quando o corte bruto cai depois dele (instrução preservada)", () => {
+    const messages: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      user(text(40)), // histórico anterior
+      assistant(text(40)),
+      user(text(40_000)), // turno corrente grande
+      assistant(text(4_000)),
+    ];
+    // orçamento pequeno cortaria no assistant final; o último usuário é forçado.
+    expect(recentSliceStart(messages, 10)).toBe(3);
+  });
+
   test("sem mensagem de usuário, mantém ao menos a última mensagem", () => {
     const messages: ChatMessage[] = [
       { role: "system", content: "sys" },

@@ -84,7 +84,16 @@ export function recentSliceStart(messages: readonly ChatMessage[], budget: numbe
     if (messages[index]!.role === "user") return index;
   }
 
-  // Sem usuário: volta ao assistant dono do tool result, se o corte caiu nele.
+  // Sem usuário na janela: se existe um turno anterior, força o último usuário
+  // (bounded por uma mensagem) para não perder a instrução corrente no resumo.
+  let lastUser = -1;
+  for (let index = messages.length - 1; index >= 1; index--) {
+    if (messages[index]!.role === "user") { lastUser = index; break; }
+  }
+  const firstContent = messages[0]?.role === "system" ? 1 : 0;
+  if (lastUser > firstContent && lastUser < cut) return lastUser;
+
+  // Run de uma tarefa só: volta ao assistant dono do tool result, se o corte caiu nele.
   let start = cut;
   while (start > 1 && messages[start]!.role === "tool") start--;
   return start;
@@ -187,6 +196,8 @@ export async function compactSession(input: CompactInput): Promise<CompactResult
     };
   }
   const recentTokens = countMessageTokens(recent, countOpts).tokens;
+  // Orçamento conservador: o resumo recebe só o histórico reduzido, mas o alvo é
+  // caber no contexto final (system + artefato + recente), então ambos descontam.
   const budget = Math.max(
     MIN_SUMMARY_BUDGET,
     input.window - reserveTokens(input.window, input.buffer) - recentTokens - systemTokens,

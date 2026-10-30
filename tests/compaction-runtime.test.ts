@@ -34,6 +34,8 @@ describe("runtime da compactação (S-17, CMP-6/CMP-7)", () => {
     expect(isContextOverflow(new ProviderError("invalid_request", "prompt is too long: 200000 tokens"))).toBe(true);
     expect(isContextOverflow(new ProviderError("invalid_request", "tool schema inválido"))).toBe(false);
     expect(isContextOverflow(new ProviderError("invalid_request", "model does not support the context caching parameter"))).toBe(false);
+    expect(isContextOverflow(new ProviderError("invalid_request", "Input is too long for requested model"))).toBe(true);
+    expect(isContextOverflow(new ProviderError("invalid_request", "Request too large"))).toBe(true);
     expect(isContextOverflow(new ProviderError("outage", "maximum context length exceeded"))).toBe(false);
     expect(isContextOverflow(new Error("maximum context length exceeded"))).toBe(false);
   });
