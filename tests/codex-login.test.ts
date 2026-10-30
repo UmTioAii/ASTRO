@@ -109,6 +109,33 @@ test("device login classifica 429 como rate limit e recusa user_code inválido",
   await expect(startCodexLogin({ fetchLike: invalid })).rejects.toThrow(/user_code inválido/);
 });
 
+test("cancelar durante o request não altera o auth.json existente", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "astro-codex-cwd-"));
+  const authPath = join(mkdtempSync(join(tmpdir(), "astro-codex-auth-")), "auth.json");
+  writeFileSync(authPath, "old-auth-content", "utf8");
+  const configPath = join(cwd, "astro.config.json");
+  writeFileSync(configPath, JSON.stringify({
+    providers: { c: { kind: "codex-oauth", credentialsPath: authPath } },
+    models: [{ provider: "c", id: "gpt-5.5", tags: ["writing-code"], context: 8192 }],
+    agent: { model: "c/gpt-5.5", maxSteps: 1, tools: [] },
+    paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+  }));
+  const fetchLike = ((_input: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    })) as unknown as typeof fetch;
+  const session = new AgentSession({ configPath, cwd, env: {}, fetchLike });
+  const controller = new AbortController();
+  try {
+    const pending = session.loginCodex("c", controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toThrow(/cancelad|abort/i);
+    expect(readFileSync(authPath, "utf8")).toBe("old-auth-content");
+  } finally {
+    session.close();
+  }
+});
+
 test("loginCodex recusa credentialsPath relativo antes de tocar a rede", async () => {
   const dir = mkdtempSync(join(tmpdir(), "astro-codex-path-"));
   const configPath = join(dir, "astro.config.json");
@@ -124,6 +151,17 @@ test("loginCodex recusa credentialsPath relativo antes de tocar a rede", async (
   } finally {
     session.close();
   }
+});
+
+test("cancelar com request pendente não deixa unhandled rejection", async () => {
+  const controller = new AbortController();
+  const fetchLike = ((_input: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    })) as unknown as typeof fetch;
+  const pending = startCodexLogin({ fetchLike, signal: controller.signal });
+  controller.abort();
+  await expect(pending).rejects.toThrow(/cancelad|abort/i);
 });
 
 test("stalled body é interrompido pelo deadline", async () => {

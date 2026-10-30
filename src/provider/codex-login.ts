@@ -109,6 +109,7 @@ async function requestWithDeadline<T>(
   let timedOut = false;
   let rejectAbort: ((error: Error) => void) | undefined;
   const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
+  void aborted.catch(() => undefined);
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
