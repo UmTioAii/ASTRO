@@ -278,10 +278,17 @@ export function resolveModelChoice(
   snapshotId: string,
   model: string | undefined,
   deps: CandidateDeps,
+  expectedNeed?: string,
 ): ModelChoice {
   const stored = SNAPSHOTS.get(snapshotId);
   if (stored === undefined) {
     throw new ModelChoiceError("invalid_model_choice", `snapshot "${snapshotId}" não encontrado`);
+  }
+  // O snapshot carrega o `need` que ordenou a lista; usá-lo com outro papel
+  // perderia a reprodução do placement (I-06).
+  if (expectedNeed !== undefined && stored.query.need !== expectedNeed) {
+    const fresh = listModelCandidates({ ...stored.query, need: expectedNeed }, deps);
+    throw new CandidateSetChangedError("need diverge do snapshot", fresh);
   }
   const now = deps.now?.() ?? Date.now();
   if (now >= stored.expiresAtMs || providerHealthRevision() !== stored.healthRevision) {

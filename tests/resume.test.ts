@@ -214,13 +214,23 @@ describe("reconstrução da árvore de agentes (F-22, #131)", () => {
     expect(tree.nodes[1]!.reason).toBe("completed");
   });
 
+  test("spawn runtime: pai + filho ativos retomam pelo pai (C4a)", () => {
+    const ledger = newLedger();
+    ledger.recordAgentCreated({ run: "r1", agent_id: "planner", session_id: "r1", model: "m1" });
+    ledger.recordAgentCreated({ run: "r1", agent_id: "sub-1", parent_agent_id: "planner", session_id: "r1", model: "m2" });
+
+    expect(rebuildAgentTree(ledger, "r1").active?.agent_id).toBe("planner");
+    expect(planResume(ledger, "r1").agent.agent_id).toBe("planner");
+  });
+
   test("planResume falha em árvore quebrada, evento sem seq e isola runs", () => {
     const create = (l: Ledger, id: string, parent?: string) =>
       l.recordAgentCreated({ run: "r1", agent_id: id, session_id: "r1", model: "m", ...(parent === undefined ? {} : { parent_agent_id: parent }) });
     const destroy = (l: Ledger, id: string) => l.recordAgentDestroyed({ run: "r1", agent_id: id, session_id: "r1", reason: "x" });
     const cases: [string, (l: Ledger) => void, RegExp][] = [
       ["pai inexistente", (l) => create(l, "child", "ghost"), /pai "ghost" inexistente/],
-      ["dois ativos", (l) => { create(l, "a"); create(l, "b", "a"); }, /2 agentes ativos/],
+      ["dois ativos irmãos", (l) => { create(l, "a"); create(l, "b", "a"); create(l, "c", "a"); destroy(l, "a"); }, /2 agentes ativos/],
+      ["pai com dois filhos ativos", (l) => { create(l, "a"); create(l, "b", "a"); create(l, "c", "a"); }, /3 agentes ativos/],
       ["session divergente", (l) => l.recordAgentCreated({ run: "r1", agent_id: "a", session_id: "other", model: "m" }), /session_id/],
       ["destroyed sem created", (l) => destroy(l, "ghost"), /replay incompleto/],
       ["created duplicado", (l) => { create(l, "a"); create(l, "a"); }, /criado duas vezes/],

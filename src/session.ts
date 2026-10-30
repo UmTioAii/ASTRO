@@ -20,6 +20,7 @@ import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
 import { acquireAgentLock, findAgentLock, releaseAgentLock } from "./agent-lock";
 import type { AppliedCallProfile, CallSelection } from "./call-profile";
+import type { SpawnRegistry } from "./spawn";
 
 /** Identidade efetiva de quem atendeu o completion (F-31d). */
 export interface EffectiveIdentity {
@@ -377,6 +378,8 @@ export async function runSession(
             step,
             journal,
             knownAgents,
+            allow: [...opts.executor.allow],
+            maxSteps: effectiveMaxSteps,
             ...(opts.signal === undefined ? {} : { signal: opts.signal }),
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
@@ -596,6 +599,8 @@ export interface MultiAgentSessionOptions {
   signal?: AbortSignal;
   /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
   call?: CallSelection;
+  /** Subagentes nascidos em runtime (C4a); ausente = só agents declarados. */
+  spawns?: SpawnRegistry;
   /** Gate de aprovação de troca (F-19): o runtime injeta; ausente = sem gate (componente interno). */
   approveSwap?: SwapApprover;
   /** Provider por modelo/agent (F-31d): sem ele, todos usam `provider`. */
@@ -655,9 +660,45 @@ export async function runMultiAgentSession(
     { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT },
     { role: "user", content: task },
   ];
+  /** Histórico por agent: o retorno do filho não apaga o contexto do orchestrator (A9). */
+  const agentState = new Map<string, { messages: ChatMessage[]; systemPrompt?: string }>();
+  const saveAgentState = (name: string): void => {
+    agentState.set(name, { messages: [...messages], systemPrompt: currentSystemPrompt });
+  };
+  const restoreAgentState = (name: string): boolean => {
+    const saved = agentState.get(name);
+    if (saved === undefined) return false;
+    messages.length = 0;
+    messages.push(...saved.messages);
+    currentSystemPrompt = saved.systemPrompt;
+    return true;
+  };
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
   const journal = new CallJournal();
-  const knownAgents = opts.registry.listAgentNames?.();
+  /** Agents resolvíveis: declarados + subagentes deste run (C4a). */
+  const resolveAgent = (name: string): AgentEntry | undefined => {
+    const declared = opts.registry.getAgent(name);
+    if (declared !== undefined) return declared;
+    const spawned = opts.spawns?.get(name);
+    return spawned === undefined ? undefined : opts.spawns!.toAgentEntry(spawned, opts.baseSystemPrompt);
+  };
+  const knownFor = (name: string): string[] | undefined => {
+    const spawned = opts.spawns?.get(name);
+    // Filho só fala com o pai; declarado só fala com declarados + filhos próprios.
+    if (spawned !== undefined) return [spawned.parent_agent_id];
+    const declared = opts.registry.listAgentNames?.();
+    const ownChildren = opts.spawns?.list()
+      .filter((agent) => agent.parent_agent_id === name)
+      .map((agent) => agent.agent_id) ?? [];
+    if (declared === undefined && ownChildren.length === 0) return undefined;
+    return [...new Set([...(declared ?? []), ...ownChildren])];
+  };
+  /** Fecha subagentes que sobraram ativos ao fim do run (A5). */
+  const cleanupSpawns = (reason: string): void => {
+    for (const spawned of opts.spawns?.list() ?? []) {
+      ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, spawned.agent_id, reason);
+    }
+  };
   let budgetWarned = false;
   /** Aviso B3: antes e depois de cada step (o último step também avisa). */
   const maybeWarnBudget = (agent: string): void => {
@@ -712,19 +753,29 @@ export async function runMultiAgentSession(
     }
     if (resume !== undefined && resume.state === "pending") {
       const pending = resume;
-      const toAgent = opts.registry.getAgent(pending.artifact.to);
+      const toAgent = resolveAgent(pending.artifact.to);
       if (toAgent === undefined) throw new HandoffError("handoff_target_not_found", `agent destino "${pending.artifact.to}" não encontrado na configuração`);
       const toModel = modelFor(toAgent); // profile resolvido antes da retomada (F-29)
       await approveHandoff(currentModel, currentAgent, toModel, toAgent);
+      saveAgentState(currentAgentName);
       currentModel = toModel;
       currentAgentName = pending.artifact.to;
       currentAgent = toAgent;
       currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
       currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
       currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+      if (opts.spawns?.get(currentAgentName) !== undefined) currentTools.delete("spawn_agent");
       // Teto de escopo na retomada = máximo do baseExecutor (I-02)
       // currentCeiling não muda — já é o máximo do baseExecutor
-      messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
+      if (!restoreAgentState(currentAgentName) && opts.spawns?.get(currentAgentName) !== undefined) {
+        messages.length = 0;
+        messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+      }
+      if (messages.length === 0) {
+        messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+      } else {
+        messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
+      }
       // Verifier de identidade na retomada (F-26): o receptor começa em source_step+1
       verifyHandoffIdentity(
         { run: redactSecrets(opts.run), from: pending.artifact.from, to: redactSecrets(currentAgentName),
@@ -846,6 +897,7 @@ export async function runMultiAgentSession(
       if (response.toolCalls.length === 0) {
         opts.ledger.recordState(opts.run, "completed", { agent: currentAgentName });
         ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, currentAgentName, "completed");
+        cleanupSpawns("completed");
         tracer?.end(stepSpan, { "tool.calls": 0 });
         tracer?.end(rootSpan, { status: "ok", steps: step });
         return { final: response.content, steps: step, agentsUsed: agentsUsed.map(redactSecrets) };
@@ -860,7 +912,8 @@ export async function runMultiAgentSession(
       let handoffTriggered = false;
       for (const [callIndex, call] of response.toolCalls.entries()) {
         throwIfAborted(opts.signal); // ponto seguro: nenhuma tool nova após cancelamento (I-16)
-        assertKnownTarget(call, knownAgents);
+        const known = knownFor(currentAgentName);
+        assertKnownTarget(call, known);
         const toolSpan = tracer?.start(
           "tool.exec",
           { tool: call.name, agent: redactSecrets(currentAgentName) },
@@ -873,7 +926,9 @@ export async function runMultiAgentSession(
             agent: currentAgentName,
             step,
             journal,
-            ...(knownAgents === undefined ? {} : { knownAgents }),
+            ...(known === undefined ? {} : { knownAgents: known }),
+            allow: [...currentTools],
+            maxSteps: currentMaxSteps,
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
@@ -885,7 +940,7 @@ export async function runMultiAgentSession(
 
         const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {
-          const toAgent = opts.registry.getAgent(handoff.to);
+          const toAgent = resolveAgent(handoff.to);
           if (toAgent === undefined) throw new HandoffError("handoff_target_not_found",
             `agent destino "${handoff.to}" não encontrado na configuração`);
           const toModel = modelFor(toAgent); // profile do receptor resolvido ANTES do swap (F-29)
@@ -906,8 +961,11 @@ export async function runMultiAgentSession(
           // CAS (F-26, I-18): created já recebido em outro processo → devolve o existente, sem reexecutar
           if (scanHandoffs(opts.ledger, opts.run).find((h) => h.handoff_id === entry.handoff_id)?.state === "completed") continue;
           const emitterName = currentAgentName;
+          // Respostas das tools puladas ficam no histórico do EMISSOR, antes do save.
+          for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
           // Teto de escopo permanece o máximo do baseExecutor (I-02: teto do sistema)
           // currentCeiling não muda — já é o máximo do baseExecutor
+          saveAgentState(emitterName);
           if (handoff.to !== currentAgentName) agentSteps = 0;
           currentModel = toModel;
           currentAgentName = handoff.to;
@@ -915,6 +973,17 @@ export async function runMultiAgentSession(
           currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
           currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
           currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+          if (opts.spawns?.get(currentAgentName) !== undefined) currentTools.delete("spawn_agent");
+          if (!restoreAgentState(currentAgentName) && opts.spawns?.get(currentAgentName) !== undefined) {
+            messages.length = 0;
+            messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+          }
+          // O system prompt é sempre o do agente que vai executar (inclusive 1ª visita).
+          if (messages.length === 0) {
+            messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+          } else {
+            messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
+          }
           // Self-handoff mantém o mesmo agente ativo: sem destroyed/created (F-22)
           if (handoff.to !== emitterName) {
             ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, emitterName, "handoff");
@@ -932,7 +1001,6 @@ export async function runMultiAgentSession(
           if (await ackWithTimeout(entry, currentAgentName) === "timeout") throw ackTimeoutError(entry);
           opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
           activeHandoff = entry;
-          for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
           messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]${resumeDetail(opts.ledger, entry.artifact)}` });
           handoffTriggered = true;
           break; // interrompe execução das outras tools deste step
@@ -974,6 +1042,7 @@ export async function runMultiAgentSession(
       });
     } finally {
       releaseOnFailure(opts.ledger, opts.audit, opts.run, currentAgentName, lockReason(error, opts.signal));
+      cleanupSpawns(lockReason(error, opts.signal));
     }
     if (rootSpan !== undefined) {
       tracer?.end(rootSpan, {

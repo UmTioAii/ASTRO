@@ -41,6 +41,7 @@ import { runCommandTool } from "./tools/run-command";
 import { writeFileTool } from "./tools/write-file";
 import { handoffTool } from "./tools/handoff";
 import { createListModelCandidatesTool } from "./tools/list-model-candidates";
+import { createSpawnAgentTool, SpawnRegistry } from "./spawn";
 import { grepTool } from "./tools/grep";
 import { listDirTool } from "./tools/list-dir";
 import { editTool } from "./tools/edit";
@@ -534,6 +535,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const registry = new Registry(config);
   const model = registry.require(opts.model ?? config.agent.model);
   const hasAgents = config.agents !== undefined && Object.keys(config.agents).length > 0;
+  /** Só o caminho multi-agent tem handoff/limpeza de spawns; chat/single não usa spawn. */
+  const multiAgentRun = opts.history === undefined && opts.model === undefined && hasAgents;
   let resumed: ReturnType<typeof planResume> | undefined;
   let resumedModel: ModelEntry | undefined;
   let resumedProfile: string | undefined;
@@ -713,6 +716,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
 
   // Tools: builtin + plugins (F7-1); plugin não sobrescreve builtin
   const toolsByName = new Map(TOOLS_BY_NAME);
+  const spawns = new SpawnRegistry();
   // S-09: candidatos dependem do config/ledger/registry deste run.
   toolsByName.set("list_model_candidates", createListModelCandidatesTool(() => ({
     config,
@@ -721,6 +725,17 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     ...(quotaLimits === undefined ? {} : { quotaLimits }),
     ...(budget === undefined ? {} : { budget }),
   })));
+  toolsByName.set("spawn_agent", createSpawnAgentTool({
+    config,
+    registry,
+    ledger,
+    audit,
+    cwd,
+    spawns,
+    enabled: multiAgentRun,
+    ...(quotaLimits === undefined ? {} : { quotaLimits }),
+    ...(budget === undefined ? {} : { budget }),
+  }));
   for (const tool of loaded.tools) {
     if (!toolsByName.has(tool.manifest.name)) toolsByName.set(tool.manifest.name, tool);
   }
@@ -759,7 +774,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       ...(opts.skillsUserRoot === undefined ? {} : { userRoot: opts.skillsUserRoot }) });
     // Se há agents configurados, usa multi-agent session (chat/histórico e
     // override de modelo são single-agent)
-    if (opts.history === undefined && opts.model === undefined && config.agents && Object.keys(config.agents).length > 0) {
+    if (multiAgentRun) {
       const entryAgent = resumed?.agent.agent_id ?? config.agent.entryAgent ?? "planner";
       const multiOpts: MultiAgentSessionOptions = {
         run,
@@ -804,6 +819,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
         signal,
         ...(opts.call === undefined ? {} : { call: opts.call }),
+        spawns,
       };
       result = await runMultiAgentSession(multiOpts, task);
     } else {

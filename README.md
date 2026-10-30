@@ -20,7 +20,7 @@ Running agents in real projects raises three questions: *which model ran this st
 | Question | How ASTRO handles it |
 |---|---|
 | Which model ran this step? | Every completion is recorded in an append-only ledger: agent, real provider, model, tokens and cost. |
-| Who chooses the model? | The configuration does. The LLM never picks its own model, so behavior is predictable. |
+| Who chooses the model? | Declared agents keep the configuration's model; runtime subagents can only choose inside the `list_model_candidates` snapshot, and the choice is recorded in the ledger. |
 | How much did a task cost? | Costs are attributed per agent, per provider and per quota domain, and checked *before* each call. |
 | Can I reproduce a failed run? | Handoffs are durable artifacts (ack, compare-and-swap, idempotent) and the ledger can be replayed. |
 | Can a subagent escalate privileges? | No. Each agent has its own tool allowlist, and denied calls are audited. |

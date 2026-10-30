@@ -12,12 +12,12 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 
 | ID | Invariante | Cobertura no repo |
 |---|---|---|
-| I-01 | Todo agente declara papel, tools, pool de modelos, orçamento e sandbox; nada fora da declaração é acessível | Parcial: allowlist negada por padrão (`src/tools/executor.ts:72`); declaração completa de papéis pendente (#58) |
-| I-02 | Subagente tem escopo igual ou menor que o pai; nunca maior | Pendente (#58) |
+| I-01 | Todo agente declara papel, tools, pool de modelos, orçamento e sandbox; nada fora da declaração é acessível | Parcial: allowlist negada por padrão (`src/tools/executor.ts:72`); subagente runtime herda tools ⊆ pai (#128); declaração completa de papéis pendente (#58) |
+| I-02 | Subagente tem escopo igual ou menor que o pai; nunca maior | Parcial: `spawn_agent` valida tools ⊆ pai e `maxTurns` ≤ pai (#128); blackboard/escopo declarativo pendente (#58) |
 | I-03 | Segredos nunca entram em contexto de modelo, log, cache, auditoria ou memória; só `credentialRef` | `tests/provider.test.ts`, `tests/audit.test.ts`, `tests/app.test.ts:52`, `tests/call-profile-session.test.ts` (reasoning text não persistido); pendência: env herdado pelo `run_command` sem sandbox (`F-00`) |
 | I-04 | Toda decisão relevante gera evento de auditoria sanitizado | Coberto: `src/audit.ts:21` (`sanitize`); trocas emitem `swap.requested/approved/denied/pending`, `run.stopped` e o lock emite `agent.lock.acquired/released/denied` (#124) |
 | I-05 | Contrato antes de código; módulo sem contrato e critério não entra | `docs/workflow.md:7` (issue com critério testável) |
-| I-06 | Placement reproduzível: mesmo run + mesma semente, mesma escolha de modelo e credencial | Parcial: pipeline de candidatos com snapshot/TTL e razão gravável no `agent.created` (`src/model-choice.ts`, #126); spawn runtime pendente (#128) |
+| I-06 | Placement reproduzível: mesmo run + mesma semente, mesma escolha de modelo e credencial | Parcial: snapshot/TTL + escolha (`model`/`profile`/`reason`/`snapshot_id`) gravada no `agent.created` (#126/#128); replay do spawn na retomada ainda depende de S-14 |
 | I-07 | Unidade de placement é `(provider, modelo, credencial)`; cota agregada por conta/org | Parcial: `quotaDomain` (`src/config.ts`) e lock exclusivo de conta por agente ativo (`src/agent-lock.ts`, #124); pool de credenciais pendente (C6/#60) |
 | I-08 | Nenhuma troca silenciosa de credencial, provider ou modelo; toda troca exige aprovação humana | Coberto: fallback de provider/profile e handoff multi-agent passam por `approveSwap` (`src/approval.ts`, `src/session.ts`); sem TTY fica `pending` e o run para. `resume` compara `provider`/`credentialRef` gravados e recusa divergência com `replay_incomplete` (#163) |
 | I-09 | Erro é classificado antes de qualquer ação; cota dura não é retentada | `src/provider/types.ts:42` (classes); `src/quota.ts` (`hard_quota` sem retry) |
@@ -29,7 +29,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 | I-15 | MCP é registrado como plugin de tool, com namespace, e a saída é dado não confiável | Pendente (#56) |
 | I-16 | Toda escrita de arquivo é diff revisável e reversível; nenhuma escrita direta sem registro | Parcial: `edit` com backup e rollback (`src/tools/edit.ts:218`); `write_file` direto, deprecação em ADR (ver `F-04`/`F-16`) |
 | I-17 | Orçamento tem corte físico, não só aviso | Coberto: quota/team + `src/budget.ts` (enforceBudget: onExceed, hardCeiling, não-interativo com checkpoint, unknown_price e reserva da cadeia B9) |
-| I-18 | Comunicação entre agentes passa pelo orquestrador; não há canal peer-to-peer | Parcial: handoff via orquestrador (`src/session.ts:54`); blackboard pendente (C4/#58) |
+| I-18 | Comunicação entre agentes passa pelo orquestrador; não há canal peer-to-peer | Parcial: handoff via orquestrador (`src/session.ts:54`); subagente runtime só fala com o pai (#128); blackboard pendente (C4/#58) |
 | I-19 | Negação de aprovação ou esgotamento de opções termina em parada graciosa com checkpoint | Parcial: cancelamento, troca negada e budget esgotado param em ponto seguro com `interrupted`/retomada (`src/resume.ts`, `astro resume`, `src/budget.ts`); breaker de compactação pendente (S-17/#134) |
 | I-20 | Modelo 1 para modelo 2 sem mudar os contratos de orquestrador, placement, pool e aprovação | Parcial: `Provider` abstrato (`src/provider/types.ts:36`) |
 | I-21 | Tags de modelo são vocabulário fechado, curadas na origem, com `fonte` e `verificado` | Parcial: vocabulário fechado (`src/tags.ts:8`); `fonte`/`verificado` só em `price` |
