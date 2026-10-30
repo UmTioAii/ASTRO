@@ -80,7 +80,7 @@ export class ProfileFallbackProvider implements Provider {
           if (!(await this.#approveSwap(request))) throw new SwapDeniedError(request, "denied");
         }
         // A7: destino precisa de conta livre; ocupado é pulado sem tentar.
-        if (false && this.#moveAccount !== undefined) {
+        if (this.#moveAccount !== undefined) {
           try {
             this.#moveAccount(entry, lastReason);
           } catch (error) {
