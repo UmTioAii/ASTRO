@@ -10,6 +10,13 @@ import { providerAccountRefFor } from "./config";
 import { activeLocks } from "./agent-lock";
 import { budgetStatus } from "./budget";
 import type { Ledger } from "./ledger";
+import { callCost } from "./model-cost";
+import {
+  bumpHealthRevision,
+  isProviderCooling,
+  providerHealthRevision,
+  resetProviderHealth,
+} from "./provider/health-state";
 import { quotaAvailable, type QuotaLimit } from "./quota";
 import type { ModelEntry, Registry } from "./registry";
 import { CAPACITY_TAGS, ROLE_TAGS } from "./tags";
@@ -54,7 +61,7 @@ export interface CandidateSnapshot {
   candidates: ModelCandidate[];
   snapshot_id: string;
   expires_at: string;
-  ranking: "cost" | "no_price";
+  ranking: "cost" | "no_price" | "empty";
 }
 
 /** Escolha resolvida: candidato + razão gravada no ledger (M3, ≤200 chars). */
@@ -98,22 +105,21 @@ interface StoredSnapshot {
 }
 
 const SNAPSHOTS = new Map<string, StoredSnapshot>();
-let healthRevision = 0;
 
 /** Marca mudança de health/cooldown: invalida snapshots vivos (M2/A1). */
 export function markModelHealthChanged(): void {
-  healthRevision++;
+  bumpHealthRevision();
 }
 
 /** Revisão atual de health/cooldown (exposta para testes e spawn). */
 export function modelHealthRevision(): number {
-  return healthRevision;
+  return providerHealthRevision();
 }
 
 /** Limpa o store em testes. */
 export function resetCandidateSnapshots(): void {
   SNAPSHOTS.clear();
-  healthRevision = 0;
+  resetProviderHealth();
 }
 
 function isRoleTag(tag: string): boolean {
@@ -124,29 +130,10 @@ function isCapacityTag(tag: string): boolean {
   return CAPACITY_TAGS.includes(tag);
 }
 
-/** Preço do modelo no provider de destino, com override global do Registry. */
-function priceOf(config: AstroConfig, registry: Registry, provider: string, model: ModelEntry): ModelEntry["price"] {
-  return registry.get(`${provider}/${model.id}`)?.price ?? (provider === model.provider ? model.price : undefined);
-}
-
-/**
- * Pior custo da cadeia (B9): primário + fallbacks declarados, contexto inteiro.
- * Sem preço em qualquer elo, o custo é desconhecido (M6/B6), nunca zero.
- */
-function chainCostMax(config: AstroConfig, registry: Registry, model: ModelEntry): number | null {
-  const chain = [model.provider, ...(config.providers[model.provider]?.fallback ?? [])];
-  let total = 0;
-  for (const provider of chain) {
-    const price = priceOf(config, registry, provider, model);
-    if (price === undefined) return null;
-    total += (model.context * Math.max(price.inputPerM, price.outputPerM)) / 1e6;
-  }
-  return total;
-}
-
 /** O candidato passa pelo filtro duro (M2)? */
 function passesFilter(
   model: ModelEntry,
+  profile: string | undefined,
   query: CandidateQuery,
   deps: CandidateDeps,
   activeAccounts: ReadonlySet<string>,
@@ -163,18 +150,31 @@ function passesFilter(
   const providerConfig = deps.config.providers[model.provider];
   if (providerConfig === undefined) return false;
   if (activeAccounts.has(providerAccountRefFor(model.provider, providerConfig))) return false;
-  if (deps.cooldown?.({ model: model.id, provider: model.provider }) === true) return false;
 
-  const now = new Date(deps.now?.() ?? Date.now());
+  const nowMs = deps.now?.() ?? Date.now();
+  const identity = `${model.provider}/${model.id}`;
+  const cooling = deps.cooldown ?? (({ provider }) => isProviderCooling(provider, nowMs));
+  if (cooling({ model: identity, ...(profile === undefined ? {} : { profile }), provider: model.provider })) {
+    return false;
+  }
+
+  const now = new Date(nowMs);
   const quotaDomain = providerConfig.quotaDomain ?? "default";
   if (!quotaAvailable(deps.ledger, deps.quotaLimits ?? {}, quotaDomain, now)) return false;
 
-  if (deps.budget !== undefined) {
-    const cost = chainCostMax(deps.config, deps.registry, model);
+  if (deps.budget !== undefined && (deps.budget.limitUsd !== null || deps.budget.hardCeilingUsd !== undefined)) {
+    const cost = callCost(deps.config, deps.registry, model, profile);
     const status = budgetStatus(deps.budget, deps.ledger, now);
-    // Teto físico com preço desconhecido não pode ser provado abaixo do limite (B6).
-    if (deps.budget.hardCeilingUsd !== undefined && cost === null) return false;
-    if (cost !== null && status.remainingUsd !== null && cost > status.remainingUsd) return false;
+    // Gasto desconhecido (custo n/d no ledger) não prova que cabe (B6).
+    if (status.spentUsd === null) return false;
+    if (deps.budget.hardCeilingUsd !== undefined) {
+      // Teto físico com preço desconhecido não pode ser provado abaixo do limite.
+      if (!cost.complete) return false;
+      if (status.spentUsd + cost.usd >= deps.budget.hardCeilingUsd) return false;
+    }
+    if (deps.budget.limitUsd !== null) {
+      if (status.remainingUsd === null || cost.usd > status.remainingUsd) return false;
+    }
   }
   return true;
 }
@@ -207,17 +207,18 @@ export function listModelCandidates(query: CandidateQuery, deps: CandidateDeps):
   const seen = new Set<string>();
 
   for (const { model, profile } of sources(deps.config, deps.registry)) {
-    if (!passesFilter(model, query, deps, activeAccounts)) continue;
+    if (!passesFilter(model, profile, query, deps, activeAccounts)) continue;
     const identity = `${model.provider}/${model.id}`;
     const key = `${identity}|${profile ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const cost = callCost(deps.config, deps.registry, model, profile);
     candidates.push({
       model: identity,
       ...(profile === undefined ? {} : { profile }),
-      tags: model.tags,
+      tags: [...model.tags],
       efficiency: model.efficiency ?? 0,
-      estimated_cost_max_usd: chainCostMax(deps.config, deps.registry, model),
+      estimated_cost_max_usd: cost.complete ? cost.usd : null,
     });
   }
 
@@ -238,19 +239,24 @@ export function listModelCandidates(query: CandidateQuery, deps: CandidateDeps):
   });
 
   const now = deps.now?.() ?? Date.now();
+  // Expurga snapshots vencidos: store de processo não cresce sem limite.
+  for (const [id, stored] of SNAPSHOTS) {
+    if (now >= stored.expiresAtMs) SNAPSHOTS.delete(id);
+  }
+  const revision = providerHealthRevision();
   const snapshot: CandidateSnapshot = {
     candidates,
     snapshot_id: createHash("sha256")
-      .update(JSON.stringify({ candidates, query, issuedAt: now, revision: healthRevision }))
+      .update(JSON.stringify({ candidates, query, issuedAt: now, revision }))
       .digest("hex"),
     expires_at: new Date(now + SNAPSHOT_TTL_MS).toISOString(),
-    ranking: knownPrice ? "cost" : "no_price",
+    ranking: candidates.length === 0 ? "empty" : knownPrice ? "cost" : "no_price",
   };
   SNAPSHOTS.set(snapshot.snapshot_id, {
     candidates,
     query: { ...query, requires: query.requires === undefined ? undefined : [...query.requires] },
     expiresAtMs: now + SNAPSHOT_TTL_MS,
-    healthRevision,
+    healthRevision: revision,
   });
   return snapshot;
 }
@@ -276,13 +282,16 @@ export function resolveModelChoice(
     throw new ModelChoiceError("invalid_model_choice", `snapshot "${snapshotId}" não encontrado`);
   }
   const now = deps.now?.() ?? Date.now();
-  if (now >= stored.expiresAtMs || healthRevision !== stored.healthRevision) {
+  if (now >= stored.expiresAtMs || providerHealthRevision() !== stored.healthRevision) {
     const fresh = listModelCandidates(stored.query, deps);
     throw new CandidateSetChangedError("snapshot expirado ou invalidado por health/cooldown", fresh);
   }
 
+  if (stored.candidates.length === 0) {
+    throw new ModelChoiceError("no_candidates", "snapshot sem candidatos");
+  }
   const index = model === undefined ? 0 : stored.candidates.findIndex((candidate) => candidate.model === model);
-  if (index < 0 || stored.candidates.length === 0) {
+  if (index < 0) {
     throw new ModelChoiceError(
       "invalid_model_choice",
       model === undefined ? "snapshot sem candidatos" : `modelo "${model}" fora do snapshot`,

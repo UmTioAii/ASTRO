@@ -16,6 +16,7 @@ import {
   type CandidateDeps,
 } from "../src/model-choice";
 import { Registry } from "../src/registry";
+import { markProviderFailure, markProviderSuccess } from "../src/provider/health-state";
 import { createListModelCandidatesTool } from "../src/tools/list-model-candidates";
 
 function config(over: Record<string, unknown> = {}): AstroConfig {
@@ -103,6 +104,74 @@ describe("pipeline de candidatos (S-09, ADR-0011)", () => {
       { ...deps, cooldown: ({ provider }) => provider === "p2" },
     );
     expect(cooled.candidates.every((c) => c.model.startsWith("p1/"))).toBe(true);
+  });
+
+  test("fallback de provider sem entrada em models[] usa o preço do primário", () => {
+    const cfg = config({
+      providers: {
+        p1: { kind: "openai-compat", baseUrl: "http://p1/v1", credentialRef: "KEY1", fallback: ["p2"] },
+        p2: { kind: "openai-compat", baseUrl: "http://p2/v1", credentialRef: "KEY2", quotaDomain: "p2" },
+      },
+      budget: { scope: "use-as-you-go", limitUsd: null, warnAt: 0.8, onExceed: "stop", hardCeilingUsd: 1 },
+    });
+    const snapshot = listModelCandidates({ need: "writing-code" }, setup(cfg));
+    expect(snapshot.candidates.length).toBeGreaterThan(0);
+    expect(snapshot.ranking).toBe("cost");
+    // p1/cheap: 0.008192 no primário + 0.008192 no fallback que herda model.price
+    expect(snapshot.candidates[0]!.estimated_cost_max_usd).toBeCloseTo(0.016384, 6);
+  });
+
+  test("reserva B9 inclui a cadeia de fallback de profile", () => {
+    const price = { inputPerM: 1, outputPerM: 1, fonte: "t", verificado: false };
+    const cfg = config({
+      models: [
+        { provider: "p1", id: "cheap", tags: ["writing-code"], context: 8192, price },
+        { provider: "p1", id: "big", tags: ["writing-code"], context: 8192, price: { ...price, inputPerM: 8, outputPerM: 8 } },
+        { provider: "p1", id: "tiny", tags: ["writing-code"], context: 8192, price: { ...price, inputPerM: 0.1, outputPerM: 0.1 } },
+      ],
+      modelPool: {
+        fast: { model: "p1/cheap", fallback: ["big"] },
+        big: { model: "p1/big" },
+        tiny: { model: "p1/tiny" },
+      },
+      agent: { model: "p1/cheap", maxSteps: 2, tools: [] },
+      budget: { scope: "day", limitUsd: 0.01, warnAt: 0.8, onExceed: "stop" },
+    });
+    const snapshot = listModelCandidates({ need: "writing-code" }, setup(cfg));
+    expect(snapshot.candidates.map((c) => c.profile)).toEqual(["tiny"]);
+  });
+
+  test("gasto desconhecido no ledger nega o candidato (B6)", () => {
+    const deps = setup(config({ budget: { scope: "day", limitUsd: 0.01, warnAt: 0.8, onExceed: "stop" } }));
+    deps.ledger.record({
+      run: "r0", agent: "a", provider: "p1", model: "m", quotaDomain: "default", tokensIn: 1, tokensOut: 1,
+    });
+    expect(listModelCandidates({ need: "writing-code", requires: ["tools"] }, deps).candidates).toEqual([]);
+  });
+
+  test("cooldown real do provider exclui e health invalida snapshot", () => {
+    const deps = setup();
+    const before = listModelCandidates({ need: "writing-code", requires: ["tools"] }, deps);
+    expect(before.candidates.some((c) => c.model.startsWith("p2/"))).toBe(true);
+
+    markProviderFailure("p2", "outage");
+    const cooled = listModelCandidates({ need: "writing-code", requires: ["tools"] }, deps);
+    expect(cooled.candidates.every((c) => !c.model.startsWith("p2/"))).toBe(true);
+    expect(() => resolveModelChoice(before.snapshot_id, undefined, deps)).toThrow(CandidateSetChangedError);
+
+    markProviderSuccess("p2");
+    expect(listModelCandidates({ need: "writing-code", requires: ["tools"] }, deps)
+      .candidates.some((c) => c.model.startsWith("p2/"))).toBe(true);
+  });
+
+  test("cooldown recebe identidade composta e profile", () => {
+    const seen: Array<{ model: string; profile?: string; provider: string }> = [];
+    const snapshot = listModelCandidates(
+      { need: "writing-code", requires: ["tools"] },
+      { ...setup(), cooldown: (candidate) => { seen.push(candidate); return false; } },
+    );
+    expect(snapshot.candidates.length).toBeGreaterThan(0);
+    expect(seen[0]).toMatchObject({ model: "p1/cheap", profile: "fast", provider: "p1" });
   });
 
   test("quota esgotada e budget curto excluem", () => {
