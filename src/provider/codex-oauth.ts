@@ -1,4 +1,5 @@
 import { isAbortError, throwIfAborted } from "../abort";
+import { applyCallToBody, type AppliedCallProfile, type CallConfig } from "../call-profile";
 import type { CodexTokens } from "./codex-auth";
 import { readCodexAuth, refreshCodexTokens } from "./codex-auth";
 import type {
@@ -19,6 +20,8 @@ interface CodexOAuthProviderOptions {
   fetchFn?: FetchLike;
   /** Relógio em milissegundos desde a epoch (default: `Date.now`). */
   now?: () => number;
+  /** Call profile do modelo (E1–E8). */
+  call?: CallConfig;
 }
 
 const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api/codex";
@@ -303,6 +306,7 @@ export class CodexOAuthProvider implements Provider {
   private readonly fetchFn: FetchLike;
   private readonly now: () => number;
   private tokens: CodexTokens | undefined;
+  private readonly call: CallConfig | undefined;
 
   constructor(opts: CodexOAuthProviderOptions) {
     this.credentialsPath = opts.credentialsPath;
@@ -310,17 +314,19 @@ export class CodexOAuthProvider implements Provider {
     this.headers = opts.headers ?? {};
     this.fetchFn = opts.fetchFn ?? fetch;
     this.now = opts.now ?? (() => Date.now());
+    this.call = opts.call;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     const tokens = await this.validTokens(signal);
+    const { body, call } = this.bodyFor(req);
 
     let response: Response;
     try {
       response = await this.fetchFn(this.url, {
         method: "POST",
         headers: this.headersFor(tokens),
-        body: JSON.stringify(this.bodyFor(req)),
+        body: JSON.stringify(body),
         signal,
       });
     } catch (error) {
@@ -344,7 +350,7 @@ export class CodexOAuthProvider implements Provider {
       throw this.errorFromResponse(response.status, text, tokens);
     }
 
-    return parseSse(text, (value) => this.redact(value, tokens));
+    return { ...parseSse(text, (value) => this.redact(value, tokens)), call };
   }
 
   private async validTokens(signal?: AbortSignal): Promise<CodexTokens> {
@@ -372,7 +378,7 @@ export class CodexOAuthProvider implements Provider {
     return headers;
   }
 
-  private bodyFor(req: CompletionRequest): ResponsesRequestBody {
+  private bodyFor(req: CompletionRequest): { body: ResponsesRequestBody; call: AppliedCallProfile } {
     const { instructions, input } = toInput(req.messages);
     const body: ResponsesRequestBody = { model: req.model, input, stream: true };
 
@@ -385,7 +391,8 @@ export class CodexOAuthProvider implements Provider {
         parameters: tool.parameters,
       }));
     }
-    return body;
+    const call = applyCallToBody(body as unknown as Record<string, unknown>, this.call, req.call);
+    return { body, call };
   }
 
   private errorFromResponse(status: number, text: string, tokens: CodexTokens): ProviderError {

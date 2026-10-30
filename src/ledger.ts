@@ -7,7 +7,7 @@ import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./ha
 import { redactSecrets } from "./sanitize-external";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
-export const LEDGER_SCHEMA_VERSION = 2;
+export const LEDGER_SCHEMA_VERSION = 3;
 
 /** Timeout do lock de arquivo (F-26/A4); depois segue em melhor esforço ou falha fechado. */
 const LEDGER_LOCK_TIMEOUT_MS = 1_000;
@@ -63,7 +63,7 @@ export interface LedgerEntry {
   /** Modo de thinking (E2). Ausente em entradas legadas. */
   thinking?: string;
   /** Parâmetros proibidos removidos antes do envio (E8). Ausente em entradas legadas. */
-  "param.stripped"?: string[];
+  "param.stripped"?: Array<{ name: string; reason: string } | string>;
 }
 
 /** Estado de execução de um run gravado no ledger (F-02). */
@@ -238,6 +238,9 @@ export class Ledger {
 
   record(e: Omit<LedgerEntry, "ts" | "costUsd" | "schemaVersion" | "kind">, price?: PriceConfig): LedgerEntry {
     const costUsd = estimateCost(e.tokensIn, e.tokensOut, price);
+    if (e.lvl !== undefined && (!Number.isInteger(e.lvl) || e.lvl < 0 || e.lvl > 4)) {
+      throw new Error(`nível de esforço inválido no ledger: ${String(e.lvl)} (esperado inteiro 0..4)`);
+    }
     if (costUsd === null) {
       this.warn(
         `sem preço curado para o modelo "${e.provider}/${e.model}"; custo não calculado`,
@@ -245,7 +248,11 @@ export class Ledger {
     }
     const stripped = e["param.stripped"] === undefined
       ? undefined
-      : e["param.stripped"].map((s) => redactSecrets(s));
+      : e["param.stripped"].map((s) => typeof s === "string"
+        ? redactSecrets(s)
+        : { name: redactSecrets(s.name), reason: redactSecrets(s.reason) });
+    const effort = e.effort === undefined ? undefined : redactSecrets(e.effort);
+    const thinking = e.thinking === undefined ? undefined : redactSecrets(e.thinking);
     const entry: LedgerEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
       kind: "usage",
@@ -253,6 +260,8 @@ export class Ledger {
       ...e,
       run: redactSecrets(e.run), agent: redactSecrets(e.agent),
       ...(e.profile === undefined ? {} : { profile: redactSecrets(e.profile) }),
+      ...(effort === undefined ? {} : { effort }),
+      ...(thinking === undefined ? {} : { thinking }),
       ...(stripped === undefined ? {} : { "param.stripped": stripped }),
       costUsd,
       seq: this.takeSeq(),

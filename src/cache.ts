@@ -11,13 +11,15 @@ import { Database } from "bun:sqlite";
 import { throwIfAborted } from "./abort";
 import type { CompletionRequest, CompletionResponse, Provider } from "./provider/types";
 
-/** Chave determinística da request: modelo + profile + mensagens + tools. */
+/** Chave determinística da request: modelo + profile + mensagens + tools + call. */
 export function cacheKey(req: CompletionRequest): string {
   const canonical = JSON.stringify({
     model: req.model,
     profile: req.profile ?? null,
     messages: req.messages,
     tools: req.tools ?? [],
+    // lvl/thinking mudam a resposta: não podem compartilhar entrada (E1).
+    call: req.call ?? null,
   });
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -82,8 +84,11 @@ export class CompletionCache {
 
 export interface CachedProviderOptions {
   cache: CompletionCache;
-  /** Escopo do cache (ex.: provider/model); evita hit cruzado entre providers com mesmo id. */
-  scope?: string;
+  /**
+   * Escopo do cache (ex.: provider/model + call config); evita hit cruzado entre
+   * providers/configs com mesmo id. Pode variar por request (profile resolvido).
+   */
+  scope?: string | ((req: CompletionRequest) => string);
   ttlHours: number;
   maxEntries: number;
   /** Callback no hit (auditoria cache.hit). */
@@ -95,12 +100,15 @@ export function cachedProvider(provider: Provider, opts: CachedProviderOptions):
   return {
     async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
       throwIfAborted(signal);
-      const key = opts.scope === undefined ? cacheKey(req) : `${opts.scope}|${cacheKey(req)}`;
+      const scope = typeof opts.scope === "function" ? opts.scope(req) : opts.scope;
+      const key = scope === undefined ? cacheKey(req) : `${scope}|${cacheKey(req)}`;
       const hit = opts.cache.get(key, opts.ttlHours);
       if (hit !== null) {
         opts.onHit?.(key);
-        // hit não gasta tokens: usage zerado → custo 0 no ledger
-        return { ...hit, usage: { inputTokens: 0, outputTokens: 0 } };
+        // hit não gasta tokens: usage zerado → custo 0 no ledger. O `call` ecoado
+        // é do request original; não houve envio nesta chamada, então não entra.
+        const { call: _cachedCall, ...cached } = hit;
+        return { ...cached, usage: { inputTokens: 0, outputTokens: 0 } };
       }
       const response = await provider.complete(req, signal);
       throwIfAborted(signal); // provider pode ignorar o signal (ex.: plugin): não gravar resposta pós-abort

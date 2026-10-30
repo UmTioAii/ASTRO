@@ -69,6 +69,14 @@ describe("cacheKey (F6-4)", () => {
       cacheKey(req({ tools: [{ name: "t", description: "d", parameters: {} }] })),
     );
   });
+
+  test("call (lvl/thinking) diferente → chave diferente (E1)", () => {
+    expect(cacheKey(req())).not.toBe(cacheKey(req({ call: { lvl: 4 } })));
+    expect(cacheKey(req({ call: { lvl: 4 } }))).not.toBe(cacheKey(req({ call: { lvl: 0 } })));
+    expect(cacheKey(req({ call: { lvl: 4, thinking: "on" } }))).not.toBe(
+      cacheKey(req({ call: { lvl: 4, thinking: "off" } })),
+    );
+  });
 });
 
 describe("CompletionCache (F6-4)", () => {
@@ -136,6 +144,59 @@ describe("cachedProvider (F6-4)", () => {
       expect(second.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
       expect(hits).toHaveLength(1);
       expect(hits[0]).toBe(cacheKey(req()));
+    } finally {
+      cache.close();
+    }
+  });
+
+  test("call diferente é miss separado e não devolve resposta de outro lvl (E1)", async () => {
+    const cache = makeCache();
+    try {
+      let calls = 0;
+      const inner: Provider = {
+        complete: async (request) => { calls++; return resp({ content: `lvl-${request.call?.lvl ?? "none"}` }); },
+      };
+      const wrapped = cachedProvider(inner, { cache, ttlHours: 24, maxEntries: 100 });
+
+      expect((await wrapped.complete(req({ call: { lvl: 4 } }))).content).toBe("lvl-4");
+      expect((await wrapped.complete(req({ call: { lvl: 0 } }))).content).toBe("lvl-0");
+      expect(calls).toBe(2);
+      // mesma call volta a acertar o cache
+      expect((await wrapped.complete(req({ call: { lvl: 4 } }))).content).toBe("lvl-4");
+      expect(calls).toBe(2);
+    } finally {
+      cache.close();
+    }
+  });
+
+  test("scope por request separa profiles/configs e hit não ecoa call", async () => {
+    const cache = makeCache();
+    try {
+      let calls = 0;
+      const inner: Provider = {
+        complete: async (request) => {
+          calls++;
+          return resp({ content: `${request.profile ?? "base"}-${calls}`, call: { lvl: 4, effort: "ultra", stripped: [] } });
+        },
+      };
+      const wrapped = cachedProvider(inner, {
+        cache,
+        scope: (request) => `scope|${request.profile ?? "base"}`,
+        ttlHours: 24,
+        maxEntries: 100,
+      });
+
+      const first = await wrapped.complete(req({ profile: "a" }));
+      expect(first.content).toBe("a-1");
+      expect(first.call).toMatchObject({ lvl: 4 });
+
+      const hit = await wrapped.complete(req({ profile: "a" }));
+      expect(hit.content).toBe("a-1");
+      expect(calls).toBe(1);
+      expect(hit.call).toBeUndefined(); // nada foi enviado neste hit
+
+      await wrapped.complete(req({ profile: "b" }));
+      expect(calls).toBe(2);
     } finally {
       cache.close();
     }

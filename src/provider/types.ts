@@ -1,3 +1,5 @@
+import type { AppliedCallProfile, CallSelection } from "../call-profile";
+
 /** Mensagem no formato de chat do protocolo OpenAI. */
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -26,6 +28,8 @@ export interface CompletionRequest {
   tools?: ToolDef[];
   /** Profile da model pool que originou a chamada (F-31); roteia o fallback de profile. */
   profile?: string;
+  /** Escolha runtime do call profile (E1–E5); ausente = defaults do modelo. */
+  call?: CallSelection;
   /** Recebe deltas de texto quando o provider suporta streaming (T3). */
   onToken?: (text: string) => void;
 }
@@ -48,6 +52,8 @@ export interface CompletionResponse {
   model?: string;
   /** Trocas de profile até o atendimento (F-31); ausente quando o primário atendeu. */
   fallbacks?: FallbackRecord[];
+  /** Perfil aplicado à chamada (E7): lvl/effort/thinking e proibidos removidos. */
+  call?: AppliedCallProfile;
 }
 
 /** Contrato de um provider de chat completion. */

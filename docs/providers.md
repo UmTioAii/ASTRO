@@ -66,6 +66,46 @@ O ledger (F-31d) grava a identidade efetiva que atendeu — `provider`, `model`,
 
 `bun src/cli.ts pool health` estende `health` (F6-6): imprime `{status, profiles, providers}` em JSON, com status por profile — `ok` quando o provider primário responde, `degraded` quando ele está fora mas há fallback saudável na cadeia, `down` quando nenhum caminho responde. Sai 0 só com o agregado `ok`.
 
+## Call profile por modelo (E1–E8, ADR-0012)
+
+`models[].call` liga a escala uniforme `lvl` 0 (low) … 4 (ultra) ao parâmetro de cada provider, sem hardcode:
+
+```json
+{
+  "call": {
+    "effort": { "param": "reasoning.effort", "map": { "0": "minimal", "1": "low", "2": "medium", "3": "high", "4": "max" } },
+    "thinking": { "mode": "toggle", "param": "thinking.type", "on": "enabled", "off": "disabled" },
+    "forbidden": ["temperature"]
+  }
+}
+```
+
+| Campo | Comportamento |
+|---|---|
+| `effort.param` / `effort.map` | `lvl` 0..4 → valor aceito pelo provider; ausente `lvl` usa 2 quando o modelo declara effort (E1); o caminho não pode apontar para raiz de protocolo |
+| `thinking.mode` | `always` envia `on`; `adaptive` envia `on` (provider decide); `toggle` usa `on`/`off` conforme a escolha (default `on`); `none` não envia (E2) |
+| `forbidden` | caminhos removidos do corpo antes do envio e gravados em `usage["param.stripped"]` como `[{name, reason:"forbidden"}]`; raízes de protocolo (`model`, `messages`, `input`, `stream`, `stream_options`, `tools`, `instructions`) são recusadas na config (E8) |
+| `call` na sessão | `RunOptions.call`/`SessionOptions.call` = `{lvl?, thinking?}`; a automação E4/E5 recebe `fixed` em `planEffortChange`/`applyEffortChange`, nunca sobrescrevendo o valor fixado (E3) |
+
+`planEffortChange`/`applyEffortChange` (`src/call-profile.ts`) implementam as regras E4/E5 como primitivas para o S-09: descer e subir 1–2 níveis é automático; subir 3+ exige aprovação. O run atual não altera o nível sozinho. O `usage` grava `lvl`, `effort`, `thinking` e `param.stripped` (E7); em cache hit o `call` não é ecoado, porque nenhuma chamada foi enviada. Texto de raciocínio (`reasoning_content`) nunca é persistido: o parser só lê `content`, tool calls e usage (I-03, Q-08).
+
+Providers de plugin não recebem `models[].call`; a factory do plugin deve ler o próprio config se quiser aplicar effort/thinking. A cadeia de fallback usa a entrada `models[]` do provider de destino quando declarada e, sem ela, não herda o `call` do primário (parâmetro de outro protocolo quebraria a chamada). O cache fica acima da cadeia: mudar o `call` de um destino de fallback só invalida a entrada depois do TTL; o escopo por profile cobre o modelo resolvido do profile.
+
+### E6 — valores oficiais reverificados (2026-10-30)
+
+| Provider | Effort | Thinking | Fonte |
+|---|---|---|---|
+| Anthropic (4.6+) | `output_config.effort`: `low`, `medium`, `high`, `max`; default `high` (Opus/Haiku 5.5: `medium`) | `thinking.type: "adaptive"`; `enabled`+`budget_tokens` é legado e 4.7+ rejeita | `docs.claude.com` (extended thinking / effort) |
+| OpenAI (gpt-5.5/gpt-6) | `reasoning.effort`: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; gpt-5.5 default `medium` | sem toggle; o raciocínio é do modelo | `platform.openai.com` (reasoning guide) |
+| DeepSeek | topo `reasoning_effort` (exemplo oficial: `high`) | `thinking.type: "enabled" \| "disabled"` | `api-docs.deepseek.com` |
+| Kimi K3 (`kimi-k3.1-pro`) | topo `reasoning_effort`: `low`, `high`, `max`; default `max` | sempre ligado, sem toggle | `platform.kimi.ai` (chat completions) |
+| Kimi K2.6 | — | `thinking.type: "enabled" \| "disabled"` | idem |
+| Kimi K2.7-code | — | sempre `enabled`; `disabled` retorna erro | idem |
+| NVIDIA NIM (openai-compat) | `reasoning.effort` **quando o modelo expõe**; não verificado para `meta/llama-3.3-70b-instruct` | depende do modelo | `integrate.api.nvidia.com`; omita `call` se o modelo não documentar o parâmetro |
+| GLM via NIM | não verificado | não verificado | exige config explícita; nada é hardcoded (E9) |
+
+Mapas sugeridos: Anthropic `{0:"low",1:"low",2:"medium",3:"high",4:"max"}`; OpenAI `{0:"minimal",1:"low",2:"medium",3:"high",4:"max"}`; DeepSeek `{0:"low",1:"low",2:"medium",3:"high",4:"high"}`; Kimi K3 `{0:"low",1:"low",2:"high",3:"high",4:"max"}`. O mapa é config, não constante do harness.
+
 ## Streaming (T3)
 
 Com `CompletionRequest.onToken`, o `openai-compat` pede `stream: true` + `stream_options.include_usage` e consome SSE (`data:`), agregando conteúdo, tool calls fatiadas e usage. Resposta 200 que não é `text/event-stream` cai no parser JSON normal (sem deltas), e frames de erro (`data: {"error":...}`) ou stream sem nenhum frame viram `ProviderError("outage")`. Depois do primeiro token não há retry nem troca de provider/profile (`streamStarted`), para não duplicar texto; o custo usa o usage do chunk final (sem chunk de usage, usage fica zero).

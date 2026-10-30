@@ -12,7 +12,7 @@ import { CodexOAuthProvider } from "./provider/codex-oauth";
 import { OpenAICompatProvider } from "./provider/openai-compat";
 import { FallbackProvider, DEFAULT_PRIORITY } from "./provider/fallback-provider";
 import { ProfileFallbackProvider, type ProfileChainEntry } from "./provider/profile-fallback-provider";
-import type { ChatMessage, Provider } from "./provider/types";
+import type { ChatMessage, CompletionRequest, Provider } from "./provider/types";
 import { Registry, type ModelEntry } from "./registry";
 import { sendTelemetry } from "./telemetry";
 import { tracerFromEnv } from "./tracing";
@@ -26,6 +26,7 @@ import { budgetStatus, restrictBudget, BudgetExceededError, type BudgetDecider, 
 import { MaxStepsError, runSession, runMultiAgentSession, type EffectiveIdentity, type IdentityResolver, type MultiAgentSessionOptions } from "./session";
 import { assertResumeIdentity, planResume, ReplayIncompleteError } from "./resume";
 import { recoverCrashedAgents, recoverDeadAgentLocks } from "./agent-lock";
+import type { CallSelection } from "./call-profile";
 import type { AgentIdentity } from "./session";
 import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { ProviderError } from "./provider/types";
@@ -78,6 +79,8 @@ export interface RunOptions {
   suppressRunEvents?: boolean;
   /** Recebe deltas de texto do provider (T3); ausente = resposta única. */
   onToken?: (text: string) => void;
+  /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
+  call?: CallSelection;
 }
 
 export interface RunReport {
@@ -207,6 +210,7 @@ export function createProvider(
         baseUrl: providerConfig.baseUrl,
         ...(apiKey === undefined ? {} : { apiKey }),
         ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
+        ...(model.call === undefined ? {} : { call: model.call }),
       }),
       ...(credentialRef === undefined ? {} : { credentialRef }),
       quotaDomain,
@@ -223,6 +227,7 @@ export function createProvider(
         credentialsPath,
         ...(providerConfig.baseUrl === undefined ? {} : { baseUrl: providerConfig.baseUrl }),
         ...(providerConfig.headers === undefined ? {} : { headers: providerConfig.headers }),
+        ...(model.call === undefined ? {} : { call: model.call }),
       }),
       credentialRef,
       quotaDomain,
@@ -398,13 +403,23 @@ function providerChain(
           config, model, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
         )),
       },
-      ...(primaryConfig?.fallback ?? []).map((name) => ({
-        name,
-        priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
-        create: memoizedCreate(() => createGuardedProvider(
-          config, { ...model, provider: name }, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
-        )),
-      })),
+      ...(primaryConfig?.fallback ?? []).map((name) => {
+        // O fallback pode ser outro kind/provider: usa a entrada de `models[]`
+        // do destino quando declarada; sem ela, não herda o `call` do primário
+        // (parâmetro de outro protocolo quebraria a chamada).
+        const destination = config.models.find((entry) => entry.provider === name && entry.id === model.id);
+        const { call: _primaryCall, ...withoutCall } = model;
+        const fallbackModel: ModelEntry = destination === undefined
+          ? { ...withoutCall, provider: name }
+          : { ...destination, status: destination.status ?? "active" };
+        return {
+          name,
+          priority: config.providers[name]?.priority ?? DEFAULT_PRIORITY,
+          create: memoizedCreate(() => createGuardedProvider(
+            config, fallbackModel, env, pluginFactories, audit, run, ledger, quotaLimits, profile, agentName,
+          )),
+        };
+      }),
     ],
     maxRetries: primaryConfig?.maxRetries,
     retryBackoffMs: primaryConfig?.retryBackoffMs,
@@ -630,7 +645,19 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   // Completion cache (F6-4): vale para o provider base/profile e para os
   // providers por modelo do multi-agent (mesma instância de cache).
   let cache: CompletionCache | undefined;
-  const withCache = (provider: Provider, scope: string): Provider => {
+  /** Escopo inclui a config de call: mudar effort/thinking invalida a entrada. */
+  const cacheScope = (m: ModelEntry): string =>
+    `${m.provider}/${m.id}|${JSON.stringify(m.call ?? null)}`;
+  /** Profile resolvido decide o call aplicado, não o modelo de entrada. */
+  const scopeForRequest = (req: CompletionRequest): string => {
+    if (req.profile === undefined) return cacheScope(model);
+    try {
+      return cacheScope(registry.resolveProfile(req.profile));
+    } catch {
+      return cacheScope(model);
+    }
+  };
+  const withCache = (provider: Provider, scope: string | ((req: CompletionRequest) => string)): Provider => {
     const c = cache;
     if (c === undefined) return provider;
     return cachedProvider(provider, {
@@ -645,7 +672,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   };
   if (config.cache?.enabled === true) {
     cache = new CompletionCache(join(dirname(ledgerPath), "cache.db"));
-    effectiveProvider = withCache(effectiveProvider, `${model.provider}/${model.id}`);
+    effectiveProvider = withCache(effectiveProvider, scopeForRequest);
   }
 
   // Provider por modelo do agent (F-31d): o multi-agent troca de modelo e precisa
@@ -660,7 +687,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     const built = (config.providers[m.provider]?.fallback ?? []).length > 0
       ? providerChain(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, approveSwap, () => activeAgent.name)
       : createGuardedProvider(config, m, env, loaded.providerFactories, audit, run, ledger, quotaLimits, undefined, () => activeAgent.name);
-    const wrapped = withCache(built, key);
+    const wrapped = withCache(built, cacheScope(m));
     modelProviders.set(key, wrapped);
     return wrapped;
   };
@@ -773,6 +800,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
         // Handoff (F-24): timeout do ack; default 30000ms (D-15)
         ...(config.handoff === undefined ? {} : { ackTimeoutMs: config.handoff.ackTimeoutMs }),
         signal,
+        ...(opts.call === undefined ? {} : { call: opts.call }),
       };
       result = await runMultiAgentSession(multiOpts, task);
     } else {
@@ -816,6 +844,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
           protectedPaths: [ledgerPath, auditPath],
           secretEnvNames,
           signal,
+          ...(opts.call === undefined ? {} : { call: opts.call }),
         },
         task,
       );
