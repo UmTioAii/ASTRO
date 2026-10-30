@@ -6,11 +6,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Auditor } from "./audit";
-import { AccountLockedError, acquireAgentLock } from "./agent-lock";
+import { AccountLockedError, acquireAgentLock, releaseAgentLock } from "./agent-lock";
 import type { AstroConfig, BudgetConfig } from "./config";
 import { providerAccountRefFor } from "./config";
 import type { Ledger } from "./ledger";
 import {
+  CandidateSetChangedError,
   listModelCandidates,
   ModelChoiceError,
   resolveModelChoice,
@@ -135,6 +136,18 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function toolError(error: unknown): ToolResult {
+  if (error instanceof CandidateSetChangedError) {
+    return {
+      output: JSON.stringify({
+        error: error.code,
+        message: error.message,
+        snapshot_id: error.snapshot.snapshot_id,
+        expires_at: error.snapshot.expires_at,
+        candidates: error.snapshot.candidates,
+      }),
+      isError: true,
+    };
+  }
   if (error instanceof ModelChoiceError || error instanceof AccountLockedError || error instanceof SpawnLimitError) {
     const candidates = error instanceof ModelChoiceError ? error.candidates : undefined;
     return {
@@ -233,15 +246,30 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
 
         const cdeps = candidateDeps(deps);
         let choice;
-        if (raw.snapshot_id !== undefined) {
-          choice = resolveModelChoice(raw.snapshot_id, raw.model, cdeps);
+        let snapshotId = typeof raw.snapshot_id === "string" ? raw.snapshot_id : undefined;
+        if (snapshotId !== undefined) {
+          choice = resolveModelChoice(snapshotId, raw.model, cdeps);
         } else {
           const query = {
             need: raw.need,
             ...(tools.length > 0 ? { requires: ["tools"] } : {}),
           };
           const snapshot = listModelCandidates(query, cdeps);
-          choice = resolveModelChoice(snapshot.snapshot_id, raw.model, cdeps);
+          snapshotId = snapshot.snapshot_id;
+          choice = resolveModelChoice(snapshotId, raw.model, cdeps);
+        }
+
+        if (tools.length > 0) {
+          const entry = deps.registry.get(choice.candidate.model);
+          if (!choice.candidate.tags.includes("tools") || entry?.capabilities?.tools !== true) {
+            return {
+              output: JSON.stringify({
+                error: "invalid_model_choice",
+                message: `modelo "${choice.candidate.model}" não declara suporte a tools`,
+              }),
+              isError: true,
+            };
+          }
         }
 
         const slash = choice.candidate.model.indexOf("/");
@@ -273,30 +301,37 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
           ...(choice.candidate.profile === undefined ? {} : { profile: choice.candidate.profile }),
           parent_agent_id: ctx.agent,
           reason,
+          ...(snapshotId === undefined ? {} : { snapshot_id: snapshotId }),
         });
 
-        deps.spawns.add({
-          agent_id: agentId,
-          parent_agent_id: ctx.agent,
-          candidate: choice.candidate,
-          tools: [...tools],
-          maxSteps: childMax,
-          instructions,
-          reason,
-          createdAt: Date.now(),
-        });
-        deps.audit.append({
-          run: ctx.run,
-          agent: ctx.agent,
-          tipo: "agent.spawned",
-          payload: {
+        try {
+          deps.spawns.add({
             agent_id: agentId,
             parent_agent_id: ctx.agent,
-            model: choice.candidate.model,
-            ...(choice.candidate.profile === undefined ? {} : { profile: choice.candidate.profile }),
+            candidate: choice.candidate,
+            tools: [...tools],
+            maxSteps: childMax,
+            instructions,
             reason,
-          },
-        });
+            createdAt: Date.now(),
+          });
+          deps.audit.append({
+            run: ctx.run,
+            agent: ctx.agent,
+            tipo: "agent.spawned",
+            payload: {
+              agent_id: agentId,
+              parent_agent_id: ctx.agent,
+              model: choice.candidate.model,
+              ...(choice.candidate.profile === undefined ? {} : { profile: choice.candidate.profile }),
+              ...(snapshotId === undefined ? {} : { snapshot_id: snapshotId }),
+              reason,
+            },
+          });
+        } catch (error) {
+          releaseAgentLock(deps.ledger, deps.audit, { run: ctx.run, agent_id: agentId, reason: "spawn_failed" });
+          throw error;
+        }
 
         return {
           output: JSON.stringify({

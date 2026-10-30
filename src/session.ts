@@ -660,6 +660,19 @@ export async function runMultiAgentSession(
     { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT },
     { role: "user", content: task },
   ];
+  /** Histórico por agent: o retorno do filho não apaga o contexto do orchestrator (A9). */
+  const agentState = new Map<string, { messages: ChatMessage[]; systemPrompt?: string }>();
+  const saveAgentState = (name: string): void => {
+    agentState.set(name, { messages: [...messages], systemPrompt: currentSystemPrompt });
+  };
+  const restoreAgentState = (name: string): boolean => {
+    const saved = agentState.get(name);
+    if (saved === undefined) return false;
+    messages.length = 0;
+    messages.push(...saved.messages);
+    currentSystemPrompt = saved.systemPrompt;
+    return true;
+  };
   /** Journal por sessão (F-03): dedup de calls idênticos no mesmo step, compartilhado entre executores. */
   const journal = new CallJournal();
   /** Agents resolvíveis: declarados + subagentes deste run (C4a). */
@@ -744,6 +757,7 @@ export async function runMultiAgentSession(
       if (toAgent === undefined) throw new HandoffError("handoff_target_not_found", `agent destino "${pending.artifact.to}" não encontrado na configuração`);
       const toModel = modelFor(toAgent); // profile resolvido antes da retomada (F-29)
       await approveHandoff(currentModel, currentAgent, toModel, toAgent);
+      saveAgentState(currentAgentName);
       currentModel = toModel;
       currentAgentName = pending.artifact.to;
       currentAgent = toAgent;
@@ -752,7 +766,10 @@ export async function runMultiAgentSession(
       currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
       // Teto de escopo na retomada = máximo do baseExecutor (I-02)
       // currentCeiling não muda — já é o máximo do baseExecutor
-      messages[0] = { role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT };
+      if (!restoreAgentState(currentAgentName) && opts.spawns?.get(currentAgentName) !== undefined) {
+        messages.length = 0;
+        messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+      }
       // Verifier de identidade na retomada (F-26): o receptor começa em source_step+1
       verifyHandoffIdentity(
         { run: redactSecrets(opts.run), from: pending.artifact.from, to: redactSecrets(currentAgentName),
@@ -764,11 +781,6 @@ export async function runMultiAgentSession(
       opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: pending.handoff_id, artifact: pending.artifact } });
       activeHandoff = pending;
       const resumo = resumeDetail(opts.ledger, pending.artifact);
-      // Subagente não herda histórico do orchestrator (A9): só system + artefato.
-      if (opts.spawns?.get(currentAgentName) !== undefined) {
-        messages.length = 0;
-        messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
-      }
       messages.push({ role: "system", content: `[Sistema: handoff ${pending.handoff_id} para "${pending.artifact.to}": ${JSON.stringify(pending.artifact)}]${resumo}` });
       ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, pending.artifact.from, "handoff");
       ensureAgentCreated(opts.ledger, opts.audit, opts.run, currentAgentName, currentModel.id, identityOf(currentModel), currentAgent.profile, pending.artifact.from);
@@ -945,6 +957,7 @@ export async function runMultiAgentSession(
           const emitterName = currentAgentName;
           // Teto de escopo permanece o máximo do baseExecutor (I-02: teto do sistema)
           // currentCeiling não muda — já é o máximo do baseExecutor
+          saveAgentState(emitterName);
           if (handoff.to !== currentAgentName) agentSteps = 0;
           currentModel = toModel;
           currentAgentName = handoff.to;
@@ -952,6 +965,10 @@ export async function runMultiAgentSession(
           currentMaxSteps = currentAgent.maxSteps ?? opts.baseMaxSteps;
           currentSystemPrompt = currentAgent.systemPrompt ?? opts.baseSystemPrompt;
           currentTools = currentAgent.tools ? new Set(currentAgent.tools) : new Set();
+          if (!restoreAgentState(currentAgentName) && opts.spawns?.get(currentAgentName) !== undefined) {
+            messages.length = 0;
+            messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
+          }
           // Self-handoff mantém o mesmo agente ativo: sem destroyed/created (F-22)
           if (handoff.to !== emitterName) {
             ensureAgentDestroyed(opts.ledger, opts.audit, opts.run, emitterName, "handoff");
@@ -970,11 +987,6 @@ export async function runMultiAgentSession(
           opts.audit.append({ run: opts.run, agent: currentAgentName, tipo: "handoff.received", payload: { handoff_id: entry.handoff_id, artifact: entry.artifact } });
           activeHandoff = entry;
           for (const rest of response.toolCalls.slice(callIndex + 1)) messages.push({ role: "tool", content: JSON.stringify({ skipped: "handoff" }), toolCallId: rest.id });
-          // Subagente não herda histórico do orchestrator (A9): só system + artefato.
-          if (opts.spawns?.get(currentAgentName) !== undefined) {
-            messages.length = 0;
-            messages.push({ role: "system", content: currentSystemPrompt ?? DEFAULT_SYSTEM_PROMPT });
-          }
           messages.push({ role: "system", content: `[Sistema: handoff ${entry.handoff_id} para "${entry.artifact.to}": ${JSON.stringify(entry.artifact)}]${resumeDetail(opts.ledger, entry.artifact)}` });
           handoffTriggered = true;
           break; // interrompe execução das outras tools deste step

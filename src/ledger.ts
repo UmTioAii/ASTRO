@@ -103,6 +103,8 @@ export interface LedgerAgentEntry {
   reason?: string;
   /** PID dono do lock (A4); ausente em ledger legado. */
   pid?: number;
+  /** Snapshot de candidatos que originou a escolha (S-09/I-06). */
+  snapshot_id?: string;
   seq: number;
 }
 
@@ -523,6 +525,8 @@ export class Ledger {
     reason?: string;
     /** PID dono do lock; default o processo atual (A4). */
     pid?: number;
+    /** Snapshot de candidatos da escolha (I-06). */
+    snapshot_id?: string;
   }): LedgerAgentEntry {
     const entry: LedgerAgentEntry = {
       schemaVersion: LEDGER_SCHEMA_VERSION,
@@ -539,6 +543,7 @@ export class Ledger {
       ...(opts.credentialRef === undefined ? {} : { credentialRef: redactSecrets(opts.credentialRef) }),
       ...(opts.profile === undefined ? {} : { profile: redactSecrets(opts.profile) }),
       ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
+      ...(opts.snapshot_id === undefined ? {} : { snapshot_id: redactSecrets(opts.snapshot_id) }),
       pid: opts.pid ?? process.pid,
       seq: this.takeSeq(),
     };

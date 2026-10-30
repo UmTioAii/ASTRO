@@ -535,6 +535,8 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const registry = new Registry(config);
   const model = registry.require(opts.model ?? config.agent.model);
   const hasAgents = config.agents !== undefined && Object.keys(config.agents).length > 0;
+  /** Só o caminho multi-agent tem handoff/limpeza de spawns; chat/single não usa spawn. */
+  const multiAgentRun = opts.history === undefined && opts.model === undefined && hasAgents;
   let resumed: ReturnType<typeof planResume> | undefined;
   let resumedModel: ModelEntry | undefined;
   let resumedProfile: string | undefined;
@@ -723,7 +725,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     ...(quotaLimits === undefined ? {} : { quotaLimits }),
     ...(budget === undefined ? {} : { budget }),
   })));
-  if (hasAgents) {
+  if (multiAgentRun) {
     toolsByName.set("spawn_agent", createSpawnAgentTool({
       config,
       registry,
@@ -773,7 +775,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
       ...(opts.skillsUserRoot === undefined ? {} : { userRoot: opts.skillsUserRoot }) });
     // Se há agents configurados, usa multi-agent session (chat/histórico e
     // override de modelo são single-agent)
-    if (opts.history === undefined && opts.model === undefined && config.agents && Object.keys(config.agents).length > 0) {
+    if (multiAgentRun) {
       const entryAgent = resumed?.agent.agent_id ?? config.agent.entryAgent ?? "planner";
       const multiOpts: MultiAgentSessionOptions = {
         run,
