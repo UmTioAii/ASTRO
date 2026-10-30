@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { resolveWithin } from "./paths";
 import { ToolError, type Tool, type ToolResult } from "./types";
 
-const MAX_RESULTS = 100;
+const PAGE_SIZE = 100;
 const SKIP_DIRS = new Set(["node_modules", ".git", ".astro", "dist", "coverage", ".worktrees"]);
 
 function failure(message: string): ToolResult {
@@ -14,6 +14,7 @@ interface GrepInput {
   pattern: string;
   path: string;
   flags: string;
+  page: number;
 }
 
 interface GrepMatch {
@@ -26,14 +27,21 @@ function parseInput(input: unknown): GrepInput {
   if (typeof input !== "object" || input === null) {
     throw new ToolError("entrada inválida: esperado objeto com { pattern }");
   }
-  const raw = input as { pattern?: unknown; path?: unknown; flags?: unknown };
+  const raw = input as { pattern?: unknown; path?: unknown; flags?: unknown; page?: unknown };
   if (typeof raw.pattern !== "string" || raw.pattern.length === 0) {
     throw new ToolError('"pattern" deve ser uma string não vazia');
+  }
+  if (
+    raw.page !== undefined &&
+    (typeof raw.page !== "number" || !Number.isInteger(raw.page) || raw.page < 1)
+  ) {
+    throw new ToolError('"page" deve ser um inteiro >= 1');
   }
   return {
     pattern: raw.pattern,
     path: typeof raw.path === "string" ? raw.path : ".",
     flags: typeof raw.flags === "string" ? raw.flags : "-i",
+    page: raw.page ?? 1,
   };
 }
 
@@ -73,7 +81,7 @@ function walk(root: string, visit: (absPath: string) => boolean): void {
 export const grepTool: Tool = {
   manifest: {
     name: "grep",
-    description: "Busca por regex nos arquivos do diretório de trabalho. Retorna {file, line, match}.",
+    description: "Busca por regex nos arquivos do diretório de trabalho. Retorna {results, total, page, hasMore} com 100 resultados por página.",
     parameters: {
       type: "object",
       properties: {
@@ -89,6 +97,11 @@ export const grepTool: Tool = {
           type: "string",
           description: "Flags da regex (default: \"-i\" para case-insensitive).",
         },
+        page: {
+          type: "integer",
+          minimum: 1,
+          description: "Página de resultados (100 por página); default 1.",
+        },
       },
       required: ["pattern"],
     },
@@ -102,15 +115,18 @@ export const grepTool: Tool = {
 
   async execute(input, ctx): Promise<ToolResult> {
     try {
-      const { pattern, path, flags } = parseInput(input);
+      const { pattern, path, flags, page: pageNumber } = parseInput(input);
       const regex = compileRegex(pattern, flags);
       const root = resolveWithin(ctx.cwd, path);
 
-      const matches: GrepMatch[] = [];
-      let stopped = false;
+      const from = (pageNumber - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE;
+      const results: GrepMatch[] = [];
+      // `total` exige varrer tudo; só a página pedida fica em memória. O
+      // timeout do manifesto continua sendo o teto de custo da busca.
+      let total = 0;
 
       walk(root, (absPath) => {
-        if (stopped) return false;
         let content: string;
         try {
           content = readFileSync(absPath, "utf8");
@@ -119,22 +135,23 @@ export const grepTool: Tool = {
         }
         const lines = content.split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {
-          if (regex.test(lines[i]!)) {
-            matches.push({
-              file: absPath,
-              line: i + 1,
-              match: lines[i]!,
-            });
-            if (matches.length >= MAX_RESULTS) {
-              stopped = true;
-              return false;
-            }
+          if (!regex.test(lines[i]!)) continue;
+          if (total >= from && total < to) {
+            results.push({ file: absPath, line: i + 1, match: lines[i]! });
           }
+          total++;
         }
         return true;
       });
 
-      return { output: JSON.stringify(matches) };
+      return {
+        output: JSON.stringify({
+          results,
+          total,
+          page: pageNumber,
+          hasMore: pageNumber * PAGE_SIZE < total,
+        }),
+      };
     } catch (error) {
       if (error instanceof ToolError) return failure(error.message);
       const message = error instanceof Error ? error.message : String(error);

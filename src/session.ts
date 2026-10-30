@@ -20,6 +20,7 @@ import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
 import { acquireAgentLock, findAgentLock, releaseAgentLock } from "./agent-lock";
 import type { AppliedCallProfile, CallSelection } from "./call-profile";
+import { effectiveOutputCap, type OutputLimitConfig } from "./output-limit";
 import type { SpawnRegistry } from "./spawn";
 
 /** Identidade efetiva de quem atendeu o completion (F-31d). */
@@ -44,6 +45,8 @@ export interface SessionOptions {
   model: ModelEntry;
   /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
   call?: CallSelection;
+  /** Limite de saída por tool (CMP-10); ausente = default 8000/5%. */
+  outputLimit?: OutputLimitConfig;
   /** Recebe deltas de texto quando o provider suporta streaming (T3). */
   onToken?: (text: string) => void;
   executor: ToolExecutor;
@@ -380,6 +383,7 @@ export async function runSession(
             knownAgents,
             allow: [...opts.executor.allow],
             maxSteps: effectiveMaxSteps,
+            outputLimitTokens: effectiveOutputCap(opts.outputLimit, opts.model.context),
             ...(opts.signal === undefined ? {} : { signal: opts.signal }),
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
@@ -388,7 +392,7 @@ export async function runSession(
           call,
         );
         tracer?.end(toolSpan, { isError: result.isError === true });
-        messages.push({ role: "tool", content: result.output, toolCallId: call.id });
+        messages.push({ role: "tool", content: redactSecrets(result.output), toolCallId: call.id });
 
         // Detectar handoff no resultado
         const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
@@ -599,6 +603,8 @@ export interface MultiAgentSessionOptions {
   signal?: AbortSignal;
   /** Escolha do call profile (E1–E5); ausente = defaults do modelo. */
   call?: CallSelection;
+  /** Limite de saída por tool (CMP-10); ausente = default 8000/5%. */
+  outputLimit?: OutputLimitConfig;
   /** Subagentes nascidos em runtime (C4a); ausente = só agents declarados. */
   spawns?: SpawnRegistry;
   /** Gate de aprovação de troca (F-19): o runtime injeta; ausente = sem gate (componente interno). */
@@ -929,6 +935,7 @@ export async function runMultiAgentSession(
             ...(known === undefined ? {} : { knownAgents: known }),
             allow: [...currentTools],
             maxSteps: currentMaxSteps,
+            outputLimitTokens: effectiveOutputCap(opts.outputLimit, currentModel.context),
             ...(opts.env === undefined ? {} : { env: opts.env }),
             ...(opts.protectedPaths === undefined ? {} : { protectedPaths: opts.protectedPaths }),
             ...(opts.secretEnvNames === undefined ? {} : { secretEnvNames: opts.secretEnvNames }),
@@ -936,7 +943,7 @@ export async function runMultiAgentSession(
           call,
         );
         tracer?.end(toolSpan, { isError: result.isError === true });
-        messages.push({ role: "tool", content: result.output, toolCallId: call.id });
+        messages.push({ role: "tool", content: redactSecrets(result.output), toolCallId: call.id });
 
         const handoff = call.name === "handoff" ? isHandoffResult(result.output) : null;
         if (handoff) {

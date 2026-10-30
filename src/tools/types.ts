@@ -50,6 +50,8 @@ export interface ToolContext {
   allow?: readonly string[];
   /** Teto de passos do agente corrente: subagente nunca recebe mais. */
   maxSteps?: number;
+  /** Teto de tokens por saída (CMP-10), já resolvido para o modelo corrente. */
+  outputLimitTokens?: number;
 }
 
 /**

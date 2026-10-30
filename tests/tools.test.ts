@@ -29,7 +29,7 @@ test("write+read roundtrip no cwd", async () => {
   const w = await ex.run(ctx(cwd), { id: "1", name: "write_file", arguments: JSON.stringify({ path: "a.txt", content: "olá" }) });
   expect(w.isError).toBeFalsy();
   const r = await ex.run(ctx(cwd), { id: "2", name: "read_file", arguments: JSON.stringify({ path: "a.txt" }) });
-  expect(r.output).toBe("olá");
+  expect(r.output).toBe("linhas 1-1 de 1\nolá");
   expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("olá");
 });
 
