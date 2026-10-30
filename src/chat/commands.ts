@@ -12,7 +12,7 @@ export type ReplCommand =
   | { kind: "provider"; action: ProviderAction; target?: string }
   | { kind: "session" }
   | { kind: "details" }
-  | { kind: "compact" }
+  | { kind: "compact"; force?: boolean }
   | { kind: "save" }
   | { kind: "sessions" }
   | { kind: "resume"; ref?: string }
@@ -33,6 +33,7 @@ export const HELP_TEXT = [
   "  /session        id, início, modelo, turnos, tokens, custo e arquivo",
   "  /details        id, provider, modelo, uptime, turnos, tokens, custo e origem",
   "  /compact        resume o histórico (sem tools) e substitui por sumário",
+  "  /compact force  ignora a pausa do breaker e força a compactação",
   "  /summarize      alias de /compact",
   "  /sessions       lista sessões gravadas (mais recentes primeiro)",
   "  /resume <n|id>  retoma uma sessão da lista ou pelo id",
@@ -91,7 +92,9 @@ export function parseCommand(line: string): ReplCommand {
       return { kind: "details" };
     case "compact":
     case "summarize":
-      return { kind: "compact" };
+      return arg.trim().toLowerCase() === "force"
+        ? { kind: "compact", force: true }
+        : { kind: "compact" };
     case "save":
       return { kind: "save" };
     case "sessions":

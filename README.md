@@ -50,7 +50,7 @@ After installing, run `astro` in an interactive terminal to open the TUI. Withou
 Notes:
 
 - To use your own Bun binary: `ASTRO_BUN_PATH=/path/to/bun astro`.
-- If you installed with `--omit=optional`, reinstall without that flag or set `ASTRO_BUN_PATH`.
+- The install materializes the Bun binary from the `bun` npm package (its `postinstall`). With `--omit=optional`, `--ignore-scripts`, or a `PATH`-only Bun, set `ASTRO_BUN_PATH` or make sure `bun` is on `PATH`.
 - The install does not create or shadow a global `bun` or `bunx` command.
 - The `alpha` tag is the current preview release.
 
@@ -102,6 +102,8 @@ Model pools and agent profiles are also supported. A full example with three pro
 **Secrets never live in configuration files and are never logged.** OpenAI-compatible keys come only from the environment variable named by `credentialRef`. The `codex-oauth` provider reads a local credentials file (`credentialsPath`).
 
 Tool output is bounded: `outputLimit` (`{ "maxTokens": 8000, "shareOfWindow": 0.05 }` by default) caps each tool result at `min(maxTokens, shareOfWindow × model context)`. Oversized output is written to `.astro/outputs/<run>/` and the model receives the head, the tail and a source reference; `read_file` pages 350 lines with a 10-line overlap, and `grep` returns `{results, total, page, hasMore}` with 100 matches per page.
+
+Sessions compact themselves before the context window fills: the trigger is `window − reserve`, where `reserve` is `max(15% of the window, 16.000)` or `compaction.buffer` when declared. The recent tail (15.000 tokens) is preserved, keeping the last user message when a previous turn exists (cut at a user message — or at the owning assistant of a tool pair for a single-task run); the older history is summarized without tools into a `CompactionArtifactV1` (Active, Blocked, Next Move, Relevant Files, Important Context) and `AGENTS.md` stays in the system prompt. Three failed compactions pause it for five minutes (`Compaction paused (3 failures, retry in Xs)`); `/compact force` clears the pause and records `compaction.manual`.
 
 | Variable | Required | Purpose |
 |---|---|---|

@@ -15,7 +15,10 @@ import type { ChatMessage } from "../provider/types";
 import type { FetchLike } from "../provider/types";
 import { Registry, type ModelEntry } from "../registry";
 import { Ledger } from "../ledger";
-import { DEFAULT_SYSTEM_PROMPT } from "../session";
+import { readAgentsMd } from "../spawn";
+import { forceCompaction, recordCompactionSuccess } from "../compaction/breaker";
+import { assertWithinQuota } from "../quota";
+import { DEFAULT_SYSTEM_PROMPT, safePrompt } from "../session";
 import { guardContext } from "./context-guard";
 import { isFatalSessionError } from "./session-errors";
 import { runHealthCheck, testProvider as probeProvider, type HealthCheck, type HealthReport } from "../health";
@@ -151,7 +154,12 @@ export class AgentSession {
     this.#registry = new Registry(this.#config);
     this.#auditPath = resolvePath(this.#cwd, this.#config.paths.audit);
     this.#ledger = new Ledger(resolvePath(this.#cwd, this.#config.paths.ledger));
-    this.#systemPrompt = opts.systemPrompt ?? this.#config.agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    const baseSystemPrompt = opts.systemPrompt ?? this.#config.agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    // CMP-8: AGENTS.md entra no system do chat/TUI e sobrevive à compactação.
+    const projectInstructions = readAgentsMd(this.#cwd);
+    this.#systemPrompt = projectInstructions.length === 0
+      ? baseSystemPrompt
+      : `${baseSystemPrompt}\n\n${projectInstructions}`;
     this.#approveSwap = opts.approveSwap;
     this.#budgetDecider = opts.onBudgetExceeded;
     this.#fetchLike = opts.fetchLike;
@@ -325,7 +333,7 @@ export class AgentSession {
   }
 
   /** Compacta o histórico: pede ao provider um sumário sem tools, substitui mensagens (mantém system). */
-  async compact(): Promise<string> {
+  async compact(force = false): Promise<string> {
     if (this.#busy) throw new Error("turno em andamento");
     if (this.#closed || this.#fatal) throw new Error("sessão de chat encerrada");
 
@@ -335,23 +343,53 @@ export class AgentSession {
     const modelEntry = this.#registry.require(this.#modelRef);
     const setup = createProvider(this.#config, modelEntry, this.#env ?? process.env);
     const provider = setup.provider;
+    // Mesma quota do caminho normal: o resumo é uma chamada paga.
+    assertWithinQuota(this.#ledger, this.#config.quota ?? {}, setup.quotaDomain);
+    // CMP-6: `/compact force` ignora a pausa do breaker e zera o contador,
+    // depois da checagem de quota (o reset é auditado mesmo se o resumo falhar).
+    if (force) {
+      forceCompaction(this.#ledger, this.id, "default");
+      this.#append("compaction.manual", { forced: true, phase: "reset" });
+    }
 
-    // Prepara mensagens para sumarização: remove system e tool calls
+    // Prepara mensagens para sumarização: remove o system, mas preserva os pares
+    // tool call/result (o provider rejeita tool sem o assistant que a pediu).
     const history = this.#messages
       .filter((m) => m.role !== "system")
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.toolCallId === undefined ? {} : { toolCallId: m.toolCallId }),
+        ...(m.toolCalls === undefined ? {} : { toolCalls: m.toolCalls }),
+      }) as ChatMessage);
 
     const summaryPrompt = "Resuma a conversa a seguir de forma concisa, preservando fatos, decisões e tarefas pendentes. Não inclua saudações nem meta-comentários.";
-    const messages: ChatMessage[] = [
+    const request: ChatMessage[] = [
       { role: "system", content: summaryPrompt },
       ...history,
     ];
 
-    // Chama provider SEM tools
+    // Chama provider SEM tools; o prompt passa pela mesma redação do send (I-03).
     const response = await provider.complete({
       model: this.#modelRef,
-      messages,
+      messages: safePrompt(request),
       tools: undefined,
+    });
+
+    this.#ledger.record({
+      run: this.id,
+      agent: "default",
+      provider: response.provider ?? modelEntry.provider,
+      model: response.model ?? modelEntry.id,
+      ...(setup.credentialRef === undefined ? {} : { credentialRef: setup.credentialRef }),
+      quotaDomain: setup.quotaDomain,
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+    }, modelEntry.price);
+    this.#append("compaction.manual", {
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+      forced: force,
     });
 
     const summary = response.content.trim();
@@ -368,6 +406,8 @@ export class AgentSession {
     if (response.usage.inputTokens > 0 || response.usage.outputTokens > 0) {
       this.#costKnown = false; // preço exato depende do modelo; ledger já tem o detalhe
     }
+    // CMP-6: uma compactação manual bem-sucedida zera o contador do breaker.
+    recordCompactionSuccess(this.#ledger, this.id, "default");
 
     // Auditoria sem conteúdo do prompt
     this.#append("chat.compact", {

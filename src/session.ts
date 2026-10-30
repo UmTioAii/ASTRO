@@ -20,6 +20,9 @@ import { assertWithinQuota, type QuotaLimit } from "./quota";
 import { assertAgentQuota, assertProjectBudget } from "./team";
 import { acquireAgentLock, findAgentLock, releaseAgentLock } from "./agent-lock";
 import type { AppliedCallProfile, CallSelection } from "./call-profile";
+import { CompactionPausedError } from "./compaction/breaker";
+import { DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from "./compaction/engine";
+import { completeWithCompaction } from "./compaction/runtime";
 import { effectiveOutputCap, type OutputLimitConfig } from "./output-limit";
 import type { SpawnRegistry } from "./spawn";
 
@@ -47,6 +50,8 @@ export interface SessionOptions {
   call?: CallSelection;
   /** Limite de saída por tool (CMP-10); ausente = default 8000/5%. */
   outputLimit?: OutputLimitConfig;
+  /** Compactação de sessão (S-17); ausente = default do ADR-0015. */
+  compaction?: CompactionConfig;
   /** Recebe deltas de texto quando o provider suporta streaming (T3). */
   onToken?: (text: string) => void;
   executor: ToolExecutor;
@@ -200,7 +205,8 @@ function scrubPrompt(value: unknown): unknown {
   return typeof value === "string" ? redactSecrets(value) : value;
 }
 
-function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
+/** Redige segredos antes de qualquer prompt ir ao provider (I-03). */
+export function safePrompt(messages: readonly ChatMessage[]): ChatMessage[] {
   return scrubPrompt(messages) as ChatMessage[];
 }
 
@@ -214,6 +220,20 @@ export async function runSession(
   task: string,
 ): Promise<{ final: string; steps: number; messages: ChatMessage[] }> {
   const tracer = opts.tracer;
+  /** Uso de uma chamada auxiliar (resumo de compactação) entra no ledger/custo. */
+  const recordAuxUsage = (response: CompletionResponse, model: ModelEntry, agent: string): void => {
+    const identity = effectiveIdentityFor(opts.resolveIdentity, response, model, opts.credentialRef, opts.quotaDomain);
+    opts.ledger.record({
+      run: opts.run,
+      agent,
+      provider: identity.provider,
+      model: identity.model,
+      ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
+      quotaDomain: identity.quotaDomain,
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+    }, identity.price);
+  };
   const rootSpan = tracer?.start(
     "run",
     { agent: redactSecrets(opts.agent), model: `${opts.model.provider}/${opts.model.id}`, run: redactSecrets(opts.run) },
@@ -309,14 +329,34 @@ export async function runSession(
         { model: opts.model.id, provider: opts.model.provider },
         stepSpan ?? rootSpan,
       );
-      const response = await opts.provider.complete({
-        model: opts.model.id,
-        messages: safePrompt(messages),
-        tools: opts.executor.defs(),
-        ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
-        ...(opts.call === undefined ? {} : { call: opts.call }),
-        ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
-      }, opts.signal);
+      const response = await completeWithCompaction(messages, {
+        ledger: opts.ledger,
+        audit: opts.audit,
+        run: opts.run,
+        agent: () => opts.agent,
+        window: () => opts.model.context,
+        provider: () => opts.model.provider,
+        model: () => opts.model.id,
+        compaction: opts.compaction ?? DEFAULT_COMPACTION_CONFIG,
+        ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+        complete: (current) => opts.provider.complete({
+          model: opts.model.id,
+          messages: safePrompt(current),
+          tools: opts.executor.defs(),
+          ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
+          ...(opts.call === undefined ? {} : { call: opts.call }),
+          ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
+        }, opts.signal),
+        summarize: (input) => opts.provider.complete({
+          model: opts.model.id,
+          messages: safePrompt(input),
+          tools: undefined,
+          ...(opts.agentProfile === undefined ? {} : { profile: opts.agentProfile }),
+        }, opts.signal).then((summary) => {
+          recordAuxUsage(summary, opts.model, opts.agent);
+          return summary.content;
+        }),
+      });
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
         "tokens.out": response.usage.outputTokens,
@@ -472,6 +512,7 @@ function callUsageFields(call: AppliedCallProfile | undefined): {
 /** Razão registrada no `run_state interrupted`: abort vira "cancelled" (F-06). */
 function interruptReason(error: unknown, signal?: AbortSignal): string {
   if (isAbortError(error, signal)) return "cancelled";
+  if (error instanceof CompactionPausedError) return "compaction_paused";
   if (error instanceof SwapDeniedError) return "swap_denied";
   if (error instanceof BudgetExceededError) return "budget_exceeded";
   return error instanceof Error ? error.name : String(error);
@@ -605,6 +646,8 @@ export interface MultiAgentSessionOptions {
   call?: CallSelection;
   /** Limite de saída por tool (CMP-10); ausente = default 8000/5%. */
   outputLimit?: OutputLimitConfig;
+  /** Compactação de sessão (S-17); ausente = default do ADR-0015. */
+  compaction?: CompactionConfig;
   /** Subagentes nascidos em runtime (C4a); ausente = só agents declarados. */
   spawns?: SpawnRegistry;
   /** Gate de aprovação de troca (F-19): o runtime injeta; ausente = sem gate (componente interno). */
@@ -749,6 +792,20 @@ export async function runMultiAgentSession(
     run: redactSecrets(opts.run),
     multi: true,
   });
+  /** Uso do resumo de compactação entra no ledger/custo (mesma identidade efetiva). */
+  const recordAuxUsage = (response: CompletionResponse, model: ModelEntry, agent: string): void => {
+    const identity = effectiveIdentityFor(opts.resolveIdentity, response, model, opts.credentialRef, opts.quotaDomain);
+    opts.ledger.record({
+      run: opts.run,
+      agent,
+      provider: identity.provider,
+      model: identity.model,
+      ...(identity.credentialRef === undefined ? {} : { credentialRef: identity.credentialRef }),
+      quotaDomain: identity.quotaDomain,
+      tokensIn: response.usage.inputTokens,
+      tokensOut: response.usage.outputTokens,
+    }, identity.price);
+  };
 
   try {
     // Varredura de retomada (F-24): pendências do run no ledger do cwd corrente
@@ -858,14 +915,36 @@ export async function runMultiAgentSession(
       );
       // Wrappers atribuem swap.* ao agente que está executando (F-19/I-04)
       if (opts.activeAgent !== undefined) opts.activeAgent.name = currentAgentName;
-      const response = await (opts.providerFor?.(currentModel, currentAgent.profile) ?? opts.provider).complete({
-        model: currentModel.id,
-        messages: safePrompt(messages),
-        tools: executor.defs(),
-        ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
-        ...(opts.call === undefined ? {} : { call: opts.call }),
-        ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
-      }, opts.signal);
+      const providerFor = (): Provider => opts.providerFor?.(currentModel, currentAgent.profile) ?? opts.provider;
+      const response = await completeWithCompaction(messages, {
+        ledger: opts.ledger,
+        audit: opts.audit,
+        run: opts.run,
+        agent: () => currentAgentName,
+        window: () => currentModel.context,
+        provider: () => currentModel.provider,
+        model: () => currentModel.id,
+        compaction: opts.compaction ?? DEFAULT_COMPACTION_CONFIG,
+        ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+        complete: (current) => providerFor().complete({
+          model: currentModel.id,
+          messages: safePrompt(current),
+          tools: executor.defs(),
+          ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
+          ...(opts.call === undefined ? {} : { call: opts.call }),
+          ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
+        }, opts.signal),
+        summarize: (input) => providerFor().complete({
+          model: currentModel.id,
+          messages: safePrompt(input),
+          tools: undefined,
+          ...(currentAgent.profile === undefined ? {} : { profile: currentAgent.profile }),
+        }, opts.signal).then((summary) => {
+          recordAuxUsage(summary, currentModel, currentAgentName);
+          return summary.content;
+        }),
+        onCompacted: () => saveAgentState(currentAgentName),
+      });
       tracer?.end(providerSpan, {
         "tokens.in": response.usage.inputTokens,
         "tokens.out": response.usage.outputTokens,
@@ -1031,10 +1110,12 @@ export async function runMultiAgentSession(
     if (
       activeHandoff !== undefined &&
       !(error instanceof HandoffError && error.code === "handoff_ack_timeout") &&
-      // Negação de troca ou corte de budget não é falha do handoff já recebido:
-      // o estado interrupted permite retomar e re-perguntar (I-08/I-17 + I-19).
+      // Negação de troca, corte de budget ou pausa de compactação não são falha
+      // do handoff já recebido: o estado interrupted permite retomar e
+      // re-perguntar/retentar (I-08/I-17/I-19, CMP-6).
       !(error instanceof SwapDeniedError) &&
       !(error instanceof BudgetExceededError) &&
+      !(error instanceof CompactionPausedError) &&
       !isAbortError(error, opts.signal)
     ) {
       recordHandoffEvent("handoff.failed", handoffDeps, activeHandoff.artifact, currentAgentName, {

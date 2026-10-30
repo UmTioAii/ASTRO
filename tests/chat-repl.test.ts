@@ -211,7 +211,20 @@ describe("REPL do chat (T1, #62)", () => {
     const session = new Compactable();
     const io = new ScriptedIO(["/summarize", "/exit"]);
     await runRepl(session, io);
-    expect(session.compacted).toBe(true);
-    expect(io.outputs.some((line) => line.includes("sumário via summarize"))).toBe(true);
+    expect(session.compacted).toBe(true);    expect(io.outputs.some((line) => line.includes("sumário via summarize"))).toBe(true);
+  });
+
+  test("/compact force passa force=true para a sessão", async () => {
+    class Compactable extends FakeSession {
+      forced: boolean | undefined;
+      async compact(force?: boolean): Promise<string> {
+        this.forced = force;
+        return "forçado";
+      }
+    }
+    const session = new Compactable();
+    const io = new ScriptedIO(["/compact force", "/exit"]);
+    await runRepl(session, io);
+    expect(session.forced).toBe(true);
   });
 });

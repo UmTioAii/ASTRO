@@ -5,7 +5,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { platformPackages } from "../src/launcher";
 import { smokeEnv } from "./smoke-env";
 
 const root = resolve(import.meta.dir, "..");
@@ -38,19 +37,18 @@ delete env.BUN_INSTALL;
 
 const binName = process.platform === "win32" ? "bun.exe" : "bun";
 const requireFromDist = createRequire(launcher);
-const resolved = platformPackages(process.platform, process.arch).some((pkg) => {
-  try {
-    const manifest = requireFromDist.resolve(`${pkg}/package.json`);
-    return existsSync(join(dirname(manifest), "bin", binName));
-  } catch {
-    return false;
-  }
-});
+
+// A NOVA LÓGICA: Verifica se o pacote "bun" pode ser resolvido a partir da pasta dist
+let resolved = false;
+try {
+  const manifest = requireFromDist.resolve("bun/package.json");
+  resolved = existsSync(join(dirname(manifest), "bin", binName));
+} catch {
+  resolved = false;
+}
+
 if (!resolved) {
-  fail(
-    `nenhum ${platformPackages(process.platform, process.arch).join(" / ")} resolvido a partir de dist/launcher.js; ` +
-    "rode bun install",
-  );
+  fail("pacote 'bun' não resolvido a partir de dist/launcher.js; rode bun install");
 }
 
 function run(args: string[]): { code: number; out: string; err: string } {

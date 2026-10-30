@@ -53,8 +53,7 @@ describe("tool spawn_agent (S-11, A1/A2/A3/A5)", () => {
     expect(result.isError).toBe(false);
     expect(body).toMatchObject({ agent_id: "sub-1", model: "p1/m1", profile: "fast", status: "active" });
     expect(spawns.get("sub-1")?.tools).toEqual(["read_file"]);
-    expect(spawns.get("sub-1")?.instructions).toContain("Instruções do projeto");
-    expect(spawns.get("sub-1")?.instructions).toContain("sub tarefa");
+    expect(spawns.get("sub-1")?.instructions).toBe("sub tarefa");
 
     const created = ledger.readAllEntries().find((e) => e.kind === "agent" && e.event === "created");
     expect(created).toMatchObject({

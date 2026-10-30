@@ -9,7 +9,12 @@ import { Ledger } from "../src/ledger";
 
 interface Body { model?: string; messages?: ChatMessage[] }
 
-function setup(opts: { context?: number; reply?: (call: number) => Response; budget?: Record<string, unknown> } = {}) {
+function setup(opts: {
+  context?: number;
+  reply?: (call: number) => Response;
+  budget?: Record<string, unknown>;
+  quota?: Record<string, unknown>;
+} = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "astro-chat-session-"));
   const bodies: Body[] = [];
   let call = 0;
@@ -33,6 +38,7 @@ function setup(opts: { context?: number; reply?: (call: number) => Response; bud
     ],
     agent: { model: "p/m1", maxSteps: 3, tools: [] },
     ...(opts.budget === undefined ? {} : { budget: opts.budget }),
+    ...(opts.quota === undefined ? {} : { quota: opts.quota }),
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));
   return {
@@ -274,4 +280,85 @@ describe("AgentSession resume (T2, #63)", () => {
       chat.close();
       stop();
     }
-  });});
+  });
+
+  test("compact redige segredo, registra uso e força zera o breaker (I-03/CMP-6)", async () => {
+    const { cwd, bodies, session, stop } = setup();
+    const chat = session();
+    const secret = "sk-live-0123456789abcdef";
+    try {
+      await chat.send(`minha chave é ${secret}`);
+      await chat.compact();
+      const summaryBody = bodies.at(-1)!;
+      expect(JSON.stringify(summaryBody)).toContain("[REDACTED]");
+      expect(JSON.stringify(summaryBody)).not.toContain(secret);
+
+      const ledger = new Ledger(join(cwd, ".astro", "ledger.jsonl"));
+      // send + resumo
+      expect(ledger.readAllEntries().filter((entry) => entry.kind === "usage")).toHaveLength(2);
+
+      await chat.compact(true);
+      const audit = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll();
+      expect(audit.some((event) => event.tipo === "compaction.manual" && event.payload.forced === true)).toBe(true);
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+
+  test("AGENTS.md entra no system e sobrevive à compactação (CMP-8)", async () => {
+    const { cwd, bodies, session, stop } = setup();
+    writeFileSync(join(cwd, "AGENTS.md"), "REGRAS DO PROJETO");
+    const chat = session();
+    try {
+      await chat.send("oi");
+      expect(bodies[0]!.messages?.[0]?.content).toContain("REGRAS DO PROJETO");
+      expect(bodies[0]!.messages?.[0]?.content).toContain("sys");
+
+      await chat.compact();
+      await chat.send("depois");
+      const after = bodies.at(-1)!;
+      expect(after.messages?.[0]?.content).toContain("REGRAS DO PROJETO");
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+
+  test("compact preserva pares tool call/result no pedido de resumo", async () => {
+    const { bodies, session, stop } = setup({
+      reply: (call) => call === 1 ? toolCall() : final("ok"),
+    });
+    const chat = session();
+    try {
+      await chat.send("use a tool");
+      await chat.compact();
+      const summary = bodies.at(-1)!;
+      const assistantCall = summary.messages?.find((message) => (message as { tool_calls?: unknown[] }).tool_calls !== undefined);
+      const toolResult = summary.messages?.find((message) => message.role === "tool");
+      expect((assistantCall as { tool_calls?: unknown[] }).tool_calls).toHaveLength(1);
+      expect((toolResult as { tool_call_id?: string }).tool_call_id).toBe("c1");
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+
+  test("quota bloqueia force sem resetar o breaker", async () => {
+    const { cwd, session, stop } = setup({
+      quota: { default: { dailyTokens: 30 } },
+      reply: (call) => call === 1 ? toolCall() : final("ok"),
+    });
+    const chat = session();
+    try {
+      await chat.send("use a tool");
+      // O send consumiu os 30 tokens do dia; force falha antes do reset.
+      await expect(chat.compact(true)).rejects.toThrow(/quota/i);
+      const audit = new Auditor(join(cwd, ".astro", "audit.jsonl")).readAll();
+      expect(audit.some((event) => event.tipo === "compaction.manual")).toBe(false);
+    } finally {
+      chat.close();
+      stop();
+    }
+  });
+});

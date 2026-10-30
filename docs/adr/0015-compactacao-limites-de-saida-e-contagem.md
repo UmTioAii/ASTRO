@@ -11,7 +11,7 @@ Janelas de contexto são finitas. A parte de compactação de F-08 (CMP-1..12) p
 
 ## Decisão
 
-**Gatilho e parte recente (CMP-1, CMP-2).** Compacta quando a estimativa atinge `window − reserve`; sem `buffer`, reserve = max(15% da janela, 16.000); buffer explícito substitui o default e é ignorado se ≥ janela. A parte recente tem 15.000 tokens de mensagens, sem system prompt nem `AGENTS.md`, cortada no início de mensagem de usuário; contada pelo tokenizer do modelo ativo, senão 4 chars/token marcado estimate.
+**Gatilho e parte recente (CMP-1, CMP-2).** Compacta quando a estimativa atinge `window − reserve`; sem `buffer`, reserve = max(15% da janela, 16.000); buffer explícito substitui o default e é ignorado se ≥ janela. A parte recente tem 15.000 tokens de mensagens, sem system prompt nem `AGENTS.md`, cortada no início de mensagem de usuário; quando há turno anterior, o último usuário é preservado (bounded por uma mensagem). Num run de uma tarefa só após tools, o corte vai para o assistant dono do par tool call/result — nunca no meio do par. O `Active` do artefato é o começo da última mensagem de usuário, clipado em 500 chars; nos níveis 3–4 o resumo recebe o começo do texto (4.000 chars). Contada pelo tokenizer do modelo ativo, senão 4 chars/token marcado estimate; a janela encurta a parte recente para caber system + artefato + reserva, e contexto já acima da janela compacta mesmo sem projetar abaixo do gatilho.
 
 **Integridade e artefato (CMP-3, CMP-4, CMP-5).** Nunca compacta no meio do par tool call/result. `CompactionArtifactV1` (`src/compaction/types.ts`) com seções Active, Blocked, Next Move, Relevant Files (máx 15), Important Context; campos compartilhados com handoff são copiados; o pedido de resumo não chama tools. Redução em 5 níveis: full → outputs clipados (2.000 head + 2.000 tail) → outputs removidos e inputs clipados → só texto do usuário clipado → omitido.
 
@@ -20,6 +20,8 @@ Janelas de contexto são finitas. A parte de compactação de F-08 (CMP-1..12) p
 **Limites de saída (CMP-10..12).** Cap por saída = min(8000 tokens, 5% da janela); excedente vira arquivo com head, tail e referência de fonte (path/URL/tool-call id; irrecuperável → `truncated_unrecoverable`). `read_file` pagina 350 linhas com overlap 10; `grep` ganha `page` com `{results, total, page, hasMore}`.
 
 **Contagem por provider (Q-06).** A contagem ganha o ID novo **D-22** em `docs/decisions.md`: pura, determinística, sem chamadas a provider e sem segredo (I-03); tokenizer nativo quando existir, estimativa 4 chars/token marcada; nunca reporta zero quando desconhecida. A linha de D-22 na tabela e o ajuste de `roadmap-complementar` ficam no PR de S-19 (#136).
+
+**Implementação (S-17, #134).** `src/compaction/` implementa gatilho/reserva, parte recente, níveis 1–5, artefato (`types.ts`), breaker no ledger (`breaker.ts`) e o runtime que compacta antes da chamada e retenta uma vez por overflow (`runtime.ts`). Janela que não comporta a reserva (ex.: 8k com default 16k) não compacta. `/compact force` grava `compaction.manual` e zera o contador.
 
 **Ledger.** Este ADR é dono do kind `compaction`: `failure_count`, `manual` (schema em #122).
 

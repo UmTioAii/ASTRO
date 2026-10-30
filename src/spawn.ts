@@ -53,7 +53,7 @@ export interface SpawnedAgent {
   candidate: ModelCandidate;
   tools: string[];
   maxSteps: number;
-  /** AGENTS.md + task entregues ao filho (A9). */
+  /** Task entregue ao filho; `AGENTS.md` vem do system prompt base (A9/CMP-8). */
   instructions: string;
   reason: string;
   createdAt: number;
@@ -140,7 +140,7 @@ function candidateDeps(deps: SpawnToolDeps): CandidateDeps {
   };
 }
 
-function readAgentsMd(cwd: string): string {
+export function readAgentsMd(cwd: string): string {
   try {
     const text = readFileSync(join(cwd, "AGENTS.md"), "utf8");
     return text.length > MAX_AGENTS_MD ? text.slice(0, MAX_AGENTS_MD) : text;
@@ -332,9 +332,9 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
           .filter((part) => part.length > 0)
           .join(": ")
           .slice(0, 200);
-        const instructions = [raw.task, readAgentsMd(deps.cwd)]
-          .filter((part) => part.length > 0)
-          .join("\n\n");
+        // AGENTS.md já entra pelo system prompt base da sessão (CMP-8); repetir
+        // aqui duplicaria as regras e o custo no filho.
+        const instructions = raw.task;
 
         acquireAgentLock(deps.ledger, deps.audit, {
           run: ctx.run,

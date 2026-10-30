@@ -101,5 +101,7 @@ describe("comandos do chat (T1, #62)", () => {
     expect(parseCommand("/summarize")).toEqual({ kind: "compact" });
     expect(parseCommand("/compact extra")).toEqual({ kind: "compact" });
     expect(parseCommand("/summarize extra")).toEqual({ kind: "compact" });
+    expect(parseCommand("/compact force")).toEqual({ kind: "compact", force: true });
+    expect(parseCommand("/summarize FORCE")).toEqual({ kind: "compact", force: true });
   });
 });
