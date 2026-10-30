@@ -51,7 +51,10 @@ class FakeSession implements ChatSession {
   healthCalls = 0;
   health() {
     this.healthCalls++;
-    return Promise.resolve({ status: "degraded" as const, checks: [] });
+    return Promise.resolve({
+      status: "degraded" as const,
+      checks: [{ name: "provider:p", status: "ok" as const, latencyMs: 5 }],
+    });
   }
   providerName(): string {
     return "p";
@@ -109,7 +112,7 @@ test("status bar mostra saúde n/d e atualiza após troca de provider", async ()
     expect(session.healthCalls).toBe(0);
     instance.stdin.write("/provider use p");
     instance.stdin.write("\r");
-    await waitFor(() => instance.lastFrame()?.includes("saúde: degraded") === true);
+    await waitFor(() => instance.lastFrame()?.includes("saúde: ok") === true);
     expect(session.healthCalls).toBe(1);
   } finally {
     instance.unmount();

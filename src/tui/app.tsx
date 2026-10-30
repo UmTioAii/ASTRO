@@ -15,6 +15,7 @@ import { indexFiles } from "./files";
 import { Markdown } from "./markdown";
 import { ModelPicker } from "./model-picker";
 import { recordRecent, type ModelOption } from "./models";
+import { providerHealth } from "./health";
 import { loadTuiConfig, saveTuiConfig, getThemeColors, type Theme, type ThemeColors } from "./theme";
 import { LEADER, runKeybind } from "./keybinds";
 import { ProviderScreen } from "./provider-screen";
@@ -114,12 +115,13 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const turn = useRef<AbortController | undefined>(undefined);
   const exitRequested = useRef(false);
   const [status, setStatus] = useState<Status>(() => statusOf(session.snapshot()));
-  const [health, setHealth] = useState<"ok" | "degraded" | "down" | undefined>(undefined);
+  const [health, setHealth] = useState<"ok" | "down" | undefined>(undefined);
+  const activeProvider = (): string => session.providerName?.() ?? session.snapshot().model.split("/")[0]!;
   const refreshHealth = async (): Promise<void> => {
     if (session.health === undefined) return;
     try {
       const report = await session.health();
-      setHealth(report.status);
+      setHealth(providerHealth(report, activeProvider()));
     } catch {
       setHealth(undefined);
     }
@@ -412,13 +414,16 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
           try {
             session.reload?.();
             setStatus(statusOf(session.snapshot()));
+            void refreshHealth();
           } catch (error) {
             setEntries((current) => [...current, { kind: "error", text: `erro: ${messageOf(error)}` }]);
           }
         }}
         {...(session.probeProvider === undefined ? {} : { onTest: async (id: string) => {
           const check = await session.probeProvider!(id);
-          void refreshHealth();
+          if (id === activeProvider()) {
+            setHealth((check.detail ?? "").includes("sem check automático") ? undefined : check.status === "ok" ? "ok" : "down");
+          }
           return check;
         } })}
       />

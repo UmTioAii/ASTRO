@@ -1,6 +1,6 @@
 /** Tela cheia de providers (TUI): lista + formulário, sem tocar segredo. */
 import { Box, Text, useInput } from "ink";
-import { useState, type ReactElement } from "react";
+import { useState, useRef, type ReactElement } from "react";
 import { PROVIDER_CATALOG } from "../provider/catalog";
 import type { ProfileDraft, ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ProfileModel } from "../provider/profiles";
@@ -89,6 +89,8 @@ export function ProviderScreen({
   });
   const [testTarget, setTestTarget] = useState<ProfileView | undefined>(undefined);
   const [testing, setTesting] = useState(false);
+  const [messageOk, setMessageOk] = useState(false);
+  const probeToken = useRef(0);
 
 
   const list = manager.list();
@@ -178,16 +180,30 @@ export function ProviderScreen({
     }
     if (testTarget !== undefined) {
       if (key.escape) {
+        probeToken.current++;
         setTestTarget(undefined);
+        setTesting(false);
         setMessage(undefined);
         return;
       }
       if (key.return && !testing) {
+        const token = ++probeToken.current;
+        const target = testTarget;
         setTesting(true);
-        void onTest?.(testTarget.id)
-          .then((check) => setMessage(formatProviderCheck(check)))
-          .catch((error) => setMessage(`erro: ${messageOf(error)}`))
+        setMessage(undefined);
+        void onTest?.(target.id)
+          .then((check) => {
+            if (token !== probeToken.current) return;
+            setMessage(`${target.id}: ${formatProviderCheck(check)}`);
+            setMessageOk(check.status === "ok");
+          })
+          .catch((error) => {
+            if (token !== probeToken.current) return;
+            setMessage(`erro: ${messageOf(error)}`);
+            setMessageOk(false);
+          })
           .finally(() => {
+            if (token !== probeToken.current) return;
             setTesting(false);
             setTestTarget(undefined);
           });
@@ -196,8 +212,8 @@ export function ProviderScreen({
     }
     if (view === "list") {
       if (key.escape) { onClose(); return; }
-      if (key.upArrow) { setSelected((value) => Math.max(0, value - 1)); return; }
-      if (key.downArrow) { setSelected((value) => Math.min(list.length - 1, value + 1)); return; }
+      if (key.upArrow) { setSelected((value) => Math.max(0, value - 1)); setMessage(undefined); return; }
+      if (key.downArrow) { setSelected((value) => Math.min(list.length - 1, value + 1)); setMessage(undefined); return; }
       if (input === "a") { startAdd(); return; }
       if (input === "t") {
         if (onTest !== undefined && current !== undefined) {
@@ -304,7 +320,7 @@ export function ProviderScreen({
       <Box flexDirection="column" borderStyle="round" paddingX={1}>
         <Text color={colors.warning}>Testar {testTarget.name}?</Text>
         <Text dimColor>{testing ? "testando…" : "enter confirmar · esc cancelar"}</Text>
-        {message === undefined ? null : <Text color={colors.error}>{message}</Text>}
+        {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
       </Box>
     );
   }
@@ -375,8 +391,12 @@ export function ProviderScreen({
           cred={profile.credentialRef ?? "sem chave"} [{profile.source}]
         </Text>
       ))}
-      <Text dimColor>a adicionar · e editar · d remover · t testar · enter ativar · esc voltar</Text>
-      {message === undefined ? null : <Text color={colors.error}>{message}</Text>}
+      <Text dimColor>
+        {onTest === undefined
+          ? "a adicionar · e editar · d remover · enter ativar · esc voltar"
+          : "a adicionar · e editar · d remover · t testar · enter ativar · esc voltar"}
+      </Text>
+      {message === undefined ? null : <Text color={messageOk ? colors.accent : colors.error}>{message}</Text>}
     </Box>
   );
 }

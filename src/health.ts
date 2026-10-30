@@ -71,6 +71,13 @@ async function checkEndpoint(
     });
     const latencyMs = Date.now() - started;
     if (!response.ok) {
+      // 429/402 podem significar quota esgotada (hard_quota) em vez de "tente depois".
+      if (response.status === 429 || response.status === 402) {
+        let body = "";
+        try { body = (await response.text()).toLowerCase(); } catch { /* corpo ilegível: segue sem marcador */ }
+        const quota = body.includes("insufficient_quota") || response.status === 402;
+        return { ok: false, latencyMs, detail: `HTTP ${response.status} em GET /models${quota ? " (insufficient_quota)" : ""}` };
+      }
       return { ok: false, latencyMs, detail: `HTTP ${response.status} em GET /models` };
     }
     return { ok: true, latencyMs };

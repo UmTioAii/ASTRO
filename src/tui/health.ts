@@ -1,9 +1,12 @@
 /** Classificação e formatação do health de provider na TUI (#228). */
-import type { HealthCheck } from "../health";
+import type { HealthCheck, HealthReport } from "../health";
+import type { ErrorClass } from "../provider/types";
+import { redactSecrets } from "../sanitize-external";
 
-export type HealthErrorClass = "auth" | "invalid_request" | "transient_rate_limit" | "outage";
+/** Qualquer classe da taxonomia D-14/D-18, inclusive `hard_quota`. */
+export type HealthErrorClass = ErrorClass;
 
-/** Mapeia o detalhe do health para a taxonomia D-14/D-18; `ok` não tem classe. */
+/** Mapeia o detalhe do health para a taxonomia de erro; `ok` não tem classe. */
 export function classifyProviderCheck(check: HealthCheck): HealthErrorClass | undefined {
   if (check.status === "ok") return undefined;
   const detail = check.detail ?? "";
@@ -12,6 +15,7 @@ export function classifyProviderCheck(check: HealthCheck): HealthErrorClass | un
   if (status !== undefined) {
     const code = Number(status);
     if (code === 401 || code === 403) return "auth";
+    if (code === 402 || (code === 429 && detail.includes("insufficient_quota"))) return "hard_quota";
     if (code === 429) return "transient_rate_limit";
     if (code >= 500) return "outage";
     return "invalid_request";
@@ -22,8 +26,17 @@ export function classifyProviderCheck(check: HealthCheck): HealthErrorClass | un
 
 /** Linha curta para a tela de providers; nunca inclui credencial. */
 export function formatProviderCheck(check: HealthCheck): string {
+  const detail = check.detail?.replace(/[\u0000-\u001f\u007f]/g, " ");
+  if (detail !== undefined && detail.includes("sem check automático")) return "n/d (sem check)";
   const errorClass = classifyProviderCheck(check);
   const latency = check.latencyMs === undefined ? "" : ` · ${check.latencyMs}ms`;
-  const detail = check.detail === undefined ? "" : ` · ${check.detail}`;
-  return check.status === "ok" ? `ok${latency}` : `down (${errorClass})${latency}${detail}`;
+  const shown = detail === undefined ? "" : ` · ${redactSecrets(detail)}`;
+  return check.status === "ok" ? `ok${latency}` : `down (${errorClass})${latency}${shown}`;
+}
+
+/** Estado do provider ativo para a status bar; plugin sem check é `n/d`, nunca `ok`. */
+export function providerHealth(report: HealthReport, provider: string): "ok" | "down" | undefined {
+  const check = report.checks.find((item) => item.name === `provider:${provider}`);
+  if (check === undefined || (check.detail ?? "").includes("sem check automático")) return undefined;
+  return check.status === "ok" ? "ok" : "down";
 }
