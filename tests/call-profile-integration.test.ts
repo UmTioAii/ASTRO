@@ -45,6 +45,18 @@ describe("call profile na cadeia e no cache (E1/E3)", () => {
       expect(primaryBodies[0]!.thinking).toEqual({ type: "enabled" });
       expect(backupBodies).toHaveLength(1);
       expect(backupBodies[0]!.thinking).toBeUndefined();
+
+      // Destino declarado em models[]: o call dele vence o do primário.
+      const withDestination = JSON.parse(readFileSync(configPath, "utf8")) as { models: Array<Record<string, unknown>> };
+      withDestination.models.push({
+        provider: "backup", id: "m1", tags: ["writing-code"], context: 8192,
+        call: { thinking: { mode: "always", param: "thinking.type", on: "disabled" } },
+      });
+      writeFileSync(configPath, JSON.stringify(withDestination));
+
+      await runTask({ configPath, task: "y", cwd, env: { KEY: "k" }, approveSwap: () => true });
+      expect(backupBodies).toHaveLength(2);
+      expect(backupBodies[1]!.thinking).toEqual({ type: "disabled" });
     } finally {
       primary.stop(true);
       backup.stop(true);
@@ -80,6 +92,46 @@ describe("call profile na cadeia e no cache (E1/E3)", () => {
 
       await runTask({ configPath, task: "x", cwd, env: { KEY: "k" } });
       expect(bodies).toHaveLength(2); // não serviu a entrada antiga
+      expect(bodies[1]!.thinking).toEqual({ type: "disabled" });
+    } finally {
+      mock.stop(true);
+    }
+  });
+
+  test("agent nomeado com profile também invalida o cache ao mudar o call", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-call-cache-named-"));
+    const bodies: Array<Record<string, unknown>> = [];
+    const mock = server(200, bodies);
+    try {
+      const configPath = join(cwd, "astro.config.json");
+      const config = {
+        providers: {
+          mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${mock.port}/v1`, credentialRef: "KEY" },
+          backup: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${mock.port}/v1`, credentialRef: "BACKUP_KEY" },
+        },
+        models: [
+          { provider: "mock", id: "entry", tags: ["writing-code"], context: 8192 },
+          { provider: "mock", id: "prof", tags: ["writing-code"], context: 8192,
+            call: { thinking: { mode: "always", param: "thinking.type", on: "enabled" } } },
+        ],
+        modelPool: { fast: { model: "mock/prof" } },
+        agent: { model: "mock/entry", maxSteps: 2, tools: [], entryAgent: "worker" },
+        agents: { worker: { profile: "fast" } },
+        cache: { enabled: true, ttlHours: 24, maxEntries: 100 },
+        paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
+      };
+      writeFileSync(configPath, JSON.stringify(config));
+
+      await runTask({ configPath, task: "x", cwd, env: { KEY: "k" } });
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]!.thinking).toEqual({ type: "enabled" });
+
+      const changed = JSON.parse(readFileSync(configPath, "utf8")) as typeof config;
+      changed.models[1]!.call!.thinking!.on = "disabled";
+      writeFileSync(configPath, JSON.stringify(changed));
+
+      await runTask({ configPath, task: "x", cwd, env: { KEY: "k" } });
+      expect(bodies).toHaveLength(2);
       expect(bodies[1]!.thinking).toEqual({ type: "disabled" });
     } finally {
       mock.stop(true);

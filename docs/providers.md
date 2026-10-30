@@ -82,14 +82,14 @@ O ledger (F-31d) grava a identidade efetiva que atendeu — `provider`, `model`,
 
 | Campo | Comportamento |
 |---|---|
-| `effort.param` / `effort.map` | `lvl` 0..4 → valor aceito pelo provider; ausente `lvl` usa 2 quando o modelo declara effort (E1) |
+| `effort.param` / `effort.map` | `lvl` 0..4 → valor aceito pelo provider; ausente `lvl` usa 2 quando o modelo declara effort (E1); o caminho não pode apontar para raiz de protocolo |
 | `thinking.mode` | `always` envia `on`; `adaptive` envia `on` (provider decide); `toggle` usa `on`/`off` conforme a escolha (default `on`); `none` não envia (E2) |
 | `forbidden` | caminhos removidos do corpo antes do envio e gravados em `usage["param.stripped"]` como `[{name, reason:"forbidden"}]`; raízes de protocolo (`model`, `messages`, `input`, `stream`, `stream_options`, `tools`, `instructions`) são recusadas na config (E8) |
 | `call` na sessão | `RunOptions.call`/`SessionOptions.call` = `{lvl?, thinking?}`; a automação E4/E5 recebe `fixed` em `planEffortChange`/`applyEffortChange`, nunca sobrescrevendo o valor fixado (E3) |
 
 `planEffortChange`/`applyEffortChange` (`src/call-profile.ts`) implementam as regras E4/E5 como primitivas para o S-09: descer e subir 1–2 níveis é automático; subir 3+ exige aprovação. O run atual não altera o nível sozinho. O `usage` grava `lvl`, `effort`, `thinking` e `param.stripped` (E7); em cache hit o `call` não é ecoado, porque nenhuma chamada foi enviada. Texto de raciocínio (`reasoning_content`) nunca é persistido: o parser só lê `content`, tool calls e usage (I-03, Q-08).
 
-Providers de plugin não recebem `models[].call`; a factory do plugin deve ler o próprio config se quiser aplicar effort/thinking. A cadeia de fallback usa a entrada `models[]` do provider de destino quando declarada e, sem ela, não herda o `call` do primário (parâmetro de outro protocolo quebraria a chamada).
+Providers de plugin não recebem `models[].call`; a factory do plugin deve ler o próprio config se quiser aplicar effort/thinking. A cadeia de fallback usa a entrada `models[]` do provider de destino quando declarada e, sem ela, não herda o `call` do primário (parâmetro de outro protocolo quebraria a chamada). O cache fica acima da cadeia: mudar o `call` de um destino de fallback só invalida a entrada depois do TTL; o escopo por profile cobre o modelo resolvido do profile.
 
 ### E6 — valores oficiais reverificados (2026-10-30)
 
