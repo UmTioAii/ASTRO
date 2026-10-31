@@ -1,5 +1,6 @@
 import { isAbortError } from "../abort";
 import { applyCallToBody, type AppliedCallProfile, type CallConfig } from "../call-profile";
+import { DEFAULT_PROVIDER_TIMEOUT_MS, networkCall, type NetworkCall } from "./network";
 import { redactSecrets } from "../sanitize-external";
 import type {
   ChatMessage,
@@ -23,7 +24,9 @@ interface OpenAICompatProviderOptions {
   headers?: Record<string, string>;
   retry?: RetryOptions;
   fetchFn?: FetchLike;
-  /** Call profile do modelo (E1–E8). */
+  /** Timeout de rede por tentativa; default `DEFAULT_PROVIDER_TIMEOUT_MS`. */
+  timeoutMs?: number;
+  /** Call profile do modelo (E1-E8). */
   call?: CallConfig;
 }
 
@@ -35,7 +38,7 @@ const MAX_BACKOFF_MS = 10_000;
 const BACKOFF_JITTER = 0.25;
 const MAX_ERROR_DETAIL_LENGTH = 300;
 
-const RETRYABLE: ReadonlySet<ErrorClass> = new Set(["transient_rate_limit", "outage"]);
+const RETRYABLE: ReadonlySet<ErrorClass> = new Set(["transient_rate_limit", "outage", "network_timeout"]);
 
 /** Retry-After da resposta que originou o erro, quando presente. */
 const retryAfterMsByError = new WeakMap<ProviderError, number>();
@@ -207,12 +210,14 @@ export class OpenAICompatProvider implements Provider {
   private readonly windowMs: number;
   private readonly fetchFn: FetchLike;
   private readonly call: CallConfig | undefined;
+  private readonly timeoutMs: number;
 
   constructor(opts: OpenAICompatProviderOptions) {
     this.url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`;
     this.apiKey = opts.apiKey ?? "";
     this.fetchFn = opts.fetchFn ?? fetch;
     this.call = opts.call;
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
 
     const headers = new Headers();
     for (const [name, value] of Object.entries(opts.headers ?? {})) {
@@ -256,51 +261,70 @@ export class OpenAICompatProvider implements Provider {
 
   private async request(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     const { body, call } = this.bodyFor(req);
-    let response: Response;
+    // Timeout próprio por tentativa: um servidor pendurado não segura o run (I-09).
+    const net = networkCall(signal, this.timeoutMs);
     try {
-      response = await this.fetchFn(this.url, {
-        method: "POST",
-        headers: this.headers,
-        body: JSON.stringify(body),
-        signal,
-      });
-    } catch (error) {
-      if (isAbortError(error, signal)) throw error;
-      throw new ProviderError(
-        "outage",
-        `falha de rede ao chamar o provider: ${this.describe(error)}`,
-      );
-    }
+      let response: Response;
+      try {
+        response = await this.fetchFn(this.url, {
+          method: "POST",
+          headers: this.headers,
+          body: JSON.stringify(body),
+          signal: net.signal,
+        });
+      } catch (error) {
+        throw this.networkError(error, signal, net, "falha de rede ao chamar o provider");
+      }
 
-    if (!response.ok) {
-      let text = "";
+      if (!response.ok) {
+        let text = "";
+        try {
+          text = await response.text();
+        } catch {
+          // corpo de erro ilegível: mensagem usa só o status
+        }
+        throw this.errorFromResponse(response, text);
+      }
+
+      const sse = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
+      if (req.onToken !== undefined && sse) {
+        try {
+          const streamed = await this.streamResponse(req, response, req.onToken);
+          return { ...streamed, call };
+        } catch (error) {
+          // Erros já classificados do stream (ex.: corpo vazio) seguem como estão.
+          if (isAbortError(error, signal)) throw error;
+          if (net.timedOut()) throw this.networkError(error, signal, net, "falha ao ler o stream do provider");
+          throw error;
+        }
+      }
+
+      let text: string;
       try {
         text = await response.text();
-      } catch {
-        // corpo de erro ilegível: mensagem usa só o status
+      } catch (error) {
+        throw this.networkError(error, signal, net, "falha ao ler a resposta do provider", response.status);
       }
-      throw this.errorFromResponse(response, text);
-    }
 
-    const sse = (response.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream");
-    if (req.onToken !== undefined && sse) {
-      const streamed = await this.streamResponse(req, response, req.onToken);
-      return { ...streamed, call };
+      return { ...parseCompletion(text), call };
+    } finally {
+      net.dispose();
     }
+  }
 
-    let text: string;
-    try {
-      text = await response.text();
-    } catch (error) {
-      if (isAbortError(error, signal)) throw error;
-      throw new ProviderError(
-        "outage",
-        `falha ao ler a resposta do provider: ${this.describe(error)}`,
-        response.status,
-      );
+  /** Classifica falha de rede: cancelamento do run, timeout próprio ou outage (I-09). */
+  private networkError(
+    error: unknown,
+    caller: AbortSignal | undefined,
+    net: NetworkCall,
+    label: string,
+    status?: number,
+  ): unknown {
+    if (isAbortError(error, caller)) return error;
+    if (net.timedOut()) {
+      return new ProviderError("network_timeout", `${label}: sem resposta em ${this.timeoutMs}ms`, status);
     }
-
-    return { ...parseCompletion(text), call };
+    return new ProviderError("outage", `${label}: ${this.describe(error)}`, status);
   }
 
   /** Lê SSE (`data: {...}`) e entrega cada delta; devolve a resposta consolidada. */

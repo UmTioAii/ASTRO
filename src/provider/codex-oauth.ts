@@ -2,6 +2,7 @@ import { isAbortError, throwIfAborted } from "../abort";
 import { applyCallToBody, type AppliedCallProfile, type CallConfig } from "../call-profile";
 import type { CodexTokens } from "./codex-auth";
 import { readCodexAuth, refreshCodexTokens } from "./codex-auth";
+import { DEFAULT_PROVIDER_TIMEOUT_MS, networkCall, type NetworkCall } from "./network";
 import type {
   ChatMessage,
   CompletionRequest,
@@ -18,6 +19,8 @@ interface CodexOAuthProviderOptions {
   baseUrl?: string;
   headers?: Record<string, string>;
   fetchFn?: FetchLike;
+  /** Timeout de rede por tentativa; default `DEFAULT_PROVIDER_TIMEOUT_MS`. */
+  timeoutMs?: number;
   /** Relógio em milissegundos desde a epoch (default: `Date.now`). */
   now?: () => number;
   /** Call profile do modelo (E1–E8). */
@@ -307,6 +310,7 @@ export class CodexOAuthProvider implements Provider {
   private readonly now: () => number;
   private tokens: CodexTokens | undefined;
   private readonly call: CallConfig | undefined;
+  private readonly timeoutMs: number;
 
   constructor(opts: CodexOAuthProviderOptions) {
     this.credentialsPath = opts.credentialsPath;
@@ -315,42 +319,57 @@ export class CodexOAuthProvider implements Provider {
     this.fetchFn = opts.fetchFn ?? fetch;
     this.now = opts.now ?? (() => Date.now());
     this.call = opts.call;
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   }
 
   async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
     const tokens = await this.validTokens(signal);
     const { body, call } = this.bodyFor(req);
+    const net = networkCall(signal, this.timeoutMs);
 
-    let response: Response;
     try {
-      response = await this.fetchFn(this.url, {
-        method: "POST",
-        headers: this.headersFor(tokens),
-        body: JSON.stringify(body),
-        signal,
-      });
-    } catch (error) {
-      if (isAbortError(error, signal)) throw error;
-      throw new ProviderError("outage", "falha de rede ao chamar o provider Codex");
-    }
+      let response: Response;
+      try {
+        response = await this.fetchFn(this.url, {
+          method: "POST",
+          headers: this.headersFor(tokens),
+          body: JSON.stringify(body),
+          signal: net.signal,
+        });
+      } catch (error) {
+        throw this.networkError(error, signal, net, "falha de rede ao chamar o provider Codex");
+      }
 
-    let text: string;
-    try {
-      text = await response.text();
-    } catch (error) {
-      if (isAbortError(error, signal)) throw error;
-      throw new ProviderError(
-        "outage",
-        "falha ao ler a resposta do provider Codex",
-        response.status,
-      );
-    }
+      let text: string;
+      try {
+        text = await response.text();
+      } catch (error) {
+        throw this.networkError(error, signal, net, "falha ao ler a resposta do provider Codex", response.status);
+      }
 
-    if (!response.ok) {
-      throw this.errorFromResponse(response.status, text, tokens);
-    }
+      if (!response.ok) {
+        throw this.errorFromResponse(response.status, text, tokens);
+      }
 
-    return { ...parseSse(text, (value) => this.redact(value, tokens)), call };
+      return { ...parseSse(text, (value) => this.redact(value, tokens)), call };
+    } finally {
+      net.dispose();
+    }
+  }
+
+  /** Classifica falha de rede: cancelamento do run, timeout próprio ou outage (I-09). */
+  private networkError(
+    error: unknown,
+    caller: AbortSignal | undefined,
+    net: NetworkCall,
+    label: string,
+    status?: number,
+  ): unknown {
+    if (isAbortError(error, caller)) return error;
+    if (net.timedOut()) {
+      return new ProviderError("network_timeout", `${label}: sem resposta em ${this.timeoutMs}ms`, status);
+    }
+    return new ProviderError("outage", label, status);
   }
 
   private async validTokens(signal?: AbortSignal): Promise<CodexTokens> {

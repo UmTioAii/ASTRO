@@ -35,6 +35,7 @@ export const DEFAULT_LIMITS: Required<PolicyLimits> = {
  *
  * - `transient_rate_limit`: `retry_after` até o limite; depois `fallback`
  * - `outage`: `retry_backoff` até o limite; depois `fallback`
+ * - `network_timeout`: `retry_backoff` até o limite; depois `fallback`
  * - `hard_quota`: sempre `skip` (I-09: cota dura nunca é retentada)
  * - `auth`: sempre `abort` (configuração errada não resolve com retry)
  * - `invalid_request`: sempre `abort` (bug no código não resolve com retry)
@@ -50,6 +51,9 @@ export function errorPolicy(
     case "transient_rate_limit":
       return attempt < l.maxRateLimitRetries ? "retry_after" : "fallback";
     case "outage":
+      return attempt < l.maxOutageRetries ? "retry_backoff" : "fallback";
+    case "network_timeout":
+      // Timeout de rede é indisponibilidade, nunca cota dura (I-09).
       return attempt < l.maxOutageRetries ? "retry_backoff" : "fallback";
     case "hard_quota":
       return "skip";

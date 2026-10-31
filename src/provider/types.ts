@@ -68,6 +68,7 @@ export type ErrorClass =
   | "hard_quota"
   | "auth"
   | "outage"
+  | "network_timeout"
   | "invalid_request";
 
 /** Erro classificado de provider; `status` é o HTTP status quando há resposta. */
