@@ -253,3 +253,87 @@ describe("cancelamento explícito (F-06, #127)", () => {
     expect(ledger.readStates().find((s) => s.state === "interrupted")?.reason).toBe("cancelled");
   });
 });
+
+describe("AbortController por tool call (#260)", () => {
+  const slowManifest = {
+    name: "slow", description: "espera o cancelamento", parameters: { type: "object", properties: {} },
+    risk: "low" as const, permission: "test", timeoutMs: 30_000, retryable: false, idempotent: false, sideEffects: "none" as const,
+  };
+  const call = (name: string) => ({ id: `c-${name}`, name, arguments: "{}" });
+
+  test("abort do run encerra a tool em voo e devolve erro de cancelamento", async () => {
+    const cwd = dir("tool-abort");
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    let killed = false;
+    const tool: Tool = {
+      manifest: slowManifest,
+      async execute(_input, ctx) {
+        seen = ctx.signal;
+        return new Promise((resolve) => {
+          ctx.signal?.addEventListener("abort", () => {
+            killed = true;
+            resolve({ output: "parou", isError: true });
+          }, { once: true });
+        });
+      },
+    };
+    const executor = new ToolExecutor({ tools: [tool], allow: ["slow"], audit });
+
+    setTimeout(() => controller.abort(), 10);
+    const result = await executor.run(
+      { cwd, run: "r1", agent: "a", signal: controller.signal },
+      call("slow"),
+    );
+
+    expect(seen).toBeDefined();
+    expect(killed).toBe(true);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("cancelad");
+  });
+
+  test("tool que ignora o signal não segura o run", async () => {
+    const cwd = dir("tool-stubborn");
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const controller = new AbortController();
+    const stubborn: Tool = {
+      manifest: { ...slowManifest, name: "stubborn" },
+      execute: () => new Promise(() => {}),
+    };
+    const executor = new ToolExecutor({ tools: [stubborn], allow: ["stubborn"], audit });
+
+    setTimeout(() => controller.abort(), 10);
+    const result = await executor.run(
+      { cwd, run: "r1", agent: "a", signal: controller.signal },
+      call("stubborn"),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("cancelad");
+  });
+
+  test("timeout também aborta o signal da tool", async () => {
+    const cwd = dir("tool-timeout");
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    let killed = false;
+    const tool: Tool = {
+      manifest: { ...slowManifest, timeoutMs: 20 },
+      async execute(_input, ctx) {
+        return new Promise((resolve) => {
+          ctx.signal?.addEventListener("abort", () => {
+            killed = true;
+            resolve({ output: "parou", isError: true });
+          }, { once: true });
+        });
+      },
+    };
+    const executor = new ToolExecutor({ tools: [tool], allow: ["slow"], audit });
+
+    const result = await executor.run({ cwd, run: "r1", agent: "a" }, call("slow"));
+
+    expect(killed).toBe(true);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("timeout");
+  });
+});

@@ -10,6 +10,7 @@ import { runCommandTool } from "../src/tools/run-command";
 import { grepTool } from "../src/tools/grep";
 import { editTool } from "../src/tools/edit";
 import { pipelineTool } from "../src/tools/pipeline";
+import type { Tool } from "../src/tools/types";
 
 const ALL_TOOLS = [readFileTool, writeFileTool, runCommandTool, grepTool, editTool, pipelineTool];
 
@@ -194,3 +195,46 @@ describe("pipeline tool (F4-5)", () => {
     expect(result.output).toContain("executor");
   });
 });
+describe("pipeline cancelamento (#260)", () => {
+  test("abort entre steps: o step seguinte não executa", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-pipe-abort-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const controller = new AbortController();
+    const ran: string[] = [];
+    const manifest = {
+      description: "step", parameters: { type: "object", properties: {} },
+      risk: "low" as const, permission: "test", timeoutMs: 5_000, retryable: false,
+      idempotent: false, sideEffects: "none" as const,
+    };
+    const first: Tool = {
+      manifest: { ...manifest, name: "first" },
+      async execute() {
+        ran.push("first");
+        controller.abort();
+        return { output: "um" };
+      },
+    };
+    const second: Tool = {
+      manifest: { ...manifest, name: "second" },
+      async execute() {
+        ran.push("second");
+        return { output: "dois" };
+      },
+    };
+    const executor = new ToolExecutor({
+      tools: [first, second, pipelineTool],
+      allow: ["first", "second", "pipeline"],
+      audit,
+    });
+
+    const result = await executor.run(
+      { cwd, run: "r1", agent: "a", signal: controller.signal },
+      { id: "c1", name: "pipeline", arguments: JSON.stringify({ steps: [{ tool: "first", input: {} }, { tool: "second", input: {} }] }) },
+    );
+
+    expect(ran).toEqual(["first"]);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("cancelad");
+  });
+});
+
