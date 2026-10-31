@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,7 @@ import { Auditor } from "../src/audit";
 import { ToolExecutor } from "../src/tools/executor";
 import { readFileTool } from "../src/tools/read-file";
 import { writeFileTool } from "../src/tools/write-file";
-import { runCommandTool } from "../src/tools/run-command";
+import { runCommandTool, configureRunCommand } from "../src/tools/run-command";
 import type { ToolCall } from "../src/provider/types";
 import type { Tool } from "../src/tools/types";
 
@@ -15,6 +15,9 @@ const call = (name: string, args: Record<string, unknown>): ToolCall => ({
   name,
   arguments: JSON.stringify(args),
 });
+
+// Estes testes executam comandos locais de propósito: opt-out explícito do sandbox.
+beforeEach(() => configureRunCommand({ sandbox: false }));
 
 /** Cria uma tool simples de teste para registro dinâmico. */
 function makeTool(name: string): Tool {

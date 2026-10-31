@@ -78,6 +78,7 @@ function writeConfig(dir: string, extra: Record<string, unknown>): string {
     providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${(extra.port as number)}/v1`, credentialRef: "TEST_KEY" } },
     models: [{ provider: "mock", id: "mock-1", tags: ["writing-code", "tools"], context: 4096 }],
     agent: { model: "mock/mock-1", maxSteps: 4, tools: extra.tools ?? [] },
+    tools: { run_command: { sandbox: false } },
     ...(extra.mcpServers === undefined ? {} : { mcpServers: extra.mcpServers }),
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));

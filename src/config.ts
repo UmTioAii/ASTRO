@@ -113,7 +113,7 @@ export interface ToolsConfig {
 }
 
 export interface RunCommandToolConfig {
-  /** Executar comandos em container Docker efêmero isolado (default: false). */
+  /** Executar comandos em container Docker efêmero isolado (default: true; opt-out explícito com `false`). */
   sandbox?: boolean;
 }
 
@@ -1027,7 +1027,7 @@ function validateTools(value: unknown): ToolsConfig {
 
   if (raw.run_command !== undefined) {
     const rcRaw = expectObject(raw.run_command, "tools.run_command");
-    const sandbox = rcRaw.sandbox === undefined ? false : expectBoolean(rcRaw.sandbox, "tools.run_command.sandbox");
+    const sandbox = rcRaw.sandbox === undefined ? true : expectBoolean(rcRaw.sandbox, "tools.run_command.sandbox");
     result.run_command = { sandbox };
   }
 

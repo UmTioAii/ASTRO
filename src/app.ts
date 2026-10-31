@@ -48,7 +48,7 @@ import { listDirTool } from "./tools/list-dir";
 import { editTool } from "./tools/edit";
 import { lspTool } from "./tools/lsp";
 import { pipelineTool } from "./tools/pipeline";
-import { configureRunCommand } from "./tools/run-command";
+import { configureRunCommand, resolveSandboxSetting } from "./tools/run-command";
 import type { Tool } from "./tools/types";
 
 export interface RunOptions {
@@ -519,7 +519,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
   const loaded = await loadPlugins(config.plugins ?? []);
 
   // Sandbox do run_command (F4-6): configurado antes de qualquer execução
-  configureRunCommand({ sandbox: config.tools?.run_command?.sandbox ?? false });
+  configureRunCommand({ sandbox: resolveSandboxSetting(config.tools?.run_command?.sandbox) });
 
   const ledgerPath = resolveFrom(cwd, config.paths.ledger);
   const auditPath = resolveFrom(cwd, config.paths.audit);
