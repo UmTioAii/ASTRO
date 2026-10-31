@@ -185,3 +185,44 @@ export function definePlugin() {
   expect(report.final).toBe("ok");
   expect((globalThis as { __astroCreates?: number }).__astroCreates).toBe(1); // 2 steps, 1 provider
 });
+
+test("troca de identidade continua pedindo aprovação nos três modos, inclusive bypass (#261)", async () => {
+  const modes = ["ask", "allow-edits", "bypass"] as const;
+  for (const mode of modes) {
+    const downSeen: string[] = [];
+    const upSeen: string[] = [];
+    const down = mockServer(503, "fora", downSeen);
+    const up = mockServer(200, "do-b", upSeen);
+    try {
+      const dir = mkdtempSync(join(tmpdir(), `astro-swap-${mode}-`));
+      const cfgPath = writeConfig(dir, {
+        permissions: { mode },
+        providers: {
+          a: provider(`http://127.0.0.1:${down.port}/v1`, "KEY_A", { fallback: ["b"], maxRetries: 0, retryBackoffMs: 1 }),
+          b: provider(`http://127.0.0.1:${up.port}/v1`, "KEY_B"),
+        },
+        models: [model("a", "m1"), model("b", "m1")],
+        modelPool: { p1: { model: "a/m1" } },
+        agent: { profile: "p1", maxSteps: 2, tools: [] },
+      });
+
+      // Sem approver: a troca fica pendente e o run não executa o destino.
+      const error = await runTask({
+        configPath: cfgPath,
+        task: "x",
+        cwd: dir,
+        env: { KEY_A: "test-key", KEY_B: "test-key" },
+      }).catch((e) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(upSeen).toEqual([]);
+      const events = auditEvents(dir);
+      expect(events.some((e) => e.tipo === "swap.requested")).toBe(true);
+      expect(events.some((e) => e.tipo === "swap.pending")).toBe(true);
+      expect(events.some((e) => e.tipo === "swap.approved")).toBe(false);
+    } finally {
+      down.stop(true);
+      up.stop(true);
+    }
+  }
+});
