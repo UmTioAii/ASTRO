@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { runTask, type RunReport, createProvider } from "./app";
+import { nonInteractiveApprover } from "./permissions";
 import { defaultArgs, isInteractive } from "./cli-default";
 import { existsSync } from "node:fs";
 import { loadConfig, validateConfig } from "./config";
@@ -814,6 +815,8 @@ async function main(argv: string[]): Promise<number> {
         task: o.task,
         ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
         resume: o.runId,
+        // Sem TTY não há como perguntar: `ask` nega e para (I-08/I-19).
+        ...(process.stdin.isTTY === true ? {} : { approveTool: nonInteractiveApprover() }),
         approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider(),
       });
       console.log(`retomado ${report.resumedFrom ?? "?"} do run ${report.runId}`);
@@ -1006,7 +1009,12 @@ async function main(argv: string[]): Promise<number> {
   }
 
   try {
-    const report = await runTask({ ...parsed.options, approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider() });
+    const report = await runTask({
+      ...parsed.options,
+      // Sem TTY não há como perguntar: `ask` nega e para (I-08/I-19).
+      ...(process.stdin.isTTY === true ? {} : { approveTool: nonInteractiveApprover() }),
+      approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider(),
+    });
     console.log(report.final);
     console.log("");
     console.log(formatSummary(report));

@@ -906,6 +906,7 @@ export async function runMultiAgentSession(
         ceiling: [...currentCeiling],
         audit: opts.audit,
         permissionMode: opts.baseExecutor.permissionMode,
+        ...(opts.baseExecutor.toolApprover === undefined ? {} : { approveTool: opts.baseExecutor.toolApprover }),
       });
 
       const stepSpan = tracer?.start("step", { step, agent: redactSecrets(currentAgentName) }, rootSpan);

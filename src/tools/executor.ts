@@ -5,6 +5,7 @@ import {
   actionClassOf,
   permissionDecision,
   DEFAULT_PERMISSION_MODE,
+  PermissionPendingError,
   type ActionClass,
   type PermissionDecision,
   type PermissionMode,
@@ -58,6 +59,11 @@ export class ToolExecutor {
   /** Modo de permissão corrente (subagente herda do executor pai). */
   get permissionMode(): PermissionMode {
     return this.mode;
+  }
+
+  /** Aprovador de tool por chamada (subagente herda do executor pai). */
+  get toolApprover(): ((request: { name: string; action: ActionClass; mode: PermissionMode }) => boolean) | undefined {
+    return this.approveTool;
   }
 
   /** Todas as tools registradas (para multi-agent session). */
@@ -212,10 +218,10 @@ export class ToolExecutor {
 
   /**
    * Gate por chamada depois do allowlist e do ceiling (PERM-01, I-01). `deny`
-   * bloqueia; `ask` consulta o aprovador injetado pela TUI/REPL. Sem aprovador,
-   * a decisão fica auditada e a chamada segue — PERM-07 nega sem TTY.
-   * O piso fixo (`.astro/`/`protectedPaths`, redação, confinamento) é aplicado
-   * pelas próprias tools e não depende do modo.
+   * bloqueia; `ask` consulta o aprovador injetado pela TUI/REPL. Sem aprovador
+   * a chamada segue (o CLI não interativo injeta um aprovador que nega em
+   * `pending`, #262). O piso fixo (`.astro/`/`protectedPaths`, redação,
+   * confinamento) é aplicado pelas próprias tools e não depende do modo.
    */
   private permissionGate(
     ctx: ToolContext,
@@ -226,9 +232,21 @@ export class ToolExecutor {
     const action = actionClassOf(tool, { name: call.name, input });
     const decision = permissionDecision(this.mode, action);
     let effective: PermissionDecision = decision;
-    if (decision === "ask") {
-      const approved = this.approveTool?.({ name: call.name, action, mode: this.mode });
-      if (approved !== undefined) effective = approved ? "allow" : "deny";
+    if (decision === "ask" && this.approveTool !== undefined) {
+      try {
+        effective = this.approveTool({ name: call.name, action, mode: this.mode }) ? "allow" : "deny";
+      } catch (error) {
+        // Sem TTY o aprovador não pode perguntar: pending, auditado e run para (I-08/I-19).
+        if (error instanceof PermissionPendingError) {
+          this.auditRef.append({
+            run: ctx.run,
+            agent: ctx.agent,
+            tipo: "permission.pending",
+            payload: { name: call.name, action, mode: this.mode },
+          });
+        }
+        throw error;
+      }
     }
     // `allow` automático não gera evento; só o que passou pelo gate fica auditado.
     if (decision !== "allow") {
