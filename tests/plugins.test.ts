@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateConfig } from "../src/config";
-import { definePlugin, loadPlugins } from "../src/plugins";
+import { definePlugin, loadPlugins, pluginAllowlistFromEnv } from "../src/plugins";
 import { runTask } from "../src/app";
 
 /** Plugin de teste: tool sql_query + provider factory bigquery. */
@@ -133,5 +133,34 @@ describe("plugin system (F7-1)", () => {
         paths: { ledger: "l", audit: "a" },
       }),
     ).toThrow();
+  });
+});
+
+describe("plugin trust (I-13, #255)", () => {
+  test("pacote remoto fora da allowlist falha fechado, com warn", async () => {
+    const warnings: string[] = [];
+    const loaded = await loadPlugins(["dark-plugin"], { warn: (m) => warnings.push(m) });
+    expect(loaded.tools).toHaveLength(0);
+    expect(loaded.providerFactories.size).toBe(0);
+    expect(warnings.join("\n")).toContain("ASTRO_PLUGIN_ALLOWLIST");
+  });
+
+  test("allowlist libera o pacote remoto", async () => {
+    const warnings: string[] = [];
+    await loadPlugins(["dark-plugin"], { allowlist: new Set(["dark-plugin"]), warn: (m) => warnings.push(m) });
+    expect(warnings.join("\n")).not.toContain("ASTRO_PLUGIN_ALLOWLIST");
+  });
+
+  test("caminho local não exige allowlist", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "astro-plugin-"));
+    const warnings: string[] = [];
+    const loaded = await loadPlugins([writePlugin(dir)], { warn: (m) => warnings.push(m) });
+    expect(loaded.tools).toHaveLength(1);
+    expect(warnings).toHaveLength(0);
+  });
+
+  test("allowlist do env é lista separada por vírgula", () => {
+    expect([...pluginAllowlistFromEnv({ ASTRO_PLUGIN_ALLOWLIST: "a, b ,," })]).toEqual(["a", "b"]);
+    expect([...pluginAllowlistFromEnv({})]).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitHubConfigRegistry, isValidSemver } from "../src/config-share";
+import { GitHubConfigRegistry, isValidSemver, prepareConfigForPush, preparePulledConfig } from "../src/config-share";
 import { validateConfig, ConfigError } from "../src/config";
 
 const validConfig = {
@@ -142,5 +142,41 @@ describe("GitHubConfigRegistry (F7-4)", () => {
     } finally {
       mock.stop();
     }
+  });
+});
+
+describe("plugin provenance (I-13, #255)", () => {
+  const withPlugins = { ...validConfig, plugins: ["evil-pkg"] };
+
+  test("push sem aprovação recusa config com plugins", () => {
+    const result = prepareConfigForPush(withPlugins, "org/repo", false);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("plugins");
+  });
+
+  test("push aprovado publica proveniência do registry", () => {
+    const result = prepareConfigForPush(withPlugins, "org/repo", true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const parsed = JSON.parse(result.json) as Record<string, unknown>;
+      expect(parsed.provenance).toEqual({ registry: "org/repo", plugins: true });
+      expect(parsed.plugins).toEqual(["evil-pkg"]);
+    }
+  });
+
+  test("pull sem aprovação quarentena os plugins e mantém a config válida", () => {
+    const result = preparePulledConfig(withPlugins, "org/repo", false);
+    expect(result.removedPlugins).toEqual(["evil-pkg"]);
+    const parsed = JSON.parse(result.json) as Record<string, unknown>;
+    expect(parsed.plugins).toBeUndefined();
+    expect(parsed.provenance).toEqual({ registry: "org/repo", plugins: false });
+    expect(() => validateConfig(parsed)).not.toThrow();
+  });
+
+  test("pull aprovado mantém os plugins", () => {
+    const result = preparePulledConfig(withPlugins, "org/repo", true);
+    expect(result.removedPlugins).toEqual([]);
+    const parsed = JSON.parse(result.json) as Record<string, unknown>;
+    expect(parsed.plugins).toEqual(["evil-pkg"]);
   });
 });

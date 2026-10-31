@@ -22,7 +22,7 @@ import { runRepl } from "./chat/repl";
 import { chatApprovers } from "./chat/approvers";
 import { nodeReplIO } from "./chat/node-io";
 import { runHealthCheck, runPoolHealthCheck, formatProvidersList, testProvider } from "./health";
-import { GitHubConfigRegistry } from "./config-share";
+import { GitHubConfigRegistry, prepareConfigForPush, preparePulledConfig } from "./config-share";
 import { runSkillsCommand } from "./skills/cli";
 import { runMcpCommand } from "./mcp/cli";
 import { redactSecrets } from "./sanitize-external";
@@ -93,7 +93,7 @@ const USAGE = `Uso:
   astro cost --by-agent [--config <path>]
   astro pool <list|health> [--config <path>]
   astro agents list [--config <path>]
-  astro config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>]
+  astro config <push|pull> <org/projeto> [--registry <owner/repo>] [--config <path>] [--token <t>] [--allow-plugins]
   astro skills <list|show|validate|install|remove|verify> [--user] [--force]
   astro mcp <list|test <server> <tool>> [--args <json>] [--config <path>]
   astro --help
@@ -207,6 +207,7 @@ interface ConfigShareCommand {
   registry?: string;
   configPath: string;
   token?: string;
+  allowPlugins?: boolean;
 }
 
 type ParsedCommand =
@@ -370,8 +371,13 @@ function parseArgs(argv: string[]): ParsedCommand {
     let registry: string | undefined;
     let configPath = "astro.config.json";
     let token: string | undefined;
+    let allowPlugins = false;
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i] as string;
+      if (arg === "--allow-plugins") {
+        allowPlugins = true;
+        continue;
+      }
       if (arg === "--registry" || arg === "--config" || arg === "--token") {
         const value = rest.at(i + 1);
         if (value === undefined || value.startsWith("-")) {
@@ -396,7 +402,7 @@ function parseArgs(argv: string[]): ParsedCommand {
       name = arg;
     }
     if (action === undefined || name === undefined) {
-      throw new UsageError('use: config <push|pull> <org/projeto> [--registry <owner/repo>]');
+      throw new UsageError('use: config <push|pull> <org/projeto> [--registry <owner/repo>] [--allow-plugins]');
     }
     return {
       kind: "config",
@@ -404,6 +410,7 @@ function parseArgs(argv: string[]): ParsedCommand {
         action, name, configPath,
         ...(registry === undefined ? {} : { registry }),
         ...(token === undefined ? {} : { token }),
+        ...(allowPlugins ? { allowPlugins } : {}),
       },
     };
   }
@@ -912,7 +919,12 @@ async function main(argv: string[]): Promise<number> {
         const configPath = resolve(o.configPath);
         const raw = JSON.parse(readFileSync(configPath, "utf8")) as unknown;
         validateConfig(raw); // publica só config válida — e sem segredos por construção (D-03)
-        const published = await registry.push(o.name, JSON.stringify(raw, null, 2) + "\n");
+        const prepared = prepareConfigForPush(raw, registrySpec, o.allowPlugins === true);
+        if (!prepared.ok) {
+          console.error(`erro: ${prepared.error}`);
+          return 1;
+        }
+        const published = await registry.push(o.name, prepared.json);
         console.log(`config publicada em ${published.path} (${published.created ? "criada" : "atualizada"})`);
         return 0;
       }
@@ -920,8 +932,12 @@ async function main(argv: string[]): Promise<number> {
       const pulled = await registry.pull(o.name);
       const raw = JSON.parse(pulled) as unknown;
       validateConfig(raw); // remota inválida não chega ao disco
+      const prepared = preparePulledConfig(raw, registrySpec, o.allowPlugins === true);
+      if (prepared.removedPlugins.length > 0) {
+        console.warn(`aviso: plugins removidos da config "${o.name}" (publique/puxe com --allow-plugins): ${prepared.removedPlugins.join(", ")}`);
+      }
       const configPath = resolve(o.configPath);
-      writeFileSync(configPath, pulled, "utf8");
+      writeFileSync(configPath, prepared.json, "utf8");
       console.log(`config "${o.name}" validada e gravada em ${o.configPath}`);
       return 0;
     } catch (error) {
