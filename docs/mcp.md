@@ -24,7 +24,7 @@ Cliente MCP (Model Context Protocol) no ASTRO (C2, #56): config `mcpServers`, tr
 |---|---|
 | `stdio` | spawn do processo; JSON-RPC por newline. **Env sanitizado** (reuso do `sanitizedEnv`): herda do host só o que não parece segredo (PATH/HOME etc.); chaves, tokens e senhas são removidos (I-03). O `env` explícito da config é adicional |
 | `http` | streamable HTTP: um POST por requisição com `mcp-session-id` mantido; resposta JSON ou evento `data:` de stream. **404 com sessão enviada = sessão expirada** → transporte morto → o registry reconecta com sessão nova. Erro de rede/5xx não mata: cada requisição é um fetch novo e se autocura |
-| `sse` | legacy: GET abre o stream e recebe o `endpoint`; POST 2xx é fire-and-forget (respostas pelo stream, correlacionadas por id); POST não-2xx rejeita a pendência com `HTTP <status>` |
+| `sse` | legacy: GET abre o stream e recebe o `endpoint`; POST 2xx é fire-and-forget (respostas pelo stream, correlacionadas por id); POST não-2xx rejeita a pendência com `HTTP <status>`. O `endpoint` precisa ter a **mesma origem** de `url`: outro origin falha o connect antes de qualquer POST, e o primeiro endpoint recebido fica pinado (I-03) |
 
 Timeout por requisição nos três: aborta só a própria pendência; o transporte segue usável.
 

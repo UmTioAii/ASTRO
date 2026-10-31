@@ -54,12 +54,17 @@ export class SseTransport {
       throw new MCPError("falha de rede ao abrir o stream SSE do MCP");
     }
     await endpointReady;
+    if (transport.#endpointError !== undefined) {
+      transport.close();
+      throw transport.#endpointError;
+    }
     return transport;
   }
 
   #onEndpoint: () => void = () => {};
   #endpointTimer: ReturnType<typeof setTimeout> | undefined;
   #endpointTimeoutError: MCPError | undefined;
+  #endpointError: MCPError | undefined;
 
   async #pump(response: Response): Promise<void> {
     let buffer = "";
@@ -85,7 +90,16 @@ export class SseTransport {
     const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
     const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("");
     if (event === "endpoint" && data.length > 0) {
-      this.#endpoint = new URL(data, this.#baseUrl).toString();
+      if (this.#endpoint !== undefined) return; // primeiro endpoint vence: o stream não troca o destino dos POSTs
+      const endpoint = new URL(data, this.#baseUrl);
+      if (endpoint.origin !== new URL(this.#baseUrl).origin) {
+        // header de auth só vai para a origem de `url` (I-03): sem POST para a origem estrangeira
+        this.#endpointError = new MCPError("endpoint SSE do MCP com origem diferente da url base");
+        this.#abort.abort();
+        this.#onEndpoint();
+        return;
+      }
+      this.#endpoint = endpoint.toString();
       this.#onEndpoint();
       return;
     }
