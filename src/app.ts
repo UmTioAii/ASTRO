@@ -830,15 +830,25 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     mcpRegistry?.close();
     throw error;
   }
+  // Precedência: opção explícita (CLI/env do chat/tui) > config > ask (D-24).
+  const permissionMode = resolvePermissionMode(
+    opts.permissionMode ?? process.env.ASTRO_PERMISSION_MODE,
+    config.permissions.mode,
+  );
+  // `bypass` é perigoso: avisa uma vez e deixa a ativação no audit sanitizado (I-04, #268).
+  audit.append({ run, agent: AGENT_NAME, tipo: "mode.changed", payload: { mode: permissionMode } });
+  if (permissionMode === "bypass") {
+    console.warn(
+      "aviso: modo de permissão bypass — tools executam sem aprovação; " +
+      "escrita em .astro/protectedPaths, redação e confinamento no cwd continuam valendo",
+    );
+  }
+
   const baseExecutor = new ToolExecutor({
     tools: baseTools,
     allow: config.agent.tools,
     audit,
-    // Precedência: opção explícita (CLI/env do chat/tui) > config > ask (D-24).
-    permissionMode: resolvePermissionMode(
-      opts.permissionMode ?? process.env.ASTRO_PERMISSION_MODE,
-      config.permissions.mode,
-    ),
+    permissionMode,
     ...(opts.approveTool === undefined ? {} : { approveTool: opts.approveTool }),
   });
 

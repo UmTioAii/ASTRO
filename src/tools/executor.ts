@@ -248,8 +248,8 @@ export class ToolExecutor {
         throw error;
       }
     }
-    // `allow` automático não gera evento; só o que passou pelo gate fica auditado.
-    if (decision !== "allow") {
+    // `allow` automático só é auditado em bypass (#268): nele toda decisão fica rastreável.
+    if (decision !== "allow" || this.mode === "bypass") {
       this.auditRef.append({
         run: ctx.run,
         agent: ctx.agent,
