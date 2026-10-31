@@ -50,11 +50,17 @@ const REDACT_ENV = new RegExp(
 
 const REDACTED = "[REDACTED]";
 
+// JWT (header eyJ…, reusa o prefixo de `src/secrets.ts`) e bloco PEM de chave privada.
+const REDACT_JWT = new RegExp(`\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b`, "g");
+const REDACT_PEM = new RegExp(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----`, "g");
+
 export const DEFAULT_MAX_TOKENS = 8_000;
 
 /** Redige padrões de segredo em um texto; reutilizado por ledger/audit (F-23). */
 export function redactSecrets(text: string): string {
   return text
+    .replace(REDACT_PEM, REDACTED)
+    .replace(REDACT_JWT, REDACTED)
     .replace(REDACT_VALUE, REDACTED)
     .replace(REDACT_BEARER, `${BEARER_WORD} ${REDACTED}`)
     .replace(REDACT_NV, REDACTED)

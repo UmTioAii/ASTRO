@@ -247,3 +247,20 @@ test("inputSchema inválido cai no schema vazio e description vazia usa o defaul
   expect(tool!.manifest.parameters).toEqual({ type: "object", properties: {} });
   expect(tool!.manifest.description).toBe("tool MCP fs/x");
 });
+
+test("saída de tool MCP é sanitizada antes de voltar ao contexto", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "astro-mcp-sanitize-"));
+  const audit = auditor(dir);
+  const jwt = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "c2lnbmF0dXJlLWRlLXRlc3Rl"].join(".");
+  const { source } = fakeSource(async () => ({ content: [{ type: "text", text: `chave ${jwt}` }] }));
+  const [tool] = mcpTools({
+    registry: source,
+    servers: { fs: { transport: "stdio", command: "x", timeoutMs: 2000, enabled: true } },
+    audit,
+    reserved: [],
+  });
+
+  const result = await tool!.execute({}, { cwd: dir, run: "r1", agent: "a" });
+  expect(result.output).not.toContain(jwt);
+  expect(result.output).toContain("[REDACTED]");
+});
