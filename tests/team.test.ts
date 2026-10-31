@@ -165,6 +165,65 @@ describe("sendAuditWebhook (F7-5)", () => {
     expect(calls).toBe(3);
   });
 
+  test("endpoint pendurado estoura o timeout e retorna false", async () => {
+    let hits = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        hits++;
+        return new Promise<Response>(() => {}); // nunca responde
+      },
+    });
+    try {
+      const outcome = sendAuditWebhook(`http://127.0.0.1:${server.port}/e`, event, { timeoutMs: 50, retries: 2, backoffMs: 1 })
+        .then((ok) => String(ok), () => "lançou");
+      expect(await Promise.race([outcome, new Promise((resolve) => setTimeout(() => resolve("pendurou"), 1500))])).toBe("false");
+      expect(hits).toBe(2);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("evento acima do teto não é enviado", async () => {
+    let calls = 0;
+    const ok = await sendAuditWebhook("http://hooks.local/e", { ...event, payload: { big: "x".repeat(200) } }, {
+      fetchLike: (async () => {
+        calls++;
+        return Response.json({});
+      }) as unknown as typeof fetch,
+      maxBytes: 100,
+      backoffMs: 1,
+    });
+    expect(ok).toBe(false);
+    expect(calls).toBe(0);
+  });
+
+  test("4xx definitivo não é retentado", async () => {
+    let calls = 0;
+    const ok = await sendAuditWebhook("http://hooks.local/e", event, {
+      fetchLike: (async () => {
+        calls++;
+        return new Response("no", { status: 400 });
+      }) as unknown as typeof fetch,
+      backoffMs: 1,
+    });
+    expect(ok).toBe(false);
+    expect(calls).toBe(1);
+  });
+
+  test("429 transitório é retentado", async () => {
+    let calls = 0;
+    const ok = await sendAuditWebhook("http://hooks.local/e", event, {
+      fetchLike: (async () => {
+        calls++;
+        return calls < 3 ? new Response("slow down", { status: 429 }) : Response.json({});
+      }) as unknown as typeof fetch,
+      backoffMs: 1,
+    });
+    expect(ok).toBe(true);
+    expect(calls).toBe(3);
+  });
+
   test("webhook recebe eventos de um Auditor real", async () => {
     const received: AuditEvent[] = [];
     const server = Bun.serve({
