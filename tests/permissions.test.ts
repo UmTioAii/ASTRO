@@ -24,13 +24,13 @@ import type { Tool } from "../src/tools/types";
 
 const expected: Record<PermissionMode, Record<ActionClass, PermissionDecision>> = {
   bypass: {
-    read_common: "allow", read_critical: "allow", edit: "allow", delete: "allow", shell: "allow", identity: "ask",
+    read_common: "allow", read_critical: "allow", edit: "allow", critical_write: "allow", delete: "allow", shell: "allow", identity: "ask",
   },
   "allow-edits": {
-    read_common: "allow", read_critical: "ask", edit: "allow", delete: "ask", shell: "ask", identity: "ask",
+    read_common: "allow", read_critical: "ask", edit: "allow", critical_write: "ask", delete: "ask", shell: "ask", identity: "ask",
   },
   ask: {
-    read_common: "allow", read_critical: "ask", edit: "ask", delete: "ask", shell: "ask", identity: "ask",
+    read_common: "allow", read_critical: "ask", edit: "ask", critical_write: "ask", delete: "ask", shell: "ask", identity: "ask",
   },
 };
 
@@ -233,9 +233,9 @@ describe("caminhos críticos (#263)", () => {
     const executor = new ToolExecutor({ tools: [writeFileTool], allow: ["write_file"], audit, permissionMode: "bypass" });
     const result = await executor.run({ cwd, run: "r1", agent: "a" }, {
       id: "c1", name: "write_file",
-      arguments: JSON.stringify({ path: ".astro/audit.jsonl", content: "x" }),
+      arguments: JSON.stringify({ path: ".astro/ledger.jsonl", content: "x" }),
     });
     expect(result.isError).toBe(true);
-    expect(existsSync(join(cwd, ".astro", "audit.jsonl"))).toBe(true); // só o audit original
+    expect(existsSync(join(cwd, ".astro", "ledger.jsonl"))).toBe(false);
   });
 });
