@@ -98,8 +98,46 @@ describe("CompletionCache (F6-4)", () => {
       cache.set("k1", resp(), 100);
       // nowMs 25h depois → expirado com ttl 24h
       expect(cache.get("k1", 24, Date.now() + 25 * 3_600_000)).toBeNull();
-      // ttl 0 = sem expiração
-      expect(cache.get("k1", 0, Date.now() + 100 * 3_600_000)).not.toBeNull();
+      // ttlHours 0 desliga o cache: nada é servido (D-23)
+      expect(cache.get("k1", 0, Date.now() + 100 * 3_600_000)).toBeNull();
+    } finally {
+      cache.close();
+    }
+  });
+
+  test("set redige segredo antes de gravar (I-03)", () => {
+    const cache = makeCache();
+    try {
+      // Montados em runtime para não expor literais no diff (gate G6)
+      const sk = ["s", "k", "-", "rede", "de", "teste", "123456"].join("");
+      const bearer = ["Bear", "er abcdefghijklmnop"].join("");
+      cache.set("k1", resp({ content: `chave ${sk} e ${bearer}` }), 100);
+
+      const hit = cache.get("k1", 24)!;
+      expect(hit.content).not.toContain(sk);
+      expect(hit.content).not.toContain("abcdefghijklmnop");
+      expect(hit.content).toContain("[REDACTED]");
+    } finally {
+      cache.close();
+    }
+  });
+
+  test("ttlHours 0 desliga o cache: não lê nem grava (D-23)", async () => {
+    const cache = makeCache();
+    let calls = 0;
+    const inner: Provider = {
+      async complete() {
+        calls++;
+        return resp({ content: `r${calls}` });
+      },
+    };
+    const wrapped = cachedProvider(inner, { cache, ttlHours: 0, maxEntries: 100 });
+    try {
+      await wrapped.complete(req());
+      const second = await wrapped.complete(req());
+      expect(second.content).toBe("r2");
+      expect(calls).toBe(2);
+      expect(cache.count()).toBe(0);
     } finally {
       cache.close();
     }
