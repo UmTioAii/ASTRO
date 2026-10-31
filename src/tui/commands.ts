@@ -1,6 +1,6 @@
 /** Comandos de barra compartilhados pelo REPL e pela TUI: puro, sem React. */
 import { HELP_TEXT, type ReplCommand } from "../chat/commands";
-import { detailsLines, providerLine, type ChatSession } from "../chat/repl";
+import { detailsLines, type ChatSession } from "../chat/repl";
 import { sessionSummaryLine, type SessionStore, type SessionSummary } from "../chat/store";
 import { redactSecrets } from "../sanitize-external";
 import { exportSession } from "../chat/export";
@@ -62,7 +62,7 @@ export async function runCommand(
       }
     }
     case "providers":
-      return { entries: [{ kind: "info", text: providerLines(session) }] };
+      return { entries: [], openProviders: { mode: "list" } };
     case "provider": {
       if (command.action === "use") {
         if (command.target === undefined) {
@@ -168,11 +168,5 @@ export async function runCommand(
       }
     }
   }
-}
-
-function providerLines(session: ChatSession): string {
-  const providers = session.listProviders();
-  if (providers.length === 0) return "nenhum provider configurado";
-  return providers.map(providerLine).join("\n");
 }
 
