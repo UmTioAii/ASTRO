@@ -109,6 +109,19 @@ export const pipelineTool: Tool = {
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i]!;
 
+        // Cancelamento entre steps (I-19): não inicia o próximo após o abort.
+        if (ctx.signal?.aborted === true) {
+          return {
+            output: JSON.stringify({
+              pipeline: "cancelado",
+              cancelledStep: i,
+              tool: step.tool,
+              steps: outputs,
+            }),
+            isError: true,
+          };
+        }
+
         const stepInput: Record<string, unknown> = { ...step.input };
         if (previousOutput !== undefined) {
           stepInput.stdin = previousOutput;

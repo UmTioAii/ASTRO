@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { runTask, type RunReport, createProvider } from "./app";
+import { installCancellation } from "./signal";
 import { defaultArgs, isInteractive } from "./cli-default";
 import { existsSync } from "node:fs";
 import { loadConfig, validateConfig } from "./config";
@@ -808,12 +809,15 @@ async function main(argv: string[]): Promise<number> {
 
   if (parsed.kind === "resume") {
     const o = parsed.options;
+    // Ctrl+C/SIGTERM cancelam o run em vez de matar o processo no meio do append.
+    const cancellation = installCancellation();
     try {
       const report = await runTask({
         configPath: resolve(o.configPath),
         task: o.task,
         ...(o.cwd === undefined ? {} : { cwd: o.cwd }),
         resume: o.runId,
+        signal: cancellation.signal,
         approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider(),
       });
       console.log(`retomado ${report.resumedFrom ?? "?"} do run ${report.runId}`);
@@ -825,6 +829,8 @@ async function main(argv: string[]): Promise<number> {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`erro: ${message}`);
       return 1;
+    } finally {
+      cancellation.dispose();
     }
   }
 
@@ -1005,8 +1011,13 @@ async function main(argv: string[]): Promise<number> {
     }
   }
 
+  const cancellation = installCancellation();
   try {
-    const report = await runTask({ ...parsed.options, approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider() });
+    const report = await runTask({
+      ...parsed.options,
+      signal: cancellation.signal,
+      approveSwap: ttyApprover(), onBudgetExceeded: ttyBudgetDecider(),
+    });
     console.log(report.final);
     console.log("");
     console.log(formatSummary(report));
@@ -1015,6 +1026,8 @@ async function main(argv: string[]): Promise<number> {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`erro: ${message}`);
     return 1;
+  } finally {
+    cancellation.dispose();
   }
 }
 
