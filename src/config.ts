@@ -7,7 +7,7 @@ import { DEFAULT_OUTPUT_LIMIT, type OutputLimitConfig } from "./output-limit";
 import { DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from "./compaction/engine";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
-import { urlProblem } from "./url-safety";
+import { outboundUrlProblem, urlProblem } from "./url-safety";
 import { CAPACITY_TAGS, ROLE_TAGS, isKnownTag } from "./tags";
 
 /** Configuração comum a todos os providers. */
@@ -838,7 +838,10 @@ function validateTeam(value: unknown): TeamSectionConfig {
     result.projectBudgetUsd = expectNonNegativeNumber(raw.projectBudgetUsd, "team.projectBudgetUsd");
   }
   if (raw.auditWebhook !== undefined) {
-    result.auditWebhook = expectString(raw.auditWebhook, "team.auditWebhook");
+    const webhook = expectString(raw.auditWebhook, "team.auditWebhook");
+    const issue = outboundUrlProblem(webhook);
+    if (issue !== undefined) fail(`config inválida: "team.auditWebhook" ${issue}`);
+    result.auditWebhook = webhook;
   }
   if (raw.agentQuotas !== undefined) {
     const quotasRaw = expectObject(raw.agentQuotas, "team.agentQuotas");
@@ -978,6 +981,10 @@ function validateMcpServers(value: unknown): Record<string, MCPServerConfig> {
     if (trans !== "stdio" && (raw2.url === undefined || typeof raw2.url !== "string")) {
       fail(`config inválida: "${field}.url" obrigatório para transport ${trans}`);
     }
+    if (trans !== "stdio") {
+      const urlIssue = outboundUrlProblem(raw2.url as string);
+      if (urlIssue !== undefined) fail(`config inválida: "${field}.url" ${urlIssue}`);
+    }
     let args: string[] = [];
     if (raw2.args !== undefined) {
       if (!Array.isArray(raw2.args) || raw2.args.some((arg) => typeof arg !== "string")) {
@@ -1015,6 +1022,8 @@ function validateTelemetry(value: unknown): TelemetryConfig {
     raw.endpoint === undefined
       ? "https://telemetry.astro.local/v1/runs"
       : expectString(raw.endpoint, "telemetry.endpoint");
+  const endpointIssue = outboundUrlProblem(endpoint);
+  if (endpointIssue !== undefined) fail(`config inválida: "telemetry.endpoint" ${endpointIssue}`);
   let sampleRate = raw.sampleRate === undefined ? 1 : expectNonNegativeNumber(raw.sampleRate, "telemetry.sampleRate");
   if (sampleRate > 1) sampleRate = 1;
   return { enabled, endpoint, sampleRate };

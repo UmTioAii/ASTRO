@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Auditor } from "../audit";
+import { outboundUrlProblem } from "../url-safety";
 import { parseSkill } from "./loader";
 import { SKILL_MAX_BYTES, SKILL_NAME_RE, SkillError, type Skill, type SkillSource } from "./types";
 
@@ -49,6 +50,8 @@ async function readSource(
   fetchFn: (url: string) => Promise<Response>,
 ): Promise<{ content: string; directory?: string }> {
   if (/^https?:\/\//i.test(source)) {
+    const problem = outboundUrlProblem(source);
+    if (problem !== undefined) throw new SkillError(`skill "${source}": ${problem}`);
     let response: Response;
     try { response = await fetchFn(source); } catch (error) {
       throw new SkillError(`falha ao baixar skill "${source}": ${error instanceof Error ? error.message : String(error)}`);
