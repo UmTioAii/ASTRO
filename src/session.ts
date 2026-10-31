@@ -906,6 +906,7 @@ export async function runMultiAgentSession(
         ceiling: [...currentCeiling],
         audit: opts.audit,
         permissionMode: opts.baseExecutor.permissionMode,
+        grants: opts.baseExecutor.permissionGrants,
         ...(opts.baseExecutor.toolApprover === undefined ? {} : { approveTool: opts.baseExecutor.toolApprover }),
       });
 

@@ -5,10 +5,13 @@ import {
   actionClassOf,
   permissionDecision,
   DEFAULT_PERMISSION_MODE,
+  PermissionGrants,
   PermissionPendingError,
   type ActionClass,
+  type PermissionApproval,
   type PermissionDecision,
   type PermissionMode,
+  type ToolPermissionRequest,
 } from "../permissions";
 import { join, relative } from "node:path";
 import type { ToolCall, ToolDef } from "../provider/types";
@@ -36,7 +39,9 @@ export class ToolExecutor {
   /** Modo do gate por chamada (PERM-01); default `ask`. */
   private readonly mode: PermissionMode;
   /** Aprovação humana injetada pela TUI/REPL; ausente = sem prompt (PERM-04/07). */
-  private readonly approveTool?: (request: { name: string; action: ActionClass; mode: PermissionMode }) => boolean;
+  private readonly approveTool?: (request: ToolPermissionRequest) => PermissionApproval;
+  /** Grants em memória da sessão (PERM-05); compartilhado com subagentes. */
+  readonly permissionGrants: PermissionGrants;
 
   constructor(opts: {
     tools: readonly Tool[];
@@ -44,7 +49,9 @@ export class ToolExecutor {
     audit: Auditor;
     ceiling?: string[];
     permissionMode?: PermissionMode;
-    approveTool?: (request: { name: string; action: ActionClass; mode: PermissionMode }) => boolean;
+    approveTool?: (request: ToolPermissionRequest) => PermissionApproval;
+    /** Grants da sessão; subagente recebe os mesmos grants do executor pai. */
+    grants?: PermissionGrants;
   }) {
     this.tools = opts.tools;
     this.byName = new Map(opts.tools.map((tool) => [tool.manifest.name, tool]));
@@ -54,6 +61,7 @@ export class ToolExecutor {
     this.auditRef = opts.audit;
     this.mode = opts.permissionMode ?? DEFAULT_PERMISSION_MODE;
     this.approveTool = opts.approveTool;
+    this.permissionGrants = opts.grants ?? new PermissionGrants();
   }
 
   /** Modo de permissão corrente (subagente herda do executor pai). */
@@ -62,7 +70,7 @@ export class ToolExecutor {
   }
 
   /** Aprovador de tool por chamada (subagente herda do executor pai). */
-  get toolApprover(): ((request: { name: string; action: ActionClass; mode: PermissionMode }) => boolean) | undefined {
+  get toolApprover(): ((request: ToolPermissionRequest) => PermissionApproval) | undefined {
     return this.approveTool;
   }
 
@@ -232,9 +240,18 @@ export class ToolExecutor {
     const action = actionClassOf(tool, { name: call.name, input });
     const decision = permissionDecision(this.mode, action);
     let effective: PermissionDecision = decision;
-    if (decision === "ask" && this.approveTool !== undefined) {
+    const grantKey = PermissionGrants.key(action, call.name);
+    if (decision === "ask" && this.permissionGrants.has(grantKey)) {
+      effective = "allow";
+    } else if (decision === "ask" && this.approveTool !== undefined) {
       try {
-        effective = this.approveTool({ name: call.name, action, mode: this.mode }) ? "allow" : "deny";
+        const approval = this.approveTool({ name: call.name, action, mode: this.mode });
+        if (approval === "session") {
+          this.permissionGrants.grant(grantKey);
+          effective = "allow";
+        } else {
+          effective = approval === false ? "deny" : "allow"; // true | "once"
+        }
       } catch (error) {
         // Sem TTY o aprovador não pode perguntar: pending, auditado e run para (I-08/I-19).
         if (error instanceof PermissionPendingError) {
