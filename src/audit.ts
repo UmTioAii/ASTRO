@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { withFileLock } from "./file-lock";
 import { appendDurable, parseJsonl } from "./jsonl";
 import { redactSecrets } from "./sanitize-external";
 
@@ -68,18 +69,23 @@ export class Auditor {
     tipo: string;
     payload?: Record<string, unknown>;
   }): AuditEvent {
-    const event: AuditEvent = {
-      seq: this.nextSeq++,
-      ts: new Date().toISOString(),
-      run: e.run,
-      ...(e.agent === undefined ? {} : { agent: e.agent }),
-      tipo: e.tipo,
-      payload: e.payload ?? {},
-    };
-    const sanitized = sanitize(event) as AuditEvent;
-    appendDurable(this.path, `${JSON.stringify(sanitized)}\n`);
-    if (this.onEvent !== undefined) this.onEvent(sanitized);
-    return sanitized;
+    // Seq + append na mesma seção crítica (I-04): dois processos no mesmo cwd
+    // não repetem seq; sem lock, falha em vez de gravar duplicado.
+    return withFileLock(`${this.path}.lock`, () => {
+      const event: AuditEvent = {
+        seq: Math.max(this.nextSeq, this.readLastSeq() + 1),
+        ts: new Date().toISOString(),
+        run: e.run,
+        ...(e.agent === undefined ? {} : { agent: e.agent }),
+        tipo: e.tipo,
+        payload: e.payload ?? {},
+      };
+      this.nextSeq = event.seq + 1;
+      const sanitized = sanitize(event) as AuditEvent;
+      appendDurable(this.path, `${JSON.stringify(sanitized)}\n`);
+      if (this.onEvent !== undefined) this.onEvent(sanitized);
+      return sanitized;
+    }, { failClosed: true });
   }
 
   readAll(): AuditEvent[] {
