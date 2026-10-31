@@ -25,6 +25,44 @@ export type ActionClass =
 
 export type PermissionDecision = "allow" | "ask" | "deny";
 
+/** Escopo de uma aprovação humana (PERM-05, #266). */
+export type PermissionGrant = "once" | "session";
+
+/** Resposta do aprovador: `true`/`"once"` valem para a chamada; `"session"` até o fim. */
+export type PermissionApproval = boolean | PermissionGrant;
+
+/**
+ * Grants em memória por sessão (PERM-05): nada vai para o disco. `once` não é
+ * registrado; `session` fica até `clear()` (fim da sessão/run).
+ */
+export class PermissionGrants {
+  readonly #session = new Set<string>();
+
+  static key(action: ActionClass, name: string): string {
+    return `${action}:${name}`;
+  }
+
+  has(key: string): boolean {
+    return this.#session.has(key);
+  }
+
+  grant(key: string): void {
+    this.#session.add(key);
+  }
+
+  /** Fecha a sessão: grants de sessão deixam de valer. */
+  clear(): void {
+    this.#session.clear();
+  }
+}
+
+/** Pedido de aprovação entregue ao prompt (PERM-04). */
+export interface ToolPermissionRequest {
+  name: string;
+  action: ActionClass;
+  mode: PermissionMode;
+}
+
 /** Pedido de aprovação sem canal humano (sem TTY/approver): nega e para (I-08/I-19). */
 export class PermissionPendingError extends Error {
   readonly code = "permission_pending";
