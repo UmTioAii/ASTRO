@@ -32,9 +32,24 @@ export interface LoadedPlugins {
   providerFactories: Map<string, PluginProviderFactory>;
 }
 
-/** Resolve a entrada da config: caminho absoluto/relativo vira file URL. */
+/** Entrada local (path) é confiável; pacote remoto exige allowlist explícita (I-13). */
+function isLocalEntry(entry: string): boolean {
+  return entry.startsWith(".") || isAbsolute(entry);
+}
+
+/** Allowlist de plugins remotos; vem do env, nunca da config (que pode ser puxada de registry). */
+export function pluginAllowlistFromEnv(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  return new Set(
+    (env.ASTRO_PLUGIN_ALLOWLIST ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+
+/** Resolve a entrada da config: caminho absoluto/relativo vira import direto. */
 async function importPlugin(entry: string): Promise<unknown> {
-  const isPath = entry.startsWith(".") || isAbsolute(entry);
+  const isPath = isLocalEntry(entry);
   if (isPath) {
     const absolute = resolve(entry);
     return import(absolute);
@@ -65,13 +80,19 @@ function isPluginDefinition(value: unknown): value is PluginDefinition {
 /** Carrega os plugins declarados; falhas isoladas (warn e segue). */
 export async function loadPlugins(
   entries: readonly string[],
-  opts: { warn?: (msg: string) => void } = {},
+  opts: { warn?: (msg: string) => void; allowlist?: ReadonlySet<string> } = {},
 ): Promise<LoadedPlugins> {
   const warn = opts.warn ?? ((msg) => console.warn(msg));
+  const allowlist = opts.allowlist ?? new Set<string>();
   const tools: Tool[] = [];
   const providerFactories = new Map<string, PluginProviderFactory>();
 
   for (const entry of entries) {
+    if (!isLocalEntry(entry) && !allowlist.has(entry)) {
+      // fail closed: pacote remoto só carrega com aprovação local explícita
+      warn(`plugin remoto "${entry}" não está em ASTRO_PLUGIN_ALLOWLIST; ignorado`);
+      continue;
+    }
     try {
       const mod = await importPlugin(entry);
       const definition = extractDefinition(mod);

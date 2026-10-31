@@ -24,7 +24,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 | I-10 | Leitor/planejador usa workspace compartilhado read-only; escritor usa worktree próprio; nunca dois escritores no mesmo worktree | Parcial: worktrees no fluxo de dev (`docs/workflow.md:16`); papéis de agente pendentes (#58) |
 | I-11 | Worktree não é fronteira de segurança; execução exige sandbox de FS/rede | Parcial: confinamento de caminho (`src/tools/paths.ts:8`) e sandbox opcional (`src/tools/run-command.ts:107`); pendências: env herdado e symlink (`F-00`) |
 | I-12 | Toda tool declara nome, schemas, classe de risco, permissão, timeout, retry e formato de erro | Parcial: manifesto validado (`src/sdk/tool.ts:22`); formato de erro pendente |
-| I-13 | Plugin tem manifesto, permissões explícitas e roda em processo separado | Parcial: manifesto e falha isolada (`src/plugins.ts`); processo separado pendente |
+| I-13 | Plugin tem manifesto, permissões explícitas e roda em processo separado | Parcial: manifesto e falha isolada (`src/plugins.ts`); pacote remoto exige `ASTRO_PLUGIN_ALLOWLIST` e push/pull de config com `plugins` exige `--allow-plugins` (#255, `docs/providers.md`); processo separado pendente |
 | I-14 | Skill não amplia permissão; só sugere tools que o agente já tem | Pendente (#55) |
 | I-15 | MCP é registrado como plugin de tool, com namespace, e a saída é dado não confiável | Pendente (#56) |
 | I-16 | Toda escrita de arquivo é diff revisável e reversível; nenhuma escrita direta sem registro | Parcial: `edit` com backup e rollback (`src/tools/edit.ts:218`); `write_file` direto, deprecação em ADR (ver `F-04`/`F-16`) |

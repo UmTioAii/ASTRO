@@ -18,7 +18,7 @@ import { sendTelemetry } from "./telemetry";
 import { tracerFromEnv } from "./tracing";
 import { Metrics, MetricsCollector } from "./metrics";
 import { CompletionCache, cachedProvider } from "./cache";
-import { loadPlugins, type PluginProviderFactory } from "./plugins";
+import { loadPlugins, pluginAllowlistFromEnv, type PluginProviderFactory } from "./plugins";
 import { sendAuditWebhook } from "./team";
 import { resolveTaskSkill } from "./skills/executor";
 import type { AuditEvent } from "./audit";
@@ -516,7 +516,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     : config.agent.maxSteps;
 
   // Plugins (F7-1): tools e provider factories; falha de load é isolada
-  const loaded = await loadPlugins(config.plugins ?? []);
+  const loaded = await loadPlugins(config.plugins ?? [], { allowlist: pluginAllowlistFromEnv() });
 
   // Sandbox do run_command (F4-6): configurado antes de qualquer execução
   configureRunCommand({ sandbox: config.tools?.run_command?.sandbox ?? false });

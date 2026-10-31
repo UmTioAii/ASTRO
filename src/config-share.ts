@@ -130,3 +130,49 @@ export class GitHubConfigRegistry {
 export function isValidSemver(value: string): boolean {
   return /^\d+\.\d+\.\d+$/.test(value);
 }
+
+/** Marcador de origem publicado junto da config (I-13). */
+export interface ConfigProvenance {
+  registry: string;
+  plugins: boolean;
+}
+
+function pluginEntries(raw: unknown): string[] {
+  const record = raw as { plugins?: unknown };
+  return Array.isArray(record.plugins) ? record.plugins.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+/**
+ * Prepara a config para push: plugins só são publicados com aprovação explícita,
+ * e o JSON publicado leva a proveniência do registry (I-13).
+ */
+export function prepareConfigForPush(
+  raw: unknown,
+  registry: string,
+  allowPlugins: boolean,
+): { ok: true; json: string } | { ok: false; error: string } {
+  const plugins = pluginEntries(raw);
+  if (plugins.length > 0 && !allowPlugins) {
+    return { ok: false, error: `config com plugins (${plugins.join(", ")}) não é publicada sem --allow-plugins` };
+  }
+  const config = { ...(raw as Record<string, unknown>), provenance: { registry, plugins: plugins.length > 0 } };
+  return { ok: true, json: JSON.stringify(config, null, 2) + "\n" };
+}
+
+/**
+ * Sanitiza a config puxada: plugins só sobrevivem com aprovação explícita;
+ * a proveniência fica gravada no arquivo local.
+ */
+export function preparePulledConfig(
+  raw: unknown,
+  registry: string,
+  allowPlugins: boolean,
+): { json: string; removedPlugins: string[] } {
+  const plugins = pluginEntries(raw);
+  const kept = plugins.length > 0 && allowPlugins;
+  const config = { ...(raw as Record<string, unknown>) };
+  const removedPlugins = plugins.length > 0 && !allowPlugins ? plugins : [];
+  if (removedPlugins.length > 0) delete config.plugins;
+  config.provenance = { registry, plugins: kept };
+  return { json: JSON.stringify(config, null, 2) + "\n", removedPlugins };
+}

@@ -136,6 +136,15 @@ Exemplo completo: `examples/tool-sql/sql.ts` (~70 linhas).
 | 4 | Envolver com `defineProviderFactory("meu-kind", create)` e exportar em plugin `definePlugin({ name, providers: [factory] })` |
 | 5 | Testar com `createMockProvider` e um servidor mock — sem rede real |
 
+## Confiança de plugin (I-13)
+
+| Entrada em `plugins` | Carrega? |
+|---|---|
+| Caminho local (`./x.ts`, absoluto) | Sim — está no disco do usuário |
+| Pacote remoto (`meu-plugin`, `@org/plugin`) | Só se listado em `ASTRO_PLUGIN_ALLOWLIST` (env, separado por vírgula); fora dela, warn e segue sem o plugin |
+
+`astro config push` não publica config com `plugins` sem `--allow-plugins`, e `pull` remove os plugins da config puxada sem a mesma flag (a config gravada registra `provenance.registry`). O env é o único trust anchor que uma config puxada não consegue alterar.
+
 ## Smoke manual por provider
 
 Os testes automatizados nunca chamam providers reais. Para validar credenciais de verdade, uma vez por provider:
