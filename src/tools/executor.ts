@@ -6,6 +6,13 @@ import type { ToolCall, ToolDef } from "../provider/types";
 import type { Tool, ToolContext, ToolResult } from "./types";
 
 const TIMEOUT = Symbol("timeout");
+const ABORTED = Symbol("aborted");
+
+/** AbortError padrão para quando o signal do run não traz `reason`. */
+function abortError(reason: unknown): Error {
+  if (reason instanceof Error) return reason;
+  return new DOMException("cancelado", "AbortError");
+}
 
 /** Nome de diretório seguro para o run id (nunca escapa do cwd). */
 function safeRunDir(run: string): string {
@@ -161,16 +168,36 @@ export class ToolExecutor {
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Controller por call: timeout e cancelamento do run abortam a tool em voo
+    // (run_command mata a árvore de processos), não só desistem de esperar.
+    const controller = new AbortController();
+    const onAbort = (): void => controller.abort(abortError(ctx.signal?.reason));
+    if (ctx.signal?.aborted === true) controller.abort(abortError(ctx.signal.reason));
+    else ctx.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const aborted = new Promise<typeof ABORTED>((resolve) => {
+      if (controller.signal.aborted) resolve(ABORTED);
+      else controller.signal.addEventListener("abort", () => resolve(ABORTED), { once: true });
+    });
+
     try {
       const timeout = new Promise<typeof TIMEOUT>((resolve) => {
         timer = setTimeout(() => resolve(TIMEOUT), tool.manifest.timeoutMs);
       });
-      const outcome = await Promise.race([tool.execute(input, { ...ctx, executor: this }), timeout]);
+      const outcome = await Promise.race([
+        tool.execute(input, { ...ctx, signal: controller.signal, executor: this }),
+        timeout,
+        aborted,
+      ]);
 
       if (outcome === TIMEOUT) {
+        controller.abort(new DOMException(`timeout de ${tool.manifest.timeoutMs}ms`, "AbortError"));
         return failure(
           `timeout: a tool "${call.name}" excedeu ${tool.manifest.timeoutMs}ms`,
         );
+      }
+      if (outcome === ABORTED) {
+        return failure(`cancelado: a tool "${call.name}" foi interrompida`);
       }
       return this.limitOutput(ctx, call, outcome);
     } catch (error) {
@@ -178,6 +205,7 @@ export class ToolExecutor {
       return failure(`erro na tool "${call.name}": ${message}`);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      ctx.signal?.removeEventListener("abort", onAbort);
     }
   }
 
