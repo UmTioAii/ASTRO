@@ -1,9 +1,10 @@
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import type { PriceConfig } from "./config";
 import type { FallbackRecord } from "./provider/types";
 import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./handoff/types";
+import { appendDurable, jsonlLines, parseJsonl } from "./jsonl";
 import { redactSecrets } from "./sanitize-external";
 
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
@@ -210,6 +211,8 @@ export class Ledger {
   private readonly onRecord?: (entry: LedgerEntry) => void;
   /** Próximo `seq` monotônico (F-25); calculado do arquivo na primeira escrita. */
   private nextSeq: number | undefined;
+  /** Aviso de cauda parcial já emitido nesta instância. */
+  private warnedPartialTail = false;
 
   constructor(path: string, opts?: { warn?: (msg: string) => void; onRecord?: (entry: LedgerEntry) => void }) {
     this.path = path;
@@ -268,7 +271,7 @@ export class Ledger {
       costUsd,
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     if (this.onRecord !== undefined) this.onRecord(entry);
     return entry;
   }
@@ -289,7 +292,7 @@ export class Ledger {
       ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     return entry;
   }
 
@@ -302,7 +305,12 @@ export class Ledger {
 
   /** Todas as entradas do JSONL: uso, estado, handoff e legado, na ordem em que foram gravadas. */
   readAllEntries(): LedgerAnyEntry[] {
-    return this.readLines().map((line) => JSON.parse(line) as LedgerAnyEntry);
+    const parsed = parseJsonl<LedgerAnyEntry>(this.readText(), `ledger em "${this.path}"`);
+    if (parsed.droppedTail && !this.warnedPartialTail) {
+      this.warnedPartialTail = true;
+      this.warn(`ledger em "${this.path}": última linha parcial descartada`);
+    }
+    return parsed.entries;
   }
 
   /** Entradas com `seq` no intervalo [start, end], na ordem gravada (F-25). */
@@ -477,7 +485,7 @@ export class Ledger {
       ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     return entry;
   }
 
@@ -547,7 +555,7 @@ export class Ledger {
       pid: opts.pid ?? process.pid,
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -578,7 +586,7 @@ export class Ledger {
       ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     return entry;
   }
 
@@ -600,7 +608,7 @@ export class Ledger {
       ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -623,7 +631,7 @@ export class Ledger {
       ...(opts.detail === undefined ? {} : { detail: redactSecrets(opts.detail) }),
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -646,7 +654,7 @@ export class Ledger {
       ...(opts.actual_cost === undefined ? {} : { actual_cost: opts.actual_cost }),
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -667,7 +675,7 @@ export class Ledger {
       exceeded_choice: opts.exceeded_choice,
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -688,7 +696,7 @@ export class Ledger {
       ceiling_hit: opts.ceiling_hit,
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -709,7 +717,7 @@ export class Ledger {
       budget_exceeded_non_interactive: opts.budget_exceeded_non_interactive,
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -731,19 +739,22 @@ export class Ledger {
       manual: opts.manual,
       seq: this.takeSeq(),
     };
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
 
   private readLines(): string[] {
-    let text: string;
+    return jsonlLines(this.readText());
+  }
+
+  /** Conteúdo bruto do arquivo; ausente vira texto vazio. */
+  private readText(): string {
     try {
-      text = readFileSync(this.path, "utf8");
+      return readFileSync(this.path, "utf8");
     } catch (error) {
-      if (isMissingFile(error)) return [];
+      if (isMissingFile(error)) return "";
       throw error;
     }
-    return text.split(/\r?\n/).filter((line) => line.trim().length > 0);
   }
 }
