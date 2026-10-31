@@ -32,6 +32,7 @@ IDs estáveis; não renumerar.
 | D-20 | **Quota domain por provider** | `quotaDomain` agrupa credenciais que compartilham limite (ex.: mesma conta OpenRouter). Default `"default"`. | Ledger e futuras quotas operam no domínio correto. |
 | D-21 | **Perfis globais de provider** | `~/.astro/providers.json` (`ASTRO_HOME`) guarda perfis sem segredo; projeto vence por nome; ativo segue `--provider` > `ASTRO_PROVIDER` > `activeProfileId` > `agent.model`; env é efêmero e a baseline sem config é somente leitura. | CRUD pelo `/provider` e onboarding sem editar JSON (#201); a origem fica auditada em `run.started`. |
 | D-22 | **Contagem de tokens por provider** | Pura e determinística: tokenizer nativo registrado por provider; senão estimativa documentada de 4 chars/token; resultado marcado `measured`/`estimate` e nunca zero para texto não vazio. `src/tokens.ts`. | Compaction (S-17) e overflow retry usam a mesma contagem; sem chamada de provider e sem segredo (I-03). |
+| D-23 | **`cache.ttlHours = 0` desliga o cache** | Antes TTL zero significava "nunca expira", o oposto de quem quer desligar. `enabled: false` continua sendo o jeito declarativo; `ttlHours: 0` zera leitura e escrita. | `cachedProvider` devolve o provider puro e `CompletionCache.get` devolve `null`; config mantém `ttlHours >= 0`. |
 
 ---
 

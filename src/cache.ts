@@ -10,6 +10,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { throwIfAborted } from "./abort";
 import type { CompletionRequest, CompletionResponse, Provider } from "./provider/types";
+import { redactSecrets } from "./sanitize-external";
 
 /** Chave determinística da request: modelo + profile + mensagens + tools + call. */
 export function cacheKey(req: CompletionRequest): string {
@@ -42,22 +43,28 @@ export class CompletionCache {
     );
   }
 
-  /** Devolve a resposta se existir e estiver dentro do TTL; senão null. */
+  /**
+   * Devolve a resposta se existir e estiver dentro do TTL; senão null.
+   * `ttlHours <= 0` desliga o cache (D-23): nada é servido.
+   */
   get(key: string, ttlHours: number, nowMs: number = Date.now()): CompletionResponse | null {
+    if (ttlHours <= 0) return null;
     const row = this.#db
       .query("SELECT key, response, created_ms FROM cache WHERE key = ?")
       .get(key) as CacheRow | null;
     if (row === null) return null;
-    if (ttlHours > 0 && nowMs - row.created_ms > ttlHours * 3_600_000) return null;
+    if (nowMs - row.created_ms > ttlHours * 3_600_000) return null;
     return JSON.parse(row.response) as CompletionResponse;
   }
 
-  /** Armazena a resposta; acima de maxEntries, remove a mais antiga. */
+  /** Armazena a resposta redigida (I-03); acima de maxEntries, remove a mais antiga. */
   set(key: string, response: CompletionResponse, maxEntries: number): void {
+    // Redige o JSON serializado: segredo devolvido pelo provider não vai para o disco.
+    const stored = redactSecrets(JSON.stringify(response));
     const tx = this.#db.transaction(() => {
       this.#db.run(
         "INSERT OR REPLACE INTO cache (key, response, created_ms) VALUES (?, ?, ?)",
-        [key, JSON.stringify(response), Date.now()],
+        [key, stored, Date.now()],
       );
       if (maxEntries > 0) {
         this.#db.run(
@@ -97,6 +104,8 @@ export interface CachedProviderOptions {
 
 /** Decorator de provider com cache: hit = resposta cacheada com usage zerado. */
 export function cachedProvider(provider: Provider, opts: CachedProviderOptions): Provider {
+  // TTL zero/negativo desliga o cache (D-23): sem leitura e sem escrita.
+  if (opts.ttlHours <= 0) return provider;
   return {
     async complete(req: CompletionRequest, signal?: AbortSignal): Promise<CompletionResponse> {
       throwIfAborted(signal);
