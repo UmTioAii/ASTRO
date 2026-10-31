@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,6 +151,19 @@ describe("estado de execução (F-02)", () => {
     expect(s.agent).toBe("default");
     expect(s.reason).toBe("MaxStepsError");
     expect(s.ts).toBeTruthy();
+  });
+
+  test("cauda parcial no ledger não impede leitura nem continuação do seq", () => {
+    const path = join(dir(), "ledger.jsonl");
+    const warns: string[] = [];
+    new Ledger(path, { warn: (m) => warns.push(m) })
+      .record(structuredClone(entry), undefined);
+    appendFileSync(path, '{"schemaVersion":1,"seq":2,', "utf8");
+
+    const reopened = new Ledger(path, { warn: (m) => warns.push(m) });
+    expect(reopened.readAll()).toHaveLength(1);
+    expect(reopened.record(structuredClone(entry), undefined).seq).toBe(2);
+    expect(warns.some((m) => m.includes("parcial"))).toBe(true);
   });
 
   test("readAll devolve só uso; readAllEntries devolve tudo na ordem", () => {

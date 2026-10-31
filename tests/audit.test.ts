@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
@@ -37,6 +37,18 @@ test("redige segredos no payload", () => {
   expect(raw).toContain('"tokensIn":30');
   expect(raw).toContain('"tokensOut":12');
   expect(raw).toContain('"ok":"fine"');
+});
+
+test("cauda parcial não derruba a abertura e o próximo seq continua", () => {
+  const path = join(dir(), "audit.jsonl");
+  new Auditor(path).append({ run: "r1", tipo: "run.started" });
+  new Auditor(path).append({ run: "r1", tipo: "run.completed" });
+  // Append interrompido: sem \n final e com JSON incompleto.
+  appendFileSync(path, '{"seq":3,"ts":"2026-', "utf8");
+
+  const reopened = new Auditor(path); // antes: SyntaxError na construção
+  expect(reopened.readAll().map((e) => e.seq)).toEqual([1, 2]);
+  expect(reopened.append({ run: "r2", tipo: "run.started" }).seq).toBe(3);
 });
 
 test("cria o diretório do arquivo se não existir", () => {
