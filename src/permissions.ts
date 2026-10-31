@@ -14,7 +14,14 @@ import type { Tool } from "./tools/types";
 export type PermissionMode = "bypass" | "allow-edits" | "ask";
 
 /** Classes de ação que o gate distingue (PERM-02 formaliza no manifesto). */
-export type ActionClass = "read_common" | "read_critical" | "edit" | "delete" | "shell" | "identity";
+export type ActionClass =
+  | "read_common"
+  | "read_critical"
+  | "edit"
+  | "critical_write"
+  | "delete"
+  | "shell"
+  | "identity";
 
 export type PermissionDecision = "allow" | "ask" | "deny";
 
@@ -37,13 +44,13 @@ export function isPermissionMode(value: unknown): value is PermissionMode {
 
 const MATRIX: Record<PermissionMode, Record<ActionClass, PermissionDecision>> = {
   bypass: {
-    read_common: "allow", read_critical: "allow", edit: "allow", delete: "allow", shell: "allow", identity: "ask",
+    read_common: "allow", read_critical: "allow", edit: "allow", critical_write: "allow", delete: "allow", shell: "allow", identity: "ask",
   },
   "allow-edits": {
-    read_common: "allow", read_critical: "ask", edit: "allow", delete: "ask", shell: "ask", identity: "ask",
+    read_common: "allow", read_critical: "ask", edit: "allow", critical_write: "ask", delete: "ask", shell: "ask", identity: "ask",
   },
   ask: {
-    read_common: "allow", read_critical: "ask", edit: "ask", delete: "ask", shell: "ask", identity: "ask",
+    read_common: "allow", read_critical: "ask", edit: "ask", critical_write: "ask", delete: "ask", shell: "ask", identity: "ask",
   },
 };
 
@@ -70,20 +77,29 @@ export function resolvePermissionMode(explicit: unknown, configured: unknown): P
   return DEFAULT_PERMISSION_MODE;
 }
 
-const CRITICAL_SEGMENTS: ReadonlySet<string> = new Set([".astro", ".git"]);
-const CRITICAL_NAME = /(^|[._-])(secret|secrets|token|tokens|key|keys|password|passwd|credential|credentials)([._-]|$)/i;
-
 /**
- * Leitura que pede aprovação mesmo em `allow-edits`: credenciais, config do
- * harness e estado do próprio ASTRO. PERM-03 troca esta lista por `CRITICAL_PATHS`.
+ * Lista única de caminhos críticos (PERM-03, I-03/I-11): estado do harness,
+ * credenciais e config. Escrita nesses caminhos pede aprovação fora do
+ * `bypass`; a leitura é `read_critical`. O piso de `.astro/`/`protectedPaths`
+ * continua sendo bloqueio duro nas próprias tools.
  */
-export function isCriticalReadPath(path: string): boolean {
+export const CRITICAL_PATH_SEGMENTS: readonly string[] = [".astro", ".git"];
+export const CRITICAL_PATH_NAMES: readonly string[] = [".env", "astro.config.json", "auth.json"];
+export const CRITICAL_PATH_PATTERN = /(^|[._-])(secret|secrets|token|tokens|key|keys|password|passwd|credential|credentials)([._-]|$)/i;
+
+/** Caminho que casa com `CRITICAL_PATHS` (leitura crítica e escrita crítica). */
+export function isCriticalPath(path: string): boolean {
   const segments = path.replace(/\\/g, "/").split("/").filter((part) => part.length > 0);
   const base = segments.at(-1) ?? "";
-  if (base === ".env" || base.startsWith(".env.")) return true;
-  if (base === "astro.config.json" || base === "auth.json") return true;
-  if (segments.some((segment) => CRITICAL_SEGMENTS.has(segment))) return true;
-  return segments.some((segment) => CRITICAL_NAME.test(segment));
+  if (CRITICAL_PATH_SEGMENTS.some((segment) => segments.includes(segment))) return true;
+  if (segments.some((segment) => CRITICAL_PATH_NAMES.includes(segment))) return true;
+  if (segments.some((segment) => CRITICAL_PATH_PATTERN.test(segment))) return true;
+  return base.startsWith(".env.");
+}
+
+/** Compat: leitura crítica é o mesmo classificador de `isCriticalPath`. */
+export function isCriticalReadPath(path: string): boolean {
+  return isCriticalPath(path);
 }
 
 export interface ToolCallLike {
@@ -94,11 +110,12 @@ export interface ToolCallLike {
 /** Classe da ação inferida do manifesto (até PERM-02 declarar `class`). */
 export function actionClassOf(tool: Tool, call: ToolCallLike): ActionClass {
   if (call.name === "run_command" || tool.manifest.permission === "execute") return "shell";
-  if (call.name === "read_file") {
-    const path = (call.input as { path?: unknown } | null)?.path;
-    return typeof path === "string" && isCriticalReadPath(path) ? "read_critical" : "read_common";
+  const path = (call.input as { path?: unknown } | null)?.path;
+  const critical = typeof path === "string" && isCriticalPath(path);
+  if (call.name === "read_file") return critical ? "read_critical" : "read_common";
+  if (tool.manifest.permission === "write" || tool.manifest.sideEffects === "filesystem") {
+    return critical ? "critical_write" : "edit";
   }
-  if (tool.manifest.permission === "write" || tool.manifest.sideEffects === "filesystem") return "edit";
   if (tool.manifest.sideEffects === "process") return "shell";
   return "read_common";
 }
