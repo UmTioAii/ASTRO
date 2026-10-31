@@ -52,7 +52,7 @@ function httpServer(opts: { delayMs?: number; stream?: boolean; non2xx?: boolean
 }
 
 /** Servidor MCP SSE legacy: GET abre o stream e envia o endpoint; POST recebe 202; respostas vêm pelo stream. */
-function sseServer(opts: { postStatus?: number; splitUtf8?: boolean } = {}) {
+function sseServer(opts: { postStatus?: number; splitUtf8?: boolean; endpoint?: string } = {}) {
   const posts: string[] = [];
   const streams: ((message: unknown) => void)[] = [];
   const server = Bun.serve({
@@ -63,7 +63,7 @@ function sseServer(opts: { postStatus?: number; splitUtf8?: boolean } = {}) {
           new ReadableStream({
             start(controller) {
               const encode = new TextEncoder();
-              controller.enqueue(encode.encode(`event: endpoint\ndata: /messages?session=abc\n\n`));
+              controller.enqueue(encode.encode(`event: endpoint\ndata: ${opts.endpoint ?? "/messages?session=abc"}\n\n`));
               streams.push((message) => {
                 const frame = `data: ${JSON.stringify(message)}\n\n`;
                 if (opts.splitUtf8 === true) {
@@ -236,6 +236,36 @@ test("transport sse rejeita POST não-2xx com o status sem esperar timeout", asy
     for (let attempt = 0; attempt < 20 && posts.length === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 50));
     expect(await outcome).toMatch(/HTTP 500/);
   } finally { server.stop(true); }
+});
+
+test("transport sse rejeita endpoint de outra origem sem enviar POST com auth", async () => {
+  const seen: (string | null)[] = [];
+  const other = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      seen.push(req.headers.get("authorization"));
+      return new Response(null, { status: 202 });
+    },
+  });
+  const { server } = sseServer({ endpoint: `http://127.0.0.1:${other.port}/messages` });
+  try {
+    // `.then` em vez de `expect(...).rejects`: no bun/win32 a rejeição antecipada vira unhandled antes do matcher
+    const outcome = MCPClient.connect({
+      transport: "sse",
+      url: `http://127.0.0.1:${server.port}/sse`,
+      headers: { Authorization: "env:MCP_TOKEN" },
+      timeoutMs: 2000,
+      enabled: true,
+    }, { MCP_TOKEN: "Bearer tok-250" }).then(
+      () => "resolveu",
+      (error: Error) => error.message,
+    );
+    expect(await outcome).toMatch(/origem/);
+    expect(seen).toEqual([]);
+  } finally {
+    server.stop(true);
+    other.stop(true);
+  }
 });
 
 test("transport http preserva UTF-8 dividido entre chunks", async () => {
