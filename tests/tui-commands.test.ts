@@ -67,8 +67,14 @@ describe("comandos da TUI (T2, #63)", () => {
     expect(bad.entries[0]).toMatchObject({ kind: "error" });
     expect(bad.entries[0]!.text).toContain("modelo desconhecido");
 
-    expect((await runCommand({ kind: "providers" }, session, {})).entries[0]!.text).toContain("cred=KEY");
     expect((await runCommand({ kind: "provider", action: "use", target: "p" }, session, {})).entries[0]!.text).toBe("provider: p/m1");
+  });
+
+  test("/providers abre a tela de providers na TUI, sem texto (#287)", async () => {
+    const session = new FakeSession();
+    const outcome = await runCommand({ kind: "providers" }, session, {});
+    expect(outcome.openProviders).toEqual({ mode: "list" });
+    expect(outcome.entries).toEqual([]);
   });
 
   test("session mostra o último arquivo; sem store avisa", async () => {
