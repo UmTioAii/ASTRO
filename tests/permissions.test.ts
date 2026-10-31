@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
@@ -238,5 +238,65 @@ describe("caminhos críticos (#263)", () => {
     });
     expect(result.isError).toBe(true);
     expect(existsSync(join(cwd, ".astro", "ledger.jsonl"))).toBe(false);
+  });
+});
+
+describe("grants de sessão (#266)", () => {
+  const manifest = {
+    name: "write_probe", description: "x", parameters: { type: "object", properties: {} },
+    risk: "low" as const, permission: "write", timeoutMs: 5_000, retryable: false,
+    idempotent: false, sideEffects: "filesystem" as const, class: "edit" as const,
+  };
+
+  function setup(approve: () => boolean | "once" | "session") {
+    let ran = 0;
+    let asked = 0;
+    const tool: Tool = {
+      manifest,
+      async execute() {
+        ran++;
+        return { output: "ok" };
+      },
+    };
+    const cwd = mkdtempSync(join(tmpdir(), "astro-grants-"));
+    const audit = new Auditor(join(cwd, ".astro", "audit.jsonl"));
+    const executor = new ToolExecutor({
+      tools: [tool],
+      allow: ["write_probe"],
+      audit,
+      permissionMode: "ask",
+      approveTool: () => {
+        asked++;
+        return approve();
+      },
+    });
+    return { cwd, audit, executor, runs: () => ran, asks: () => asked };
+  }
+
+  const call = () => ({ id: "c1", name: "write_probe", arguments: "{}" });
+
+  test("once vale para uma chamada só", async () => {
+    const s = setup(() => "once");
+    const ctx = { cwd: s.cwd, run: "r1", agent: "a" };
+    expect((await s.executor.run(ctx, call())).isError).toBeFalsy();
+    expect((await s.executor.run(ctx, call())).isError).toBeFalsy();
+    expect(s.runs()).toBe(2);
+    expect(s.asks()).toBe(2); // perguntou de novo
+  });
+
+  test("session vale até fechar e não persiste em disco", async () => {
+    const s = setup(() => "session");
+    const ctx = { cwd: s.cwd, run: "r1", agent: "a" };
+    expect((await s.executor.run(ctx, call())).isError).toBeFalsy();
+    expect((await s.executor.run(ctx, call())).isError).toBeFalsy();
+    expect(s.runs()).toBe(2);
+    expect(s.asks()).toBe(1); // reaproveitou o grant
+
+    s.executor.permissionGrants.clear();
+    expect((await s.executor.run(ctx, call())).isError).toBeFalsy();
+    expect(s.asks()).toBe(2); // fechou a sessão, pergunta de novo
+
+    // Nenhum arquivo de grants: o único diretório é o do audit.
+    expect(readdirSync(s.cwd)).toEqual([".astro"]);
   });
 });
