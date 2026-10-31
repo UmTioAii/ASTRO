@@ -7,6 +7,7 @@ import { ConfigError, validateConfig } from "../src/config";
 import {
   actionClassOf,
   isCriticalReadPath,
+  PermissionPendingError,
   permissionDecision,
   resolvePermissionMode,
   type ActionClass,
@@ -156,5 +157,34 @@ describe("gate no executor (#259)", () => {
 
     expect(result.isError).toBe(true);
     expect(existsSync(join(cwd, ".astro", "ledger.jsonl"))).toBe(false);
+  });
+});
+
+describe("ask sem TTY (#262)", () => {
+  test("ask sem aprovador nega, audita pending e não executa", async () => {
+    let ran = false;
+    const write: Tool = {
+      manifest: {
+        name: "write_probe", description: "x", parameters: { type: "object", properties: {} },
+        risk: "low", permission: "write", timeoutMs: 5_000, retryable: false, idempotent: false, sideEffects: "filesystem",
+      },
+      async execute() {
+        ran = true;
+        return { output: "ok" };
+      },
+    };
+    const cwd = mkdtempSync(join(tmpdir(), "astro-perm-pending-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const executor = new ToolExecutor({ tools: [write], allow: ["write_probe"], audit, permissionMode: "ask" });
+
+    const error = (await executor.run({ cwd, run: "r1", agent: "a" },
+      { id: "c1", name: "write_probe", arguments: "{}" }).catch((e) => e)) as Error;
+
+    expect(error).toBeInstanceOf(PermissionPendingError);
+    expect(error.message).toContain("permiss");
+    expect(ran).toBe(false);
+    const pending = audit.readAll().filter((e) => e.tipo === "permission.pending");
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.payload).toMatchObject({ name: "write_probe", action: "edit", mode: "ask" });
   });
 });
