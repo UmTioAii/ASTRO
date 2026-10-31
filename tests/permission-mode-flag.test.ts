@@ -50,31 +50,38 @@ async function runCli(args: string[], env: Record<string, string>) {
   };
 }
 
-test("--permission-mode bypass sobrepõe permissions.mode ask (#269)", async () => {
+/** Um run completo com servidor novo (o mock é stateful por chamada). */
+async function run(mode: string, extra: string[]) {
   const server = mockServer();
   try {
-    // Sem a flag: ask sem TTY nega a escrita e o run para.
-    const semFlag = project(server.port, "ask");
-    const denied = await runCli(["run", "escreva", "--config", semFlag.configPath, "--cwd", semFlag.dir], { TEST_KEY: "k" });
-    expect(denied.exit).toBe(1);
-    expect(existsSync(join(semFlag.dir, "saida.txt"))).toBe(false);
-
-    // Com a flag: bypass vence a config.
-    const comFlag = project(server.port, "ask");
-    const allowed = await runCli(
-      ["run", "escreva", "--config", comFlag.configPath, "--cwd", comFlag.dir, "--permission-mode", "bypass"],
-      { TEST_KEY: "k" },
-    );
-    expect(allowed.exit).toBe(0);
-    expect(existsSync(join(comFlag.dir, "saida.txt"))).toBe(true);
+    const { dir, configPath } = project(server.port!, mode);
+    const result = await runCli(["run", "escreva", "--config", configPath, "--cwd", dir, ...extra], { TEST_KEY: "k" });
+    return { ...result, dir };
   } finally {
     server.stop(true);
   }
+}
+
+test("--permission-mode bypass sobrepõe permissions.mode ask (#269)", async () => {
+  // Sem a flag: ask sem TTY nega a escrita e o run para.
+  const denied = await run("ask", []);
+  expect(denied.exit).toBe(1);
+  expect(existsSync(join(denied.dir, "saida.txt"))).toBe(false);
+
+  // Com a flag: bypass vence a config.
+  const allowed = await run("ask", ["--permission-mode", "bypass"]);
+  expect(allowed.exit).toBe(0);
+  expect(existsSync(join(allowed.dir, "saida.txt"))).toBe(true);
 });
 
 test("--permission-mode inválido falha com erro de uso", async () => {
-  const { dir, configPath } = project(1, "ask");
-  const result = await runCli(["run", "x", "--config", configPath, "--cwd", dir, "--permission-mode", "yolo"], {});
-  expect(result.exit).not.toBe(0);
-  expect(result.stderr).toContain("--permission-mode");
+  const server = mockServer();
+  try {
+    const { dir, configPath } = project(server.port!, "ask");
+    const result = await runCli(["run", "x", "--config", configPath, "--cwd", dir, "--permission-mode", "yolo"], {});
+    expect(result.exit).not.toBe(0);
+    expect(result.stderr).toContain("--permission-mode");
+  } finally {
+    server.stop(true);
+  }
 });
