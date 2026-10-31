@@ -67,5 +67,5 @@ test("emite tool.call e tool.result na auditoria", async () => {
   const ex = mkExec(cwd);
   await ex.run(ctx(cwd), { id: "1", name: "write_file", arguments: JSON.stringify({ path: "b.txt", content: "x" }) });
   const lines = readFileSync(join(cwd, ".astro", "audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
-  expect(lines.map((l) => l.tipo)).toEqual(["tool.call", "tool.result"]);
+  expect(lines.map((l) => l.tipo)).toEqual(["tool.call", "permission.decision", "tool.result"]);
 });

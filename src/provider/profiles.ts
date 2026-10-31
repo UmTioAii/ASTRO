@@ -438,6 +438,7 @@ export function resolveEffectiveConfig(input: {
     providers,
     models,
     agent: { model: modelRef, maxSteps: 12, tools: [...BASELINE_TOOLS] },
+    permissions: { mode: "ask" as const },
     paths: { ...BASELINE_PATHS },
   };
   if (project === undefined) {

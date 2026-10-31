@@ -5,6 +5,7 @@ import { CAPABILITY_KEYS, isKnownCapability, missingCapabilities, type Capabilit
 import { PROTECTED_FORBIDDEN_ROOTS, type CallConfig, type EffortLevel, type ThinkingMode } from "./call-profile";
 import { DEFAULT_OUTPUT_LIMIT, type OutputLimitConfig } from "./output-limit";
 import { DEFAULT_COMPACTION_CONFIG, type CompactionConfig } from "./compaction/engine";
+import { isPermissionMode, DEFAULT_PERMISSION_MODE, type PermissionMode } from "./permissions";
 import { isAuthHeader, looksLikeSecret } from "./secrets";
 import { headerEnvName, isValidHeaderName } from "./mcp/headers";
 import { urlProblem } from "./url-safety";
@@ -177,6 +178,11 @@ export interface HandoffConfig {
 /** Default do timeout de ack (F-24, D-15). */
 export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
 
+/** Permissões por chamada de tool (PERM-01): modo global do harness. */
+export interface PermissionsConfig {
+  mode: PermissionMode;
+}
+
 /** Servidor MCP (C2, #56): o `command` do stdio é código arbitrário — modelo de confiança na doc. */
 export interface MCPServerConfig {
   transport: "stdio" | "sse" | "http";
@@ -223,6 +229,8 @@ export interface AstroConfig {
   team?: TeamSectionConfig;
   /** Handoff (F-24): timeout do ack; default 30000ms (D-15). */
   handoff?: HandoffConfig;
+  /** Permissões por chamada (PERM-01); default `ask`. */
+  permissions: PermissionsConfig;
   /** Tabela de preços global (C6): key `provider/model-id` sobrescreve `model.price` para custo. */
   pricing?: Record<string, PriceConfig>;
   /** Servidores MCP (C2, #56): key é o nome usado no namespace mcp__<server>__<tool>. */
@@ -922,6 +930,16 @@ function validateHandoff(value: unknown): HandoffConfig {
   };
 }
 
+/** Valida `permissions` (PERM-01); ausente vira `{ mode: "ask" }`. */
+function validatePermissions(value: unknown): PermissionsConfig {
+  const raw = value === undefined ? {} : expectObject(value, "permissions");
+  const mode = raw.mode ?? DEFAULT_PERMISSION_MODE;
+  if (!isPermissionMode(mode)) {
+    fail('config inválida: "permissions.mode" deve ser bypass, allow-edits ou ask');
+  }
+  return { mode };
+}
+
 const MCP_TRANSPORTS: readonly MCPServerConfig["transport"][] = ["stdio", "sse", "http"];
 
 /** Valida um registro de strings (env/headers de mcpServers). */
@@ -1225,7 +1243,7 @@ export function validateConfig(raw: unknown): AstroConfig {
 
   const paths = validatePaths(root.paths);
 
-  return { providers, models, modelPool, agent, agents, ...(maxActive === undefined ? {} : { maxActive }), tools, telemetry, quota, cache, plugins, version, team, handoff, outputLimit: validateOutputLimit(root.outputLimit), compaction: validateCompaction(root.compaction), ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
+  return { providers, models, modelPool, agent, agents, ...(maxActive === undefined ? {} : { maxActive }), tools, telemetry, quota, cache, plugins, version, team, handoff, permissions: validatePermissions(root.permissions), outputLimit: validateOutputLimit(root.outputLimit), compaction: validateCompaction(root.compaction), ...(budget === undefined ? {} : { budget }), ...(run === undefined ? {} : { run }), ...(pricing === undefined ? {} : { pricing }), ...(mcpServers === undefined ? {} : { mcpServers }), paths };
 }
 
 /** Lê um arquivo JSON de configuração e o valida. */
