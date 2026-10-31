@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
 import { ProviderError } from "../src/provider/types";
 import { runTask } from "../src/app";
+import { editTool } from "../src/tools/edit";
 import { readFileTool } from "../src/tools/read-file";
 import { runCommandTool } from "../src/tools/run-command";
 import { writeFileTool } from "../src/tools/write-file";
@@ -115,6 +116,42 @@ describe("segurança F-00", () => {
     );
     expect(result.isError).toBe(true);
     expect(readFileSync(join(cwd, "protegido.txt"), "utf8")).toBe("original");
+  });
+
+  test("edit recusa o estado do harness (.astro/) antes de backup e escrita", async () => {
+    const cwd = dir();
+    const ledger = join(cwd, ".astro", "ledger.jsonl");
+    mkdirSync(join(cwd, ".astro"), { recursive: true });
+    writeFileSync(ledger, "original\n");
+    const diff = `--- a/.astro/ledger.jsonl
++++ b/.astro/ledger.jsonl
+@@ -1,1 +1,1 @@
+-original
++tampado
+`;
+    const result = await editTool.execute({ path: ".astro/ledger.jsonl", diff }, ctx(cwd));
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("reservado");
+    expect(readFileSync(ledger, "utf8")).toBe("original\n");
+    expect(readdirSync(join(cwd, ".astro")).filter((f) => f.endsWith(".bak"))).toHaveLength(0);
+  });
+
+  test("edit recusa caminho protegido declarado e não sobrescreve", async () => {
+    const cwd = dir();
+    writeFileSync(join(cwd, "protegido.txt"), "original\n");
+    const diff = `--- a/protegido.txt
++++ b/protegido.txt
+@@ -1,1 +1,1 @@
+-original
++tampado
+`;
+    const result = await editTool.execute(
+      { path: "protegido.txt", diff },
+      ctx(cwd, { protectedPaths: [join(cwd, "protegido.txt")] }),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("reservado");
+    expect(readFileSync(join(cwd, "protegido.txt"), "utf8")).toBe("original\n");
   });
 
   test("run que falha no provider registra run.stopped com reason e errorClass", async () => {
