@@ -6,8 +6,9 @@ import { Auditor } from "../src/audit";
 import { ConfigError, validateConfig } from "../src/config";
 import {
   actionClassOf,
-  nonInteractiveApprover,
+  isCriticalPath,
   isCriticalReadPath,
+  nonInteractiveApprover,
   PermissionPendingError,
   permissionDecision,
   resolvePermissionMode,
@@ -189,5 +190,52 @@ describe("ask sem TTY (#262)", () => {
     const pending = audit.readAll().filter((e) => e.tipo === "permission.pending");
     expect(pending).toHaveLength(1);
     expect(pending[0]!.payload).toMatchObject({ name: "write_probe", action: "edit", mode: "ask" });
+  });
+});
+
+describe("caminhos críticos (#263)", () => {
+  test("CRITICAL_PATHS cobre cada categoria com um único classificador", () => {
+    const criticos = [
+      ".astro/ledger.jsonl",
+      ".git/config",
+      ".env",
+      ".env.local",
+      "astro.config.json",
+      "sub/.astro/state.json",
+      "keys/prod.pem",
+      "my-secret.txt",
+      "token.json",
+      "api_key.txt",
+    ];
+    for (const path of criticos) {
+      expect({ path, critical: isCriticalPath(path) }).toEqual({ path, critical: true });
+    }
+    for (const path of ["src/app.ts", "README.md", "tests/tools.test.ts", "docs/invariants.md"]) {
+      expect({ path, critical: isCriticalPath(path) }).toEqual({ path, critical: false });
+    }
+  });
+
+  test("gate classifica escrita em caminho crítico", () => {
+    const call = (name: string, input: unknown) => ({ name, input });
+    expect(actionClassOf(writeFileTool, call("write_file", { path: ".env", content: "x" }))).toBe("critical_write");
+    expect(actionClassOf(writeFileTool, call("write_file", { path: "src/a.ts", content: "x" }))).toBe("edit");
+  });
+
+  test("critical_write pede aprovação fora do bypass e é liberado no bypass", () => {
+    expect(permissionDecision("ask", "critical_write")).toBe("ask");
+    expect(permissionDecision("allow-edits", "critical_write")).toBe("ask");
+    expect(permissionDecision("bypass", "critical_write")).toBe("allow");
+  });
+
+  test("piso: .astro continua bloqueado por protectedPaths mesmo em bypass", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "astro-critical-"));
+    const audit = new Auditor(join(cwd, "audit.jsonl"));
+    const executor = new ToolExecutor({ tools: [writeFileTool], allow: ["write_file"], audit, permissionMode: "bypass" });
+    const result = await executor.run({ cwd, run: "r1", agent: "a" }, {
+      id: "c1", name: "write_file",
+      arguments: JSON.stringify({ path: ".astro/audit.jsonl", content: "x" }),
+    });
+    expect(result.isError).toBe(true);
+    expect(existsSync(join(cwd, ".astro", "audit.jsonl"))).toBe(true); // só o audit original
   });
 });
