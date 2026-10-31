@@ -24,6 +24,8 @@ interface ProviderConfigBase {
   maxRetries?: number;
   /** Base do backoff linear entre retries em ms (C6). Default 1000. */
   retryBackoffMs?: number;
+  /** Timeout de rede por tentativa em ms; default 120000 (I-09). */
+  timeoutMs?: number;
 }
 
 /** Provider OpenAI-compatible (NVIDIA NIM, OpenRouter). */
@@ -380,6 +382,7 @@ function validateProvider(name: string, value: unknown): ProviderConfig {
     ...(raw.fallback === undefined ? {} : { fallback: expectStringArray(raw.fallback, `${field}.fallback`) }),
     ...(raw.maxRetries === undefined ? {} : { maxRetries: expectNonNegativeInteger(raw.maxRetries, `${field}.maxRetries`) }),
     ...(raw.retryBackoffMs === undefined ? {} : { retryBackoffMs: expectPositiveInteger(raw.retryBackoffMs, `${field}.retryBackoffMs`) }),
+    ...(raw.timeoutMs === undefined ? {} : { timeoutMs: expectPositiveInteger(raw.timeoutMs, `${field}.timeoutMs`) }),
   };
 
   if (kind === "openai-compat") {

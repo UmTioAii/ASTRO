@@ -9,7 +9,7 @@ const coolingUntil = new Map<string, number>();
 let revision = 0;
 
 /** Providers cujo erro indica indisponibilidade/credencial, não request inválido. */
-const HEALTH_FAILURES: ReadonlySet<string> = new Set(["transient_rate_limit", "outage", "auth"]);
+const HEALTH_FAILURES: ReadonlySet<string> = new Set(["transient_rate_limit", "outage", "network_timeout", "auth"]);
 
 /** Incrementa a revisão (invalida snapshots de candidatos). */
 export function bumpHealthRevision(): void {
