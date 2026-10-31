@@ -1,5 +1,5 @@
 /** Comandos de barra compartilhados pelo REPL e pela TUI: puro, sem React. */
-import { HELP_TEXT, type ReplCommand } from "../chat/commands";
+import { HELP_TEXT, unknownCommandMessage, type ReplCommand } from "../chat/commands";
 import { detailsLines, providerLine, type ChatSession } from "../chat/repl";
 import { sessionSummaryLine, type SessionStore, type SessionSummary } from "../chat/store";
 import { redactSecrets } from "../sanitize-external";
@@ -50,7 +50,7 @@ export async function runCommand(
     case "exit":
       return { entries: [], exit: true };
     case "unknown":
-      return { entries: [{ kind: "info", text: `comando desconhecido: /${command.raw}` }] };
+      return { entries: [{ kind: "info", text: unknownCommandMessage(command.raw) }] };
     case "model": {
       if (command.model === undefined) {
         return { entries: [{ kind: "info", text: session.listModels().join("\n") }] };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HELP_TEXT, parseCommand } from "../src/chat/commands";
+import { HELP_TEXT, parseCommand, suggestCommand, unknownCommandMessage } from "../src/chat/commands";
 import { detailsLines, formatUptime } from "../src/chat/repl";
 import type { SessionSnapshot } from "../src/chat/agent-session";
 
@@ -103,5 +103,13 @@ describe("comandos do chat (T1, #62)", () => {
     expect(parseCommand("/summarize extra")).toEqual({ kind: "compact" });
     expect(parseCommand("/compact force")).toEqual({ kind: "compact", force: true });
     expect(parseCommand("/summarize FORCE")).toEqual({ kind: "compact", force: true });
+  });
+
+  test("sugestão de comando próximo por distância de edição (#275)", () => {
+    expect(suggestCommand("mod")).toBe("/model");
+    expect(suggestCommand("hepl")).toBe("/help");
+    expect(suggestCommand("xyzzy")).toBeUndefined();
+    expect(unknownCommandMessage("mod")).toBe("comando desconhecido: /mod — você quis dizer /model?");
+    expect(unknownCommandMessage("xyzzy")).toBe("comando desconhecido: /xyzzy (veja /help)");
   });
 });

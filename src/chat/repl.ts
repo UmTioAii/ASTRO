@@ -1,5 +1,5 @@
 /** REPL mínimo do chat (T1): I/O injetável e comandos; a UI só fala com a sessão. */
-import { HELP_TEXT, parseCommand } from "./commands";
+import { HELP_TEXT, parseCommand, unknownCommandMessage } from "./commands";
 import { runProviderWizard } from "./provider-wizard";
 import type { ProfileManager, ProfileView } from "../provider/profile-manager";
 import type { ModelInfo, ProviderInfo, SessionSnapshot, TurnResult } from "./agent-session";
@@ -162,7 +162,7 @@ export async function runRepl(session: ChatSession, io: ReplIO, opts: ReplOption
         continue;
       }
       if (command.kind === "unknown") {
-        io.write(`comando desconhecido: /${command.raw}`);
+        io.write(unknownCommandMessage(command.raw));
         continue;
       }
       if (command.kind === "providers") {

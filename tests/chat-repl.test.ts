@@ -82,7 +82,7 @@ describe("REPL do chat (T1, #62)", () => {
   test("roteia prompt, comandos, status e persistência", async () => {
     const dir = mkdtempSync(join(tmpdir(), "astro-chat-repl-"));
     const session = new FakeSession();
-    const io = new ScriptedIO(["olá", "/clear", "/model", "/model p/m2", "/providers", "/provider p", "/help", "/nope", "/exit"]);
+    const io = new ScriptedIO(["olá", "/clear", "/model", "/model p/m2", "/providers", "/provider p", "/help", "/nope", "/mod", "/exit"]);
     await runRepl(session, io, { store: new SessionStore(dir) });
     expect(session.sent).toEqual(["olá"]);
     expect(session.cleared).toBe(1);
@@ -96,6 +96,7 @@ describe("REPL do chat (T1, #62)", () => {
     expect(io.outputs).toContain("provider: p/m1");
     expect(io.outputs.some((line) => line.includes("/exit"))).toBe(true);
     expect(io.outputs.some((line) => line.includes("comando desconhecido: /nope"))).toBe(true);
+    expect(io.outputs.some((line) => line.includes("comando desconhecido: /mod") && line.includes("/model"))).toBe(true);
 
 
 
