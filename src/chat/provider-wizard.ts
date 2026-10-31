@@ -18,6 +18,9 @@ export interface WizardOptions {
 
 const DEFAULT_CONTEXT = 128_000;
 
+/** Mesmo padrão de `ENV_NAME` em src/provider/profiles.ts: nome de variável de ambiente. */
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -94,13 +97,20 @@ export async function runProviderWizard(
       io.write("base url é obrigatória");
       return undefined;
     }
-    credentialRef = await ask(
-      io,
-      "variável da chave (vazio = sem chave)",
-      current?.credentialRef ?? entry?.credentialRef ?? "",
-    );
-    if (credentialRef === undefined) return undefined;
-    if (credentialRef === "") credentialRef = undefined;
+    for (;;) {
+      credentialRef = await ask(
+        io,
+        "variável da chave (vazio = sem chave)",
+        current?.credentialRef ?? entry?.credentialRef ?? "",
+      );
+      if (credentialRef === undefined) return undefined;
+      if (credentialRef === "") {
+        credentialRef = undefined;
+        break;
+      }
+      if (ENV_NAME.test(credentialRef)) break;
+      io.write(`nome de variável inválido: "${credentialRef}" (maiúsculas, números e _, começando com letra ou _)`);
+    }
   }
 
   const modelsAnswer = await ask(
