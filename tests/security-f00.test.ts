@@ -132,7 +132,7 @@ describe("segurança F-00", () => {
     const result = await editTool.execute({ path: ".astro/ledger.jsonl", diff }, ctx(cwd));
     expect(result.isError).toBe(true);
     expect(result.output).toContain("reservado");
-    expect(readFileSync(ledger, "utf8")).toBe("original");
+    expect(readFileSync(ledger, "utf8")).toBe("original\n");
     expect(readdirSync(join(cwd, ".astro")).filter((f) => f.endsWith(".bak"))).toHaveLength(0);
   });
 

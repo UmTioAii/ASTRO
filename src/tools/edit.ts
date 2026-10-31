@@ -1,5 +1,5 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolveWithin } from "./paths";
+import { resolveWritableWithin } from "./paths";
 import { ToolError, type Tool, type ToolResult } from "./types";
 
 function failure(message: string): ToolResult {
@@ -193,7 +193,7 @@ export const editTool: Tool = {
     try {
       const parsed = parseInput(input);
       path = parsed.path;
-      const absPath = resolveWithin(ctx.cwd, parsed.path);
+      const absPath = resolveWritableWithin(ctx.cwd, parsed.path, ctx.protectedPaths ?? []);
 
       if (!existsSync(absPath)) {
         return failure(`arquivo não existe: ${parsed.path}`);

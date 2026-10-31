@@ -27,7 +27,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 | I-13 | Plugin tem manifesto, permissões explícitas e roda em processo separado | Parcial: manifesto e falha isolada (`src/plugins.ts`); processo separado pendente |
 | I-14 | Skill não amplia permissão; só sugere tools que o agente já tem | Pendente (#55) |
 | I-15 | MCP é registrado como plugin de tool, com namespace, e a saída é dado não confiável | Pendente (#56) |
-| I-16 | Toda escrita de arquivo é diff revisável e reversível; nenhuma escrita direta sem registro | Parcial: `edit` com backup e rollback (`src/tools/edit.ts:218`); `write_file` direto, deprecação em ADR (ver `F-04`/`F-16`) |
+| I-16 | Toda escrita de arquivo é diff revisável e reversível; nenhuma escrita direta sem registro | Parcial: `edit` com backup e rollback (`src/tools/edit.ts:218`) e recusa de `.astro/`/`protectedPaths` antes da escrita; `write_file` recusa os mesmos caminhos, deprecação em ADR (ver `F-04`/`F-16`) |
 | I-17 | Orçamento tem corte físico, não só aviso | Coberto: quota/team + `src/budget.ts` (enforceBudget: onExceed, hardCeiling, não-interativo com checkpoint, unknown_price e reserva da cadeia B9) |
 | I-18 | Comunicação entre agentes passa pelo orquestrador; não há canal peer-to-peer | Parcial: handoff via orquestrador (`src/session.ts:54`); subagente runtime só fala com o pai (#128); blackboard pendente (C4/#58) |
 | I-19 | Negação de aprovação ou esgotamento de opções termina em parada graciosa com checkpoint | Parcial: cancelamento, troca negada e budget esgotado param em ponto seguro com `interrupted`/retomada (`src/resume.ts`, `astro resume`, `src/budget.ts`); pausa do breaker de compactação segue a mesma regra e sobrevive ao resume (`src/compaction/breaker.ts`, #134) |
