@@ -6,6 +6,7 @@ import { Auditor } from "../src/audit";
 import { ConfigError, validateConfig } from "../src/config";
 import {
   actionClassOf,
+  nonInteractiveApprover,
   isCriticalReadPath,
   PermissionPendingError,
   permissionDecision,
@@ -175,7 +176,9 @@ describe("ask sem TTY (#262)", () => {
     };
     const cwd = mkdtempSync(join(tmpdir(), "astro-perm-pending-"));
     const audit = new Auditor(join(cwd, "audit.jsonl"));
-    const executor = new ToolExecutor({ tools: [write], allow: ["write_probe"], audit, permissionMode: "ask" });
+    const executor = new ToolExecutor({
+      tools: [write], allow: ["write_probe"], audit, permissionMode: "ask", approveTool: nonInteractiveApprover(),
+    });
 
     const error = (await executor.run({ cwd, run: "r1", agent: "a" },
       { id: "c1", name: "write_probe", arguments: "{}" }).catch((e) => e)) as Error;

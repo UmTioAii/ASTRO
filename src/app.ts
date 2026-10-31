@@ -50,6 +50,7 @@ import { lspTool } from "./tools/lsp";
 import { pipelineTool } from "./tools/pipeline";
 import { configureRunCommand } from "./tools/run-command";
 import type { Tool } from "./tools/types";
+import type { ActionClass, PermissionMode } from "./permissions";
 
 export interface RunOptions {
   configPath: string;
@@ -70,6 +71,8 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Gate de aprovação de troca (F-19, I-08); sem ele o runtime nega (pending). Injetável para teste. */
   approveSwap?: SwapApprover;
+  /** Aprovação por chamada de tool (PERM-01); ausente = sem prompt (PERM-04/07). */
+  approveTool?: (request: { name: string; action: ActionClass; mode: PermissionMode }) => boolean;
   /** Decisor TTY do esgotamento de budget (B4); ausente = não interativo (checkpoint e para). */
   onBudgetExceeded?: BudgetDecider;
   /** Run-id a retomar (F-22): reconstrói a árvore do ledger e continua do agente ativo. */
@@ -830,6 +833,7 @@ export async function runTask(opts: RunOptions): Promise<RunReport> {
     allow: config.agent.tools,
     audit,
     permissionMode: config.permissions.mode,
+    ...(opts.approveTool === undefined ? {} : { approveTool: opts.approveTool }),
   });
 
   const startedAt = Date.now();

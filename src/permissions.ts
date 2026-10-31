@@ -18,6 +18,15 @@ export type ActionClass = "read_common" | "read_critical" | "edit" | "delete" | 
 
 export type PermissionDecision = "allow" | "ask" | "deny";
 
+/** Pedido de aprovação sem canal humano (sem TTY/approver): nega e para (I-08/I-19). */
+export class PermissionPendingError extends Error {
+  readonly code = "permission_pending";
+  constructor(readonly request: { name: string; action: ActionClass; mode: PermissionMode }) {
+    super(`permissão pendente para a tool "${request.name}" (modo ${request.mode}, ação ${request.action}): sem TTY não há aprovação`);
+    this.name = "PermissionPendingError";
+  }
+}
+
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "ask";
 
 export const PERMISSION_MODES: readonly PermissionMode[] = ["bypass", "allow-edits", "ask"];
@@ -37,6 +46,17 @@ const MATRIX: Record<PermissionMode, Record<ActionClass, PermissionDecision>> = 
     read_common: "allow", read_critical: "ask", edit: "ask", delete: "ask", shell: "ask", identity: "ask",
   },
 };
+
+/** Aprovação impossível no momento (sem TTY): nega e para (I-08/I-19). */
+export function nonInteractiveApprover(): (request: {
+  name: string;
+  action: ActionClass;
+  mode: PermissionMode;
+}) => never {
+  return (request) => {
+    throw new PermissionPendingError(request);
+  };
+}
 
 /** Decisão do modo para a classe de ação. */
 export function permissionDecision(mode: PermissionMode, action: ActionClass): PermissionDecision {

@@ -71,6 +71,8 @@ test("golden F2: tarefa de código ponta a ponta com custo e auditoria", async (
     providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${server.port}/v1`, credentialRef: "TEST_KEY" } },
     models: [{ provider: "mock", id: "mock-1", tags: ["writing-code", "tools"], context: 4096, price: { inputPerM: 2, outputPerM: 4, fonte: "teste", verificado: false } }],
     agent: { model: "mock/mock-1", maxSteps: 6, tools: ["write_file"] },
+    // CLI de teste roda sem TTY; o golden exercita a tool, não o prompt.
+    permissions: { mode: "bypass" },
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }, null, 2));
 
