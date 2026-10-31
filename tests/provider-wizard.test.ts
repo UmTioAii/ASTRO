@@ -100,3 +100,18 @@ test("modelos vazios não salvam", async () => {
   await runProviderWizard(io, manager, { mode: "add" });
   expect(out.join(" ")).toContain("ao menos um modelo");
 });
+
+test("credentialRef inválido é re-perguntado até virar nome de variável válido (#286)", async () => {
+  const { manager } = setup({ MINHA_CHAVE: "x" });
+  const { io, out } = fakeIO(["custom", "Local", "http://localhost:1/v1", "minha chave", "MINHA_CHAVE", "m1", "S", "n"]);
+  const view = await runProviderWizard(io, manager, { mode: "add" });
+  expect(view?.credentialRef).toBe("MINHA_CHAVE");
+  expect(out.join(" ")).toContain("nome de variável inválido");
+});
+
+test("credentialRef vazio continua sem chave (#286)", async () => {
+  const { manager } = setup();
+  const { io } = fakeIO(["custom", "Local", "http://localhost:1/v1", "", "m1", "S", "n"]);
+  const view = await runProviderWizard(io, manager, { mode: "add" });
+  expect(view?.credentialRef).toBeUndefined();
+});
