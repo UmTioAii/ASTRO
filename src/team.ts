@@ -108,26 +108,46 @@ export function formatCostByAgent(ledger: Ledger): string {
 /**
  * Envia um AuditEvent ao webhook (POST JSON) com até 3 tentativas.
  * Fire-and-forget: falha silenciosa — auditoria local já gravou o evento.
+ * Cada tentativa tem timeout e o payload tem teto; 4xx definitivo não é retentado.
  */
+const AUDIT_WEBHOOK_TIMEOUT_MS = 5000;
+const AUDIT_WEBHOOK_MAX_BYTES = 64 * 1024;
+
+/** HTTP transitório: 408, 425, 429 e 5xx. Demais 4xx são definitivos. */
+function retryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
 export async function sendAuditWebhook(
   url: string,
   event: AuditEvent,
-  opts: { fetchLike?: typeof fetch; retries?: number; backoffMs?: number } = {},
+  opts: { fetchLike?: typeof fetch; retries?: number; backoffMs?: number; timeoutMs?: number; maxBytes?: number } = {},
 ): Promise<boolean> {
   const fetchLike = opts.fetchLike ?? fetch;
   const retries = opts.retries ?? 3;
   const backoffMs = opts.backoffMs ?? 50;
+  const timeoutMs = opts.timeoutMs ?? AUDIT_WEBHOOK_TIMEOUT_MS;
+  const maxBytes = opts.maxBytes ?? AUDIT_WEBHOOK_MAX_BYTES;
+  const body = JSON.stringify(event);
+  // evento grande é descartado: o teto evita POST sem limite e a auditoria local já gravou
+  if (new TextEncoder().encode(body).byteLength > maxBytes) return false;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const response = await fetchLike(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(event),
+        body,
+        signal: AbortSignal.timeout(timeoutMs), // endpoint pendurado não trava o envio
       });
-      if (response.ok) return true;
+      if (response.ok) {
+        await response.body?.cancel().catch(() => {}); // resposta não é lida: descarta sem bufferizar
+        return true;
+      }
+      if (!retryableStatus(response.status)) return false;
+      await response.body?.cancel().catch(() => {});
     } catch {
-      // rede fora: tenta de novo
+      // rede fora/timeout: tenta de novo
     }
     if (attempt < retries) {
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
