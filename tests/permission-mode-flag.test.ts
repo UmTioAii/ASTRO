@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -84,4 +84,22 @@ test("--permission-mode inválido falha com erro de uso", async () => {
   } finally {
     server.stop(true);
   }
+});
+
+test("bypass audita mode.changed e cada decisão sem argumentos (#268)", async () => {
+  const result = await run("bypass", []);
+  expect(result.exit).toBe(0);
+
+  const linhas = readFileSync(join(result.dir, ".astro", "audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { tipo: string; payload: Record<string, unknown> });
+  const mudanca = linhas.find((e) => e.tipo === "mode.changed");
+  expect(mudanca?.payload).toMatchObject({ mode: "bypass" });
+
+  const decisoes = linhas.filter((e) => e.tipo === "permission.decision");
+  expect(decisoes.length).toBeGreaterThan(0);
+  for (const decisao of decisoes) {
+    expect(decisao.payload).toMatchObject({ mode: "bypass" });
+    expect(decisao.payload).not.toHaveProperty("arguments");
+    expect(decisao.payload).not.toHaveProperty("content");
+  }
+  expect(JSON.stringify(decisoes)).not.toContain("saida.txt");
 });
