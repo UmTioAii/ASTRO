@@ -31,17 +31,17 @@ describe("lock de arquivo do ledger (F-26, A4)", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  test("dono vivo com failClosed falha em vez de executar sem exclusividade", () => {
+  test("dono vivo falha fechado por padrão; melhor esforço é explícito", () => {
     const l = ledger();
     const lockPath = `${l.path}.lock`;
     writeFileSync(lockPath, String(process.pid), "utf8");
     try {
       let ran = false;
-      expect(() => l.withFileLock(() => { ran = true; }, { failClosed: true, timeoutMs: 20 }))
+      expect(() => l.withFileLock(() => { ran = true; }, { timeoutMs: 20 }))
         .toThrow(LedgerLockError);
       expect(ran).toBe(false);
-      // Compat do CAS de handoff: sem failClosed segue em melhor esforço.
-      expect(l.withFileLock(() => "best-effort", { timeoutMs: 20 })).toBe("best-effort");
+      // Único uso de melhor esforço: CAS de handoff preserva o ADR-0006.
+      expect(l.withFileLock(() => "best-effort", { failClosed: false, timeoutMs: 20 })).toBe("best-effort");
     } finally {
       writeFileSync(lockPath, "", "utf8");
     }
