@@ -4,6 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ToolError, createMockTool, defineTool, validateManifest, toolFailure, toolSuccess, type ToolManifest } from "../src/sdk/tool";
 import { sqlTool } from "../examples/tool-sql/sql";
+import { Auditor } from "../src/audit";
+import { mcpTools } from "../src/mcp/tool";
+import { editTool } from "../src/tools/edit";
+import { grepTool } from "../src/tools/grep";
+import { pipelineTool } from "../src/tools/pipeline";
+import { readFileTool } from "../src/tools/read-file";
+import { runCommandTool } from "../src/tools/run-command";
+import { writeFileTool } from "../src/tools/write-file";
 
 const validManifest: ToolManifest = {
   name: "x", description: "d", parameters: { type: "object" },
@@ -107,5 +115,35 @@ describe("exemplo tool-sql (F7-3)", () => {
     writeFileSync(join(cwd, "ruim.json"), "não sou json", "utf8");
     const bad = await sqlTool.execute({ file: "ruim.json" }, ctx(cwd));
     expect(bad.isError).toBe(true);
+  });
+});
+describe("class obrigatória no manifesto (#264)", () => {
+  test("manifesto sem class é rejeitado (I-12)", () => {
+    const { class: _classe, ...semClasse } = validManifest as ToolManifest & { class?: string };
+    expect(() => validateManifest(semClasse)).toThrow(/class/);
+  });
+
+  test("class fora do vocabulário é rejeitada", () => {
+    expect(() => validateManifest({ ...validManifest, class: "root" })).toThrow(/class/);
+    expect(validateManifest({ ...validManifest, class: "shell" }).class).toBe("shell");
+  });
+
+  test("tools builtin declaram class", () => {
+    expect(readFileTool.manifest.class).toBe("read_common");
+    expect(grepTool.manifest.class).toBe("read_common");
+    expect(writeFileTool.manifest.class).toBe("edit");
+    expect(editTool.manifest.class).toBe("edit");
+    expect(runCommandTool.manifest.class).toBe("shell");
+    expect(pipelineTool.manifest.class).toBe("shell");
+  });
+
+  test("tool MCP recebe class segura por default", () => {
+    const [tool] = mcpTools({
+      registry: { call: async () => ({ content: [] }) } as never,
+      servers: { fs: { transport: "stdio", command: "x", timeoutMs: 2000, enabled: true } },
+      audit: new Auditor(join(mkdtempSync(join(tmpdir(), "astro-class-")), "audit.jsonl")),
+      reserved: [],
+    });
+    expect(tool!.manifest.class).toBe("shell");
   });
 });
