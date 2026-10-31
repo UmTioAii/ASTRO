@@ -44,6 +44,49 @@ export const HELP_TEXT = [
   "  /exit | /quit | /q  encerra a sessão",
 ].join("\n");
 
+/** Nomes de comando (sem a barra), com aliases, na ordem do /help. */
+export const COMMAND_NAMES = [
+  "help", "model", "providers", "provider", "session", "details", "compact", "summarize",
+  "save", "sessions", "resume", "export", "init", "clear", "new", "exit", "quit", "q",
+] as const;
+
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = curr;
+  }
+  return prev[b.length]!;
+}
+
+/** Comando mais próximo de `raw` por distância de edição; `undefined` quando nada chega perto. */
+export function suggestCommand(raw: string): string | undefined {
+  const needle = raw.toLowerCase();
+  let best: string | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const name of COMMAND_NAMES) {
+    const distance = editDistance(needle, name);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = name;
+    }
+  }
+  if (best === undefined) return undefined;
+  const threshold = Math.max(2, Math.floor(best.length / 2));
+  return bestDistance <= threshold ? `/${best}` : undefined;
+}
+
+/** Mensagem de comando desconhecido, com sugestão quando há candidato próximo. */
+export function unknownCommandMessage(raw: string): string {
+  const suggestion = suggestCommand(raw);
+  return suggestion === undefined
+    ? `comando desconhecido: /${raw} (veja /help)`
+    : `comando desconhecido: /${raw} — você quis dizer ${suggestion}?`;
+}
+
 function parseProvider(arg: string): ReplCommand {
   const [sub, ...rest] = arg.split(/\s+/).filter((part) => part !== "");
   if (sub === undefined) return { kind: "provider", action: "list" };
