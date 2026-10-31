@@ -1,5 +1,6 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { appendDurable, parseJsonl } from "./jsonl";
 import { redactSecrets } from "./sanitize-external";
 
 export interface AuditEvent {
@@ -76,31 +77,35 @@ export class Auditor {
       payload: e.payload ?? {},
     };
     const sanitized = sanitize(event) as AuditEvent;
-    appendFileSync(this.path, `${JSON.stringify(sanitized)}\n`, "utf8");
+    appendDurable(this.path, `${JSON.stringify(sanitized)}\n`);
     if (this.onEvent !== undefined) this.onEvent(sanitized);
     return sanitized;
   }
 
   readAll(): AuditEvent[] {
-    return this.readLines().map((line) => JSON.parse(line) as AuditEvent);
+    return this.parseLines();
   }
 
-  private readLines(): string[] {
-    let text: string;
+  /** Lê o arquivo; ausente vira texto vazio. */
+  private readText(): string {
     try {
-      text = readFileSync(this.path, "utf8");
+      return readFileSync(this.path, "utf8");
     } catch (error) {
-      if (isMissingFile(error)) return [];
+      if (isMissingFile(error)) return "";
       throw error;
     }
-    return text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  }
+
+  /** Eventos legíveis; cauda parcial de append interrompido é descartada. */
+  private parseLines(): AuditEvent[] {
+    return parseJsonl<AuditEvent>(this.readText(), `auditoria em "${this.path}"`).entries;
   }
 
   private readLastSeq(): number {
-    const lines = this.readLines();
+    const lines = this.parseLines();
     if (lines.length === 0) return 0;
 
-    const last: unknown = JSON.parse(lines[lines.length - 1]);
+    const last = lines[lines.length - 1] as unknown;
     if (
       typeof last !== "object" ||
       last === null ||
