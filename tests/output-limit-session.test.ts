@@ -13,7 +13,7 @@ function fakeTool(output: string, name = "fake"): Tool {
   return {
     manifest: {
       name, description: "fake", parameters: { type: "object" },
-      risk: "low", permission: "read", timeoutMs: 1000, retryable: false, idempotent: true, sideEffects: "none",
+      risk: "low", permission: "read", timeoutMs: 1000, retryable: false, idempotent: true, sideEffects: "none", class: "read_common",
     },
     async execute(): Promise<ToolResult> {
       return { output };

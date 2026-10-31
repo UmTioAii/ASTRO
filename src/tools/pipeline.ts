@@ -88,6 +88,7 @@ export const pipelineTool: Tool = {
     },
     risk: "high",
     permission: "write",
+    class: "shell",
     timeoutMs: 120_000,
     retryable: false,
     idempotent: false,

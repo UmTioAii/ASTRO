@@ -23,7 +23,7 @@ Fonte da verdade: `02-estrutura-correta.md` da trilha de planejamento. A tabela 
 | I-09 | Erro é classificado antes de qualquer ação; cota dura não é retentada | `src/provider/types.ts:42` (classes); `src/quota.ts` (`hard_quota` sem retry) |
 | I-10 | Leitor/planejador usa workspace compartilhado read-only; escritor usa worktree próprio; nunca dois escritores no mesmo worktree | Parcial: worktrees no fluxo de dev (`docs/workflow.md:16`); papéis de agente pendentes (#58) |
 | I-11 | Worktree não é fronteira de segurança; execução exige sandbox de FS/rede | Parcial: confinamento de caminho (`src/tools/paths.ts:8`) e sandbox opcional (`src/tools/run-command.ts:107`); pendências: env herdado e symlink (`F-00`) |
-| I-12 | Toda tool declara nome, schemas, classe de risco, permissão, timeout, retry e formato de erro | Parcial: manifesto validado (`src/sdk/tool.ts:22`); formato de erro pendente |
+| I-12 | Toda tool declara nome, schemas, classe de risco, permissão, timeout, retry e formato de erro | Parcial: manifesto validado (`src/sdk/tool.ts:22`), incluindo `class` obrigatória para o gate (#264; MCP default `shell`); formato de erro pendente |
 | I-13 | Plugin tem manifesto, permissões explícitas e roda em processo separado | Parcial: manifesto e falha isolada (`src/plugins.ts`); processo separado pendente |
 | I-14 | Skill não amplia permissão; só sugere tools que o agente já tem | Pendente (#55) |
 | I-15 | MCP é registrado como plugin de tool, com namespace, e a saída é dado não confiável | Pendente (#56) |

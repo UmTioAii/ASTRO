@@ -20,6 +20,7 @@ export const listModelCandidatesManifest: ToolManifest = {
   },
   risk: "low",
   permission: "list_model_candidates",
+  class: "read_common",
   timeoutMs: 5000,
   retryable: false,
   idempotent: true,

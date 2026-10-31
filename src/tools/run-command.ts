@@ -265,6 +265,7 @@ export const runCommandTool: Tool = {
     },
     risk: "high",
     permission: "execute",
+    class: "shell",
     timeoutMs: 30_000,
     retryable: false,
     idempotent: false,

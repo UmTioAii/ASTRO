@@ -42,6 +42,7 @@ export const writeFileTool: Tool = {
     },
     risk: "medium",
     permission: "write",
+    class: "edit",
     timeoutMs: 5_000,
     retryable: false,
     idempotent: true,

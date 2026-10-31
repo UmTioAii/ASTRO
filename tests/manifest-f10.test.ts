@@ -20,7 +20,7 @@ import type { Tool, ToolManifest, ToolResult } from "../src/tools/types";
 const full: ToolManifest = {
   name: "x", description: "d", parameters: { type: "object" },
   risk: "low", permission: "read", timeoutMs: 1000, retryable: true,
-  idempotent: true, sideEffects: "none",
+  idempotent: true, sideEffects: "none", class: "read_common",
 };
 
 const failMessage = (fn: () => unknown): string => {
@@ -100,7 +100,7 @@ describe("gate do executor: dedup só para idempotentes (F-10)", () => {
         name: "deploy", description: "não idempotente",
         parameters: { type: "object", properties: {} },
         risk: "high", permission: "test", timeoutMs: 5000, retryable: false,
-        idempotent: false, sideEffects: "process",
+        idempotent: false, sideEffects: "process", class: "shell",
       },
       async execute(): Promise<ToolResult> {
         runs++;

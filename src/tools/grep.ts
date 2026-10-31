@@ -107,6 +107,7 @@ export const grepTool: Tool = {
     },
     risk: "low",
     permission: "read",
+    class: "read_common",
     timeoutMs: 30_000,
     retryable: true,
     idempotent: true,

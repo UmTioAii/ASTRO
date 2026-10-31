@@ -27,7 +27,7 @@ const dir = (tag: string) => mkdtempSync(join(tmpdir(), `astro-${tag}-`));
 const cancelTool = (controller: AbortController): Tool => ({
   manifest: {
     name: "cancel", description: "aborta o run", parameters: { type: "object", properties: {} },
-    risk: "low", permission: "test", timeoutMs: 1000, retryable: false, idempotent: false, sideEffects: "none" },
+    risk: "low", permission: "test", timeoutMs: 1000, retryable: false, idempotent: false, sideEffects: "none", class: "read_common" },
   async execute() {
     controller.abort(new Error("cancelado na tool"));
     return { output: "ok" };
