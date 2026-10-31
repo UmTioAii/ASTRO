@@ -16,7 +16,7 @@ import { writeFileTool } from "../src/tools/write-file";
 const validManifest: ToolManifest = {
   name: "x", description: "d", parameters: { type: "object" },
   risk: "low", permission: "read", timeoutMs: 1000, retryable: true,
-  idempotent: true, sideEffects: "none",
+  idempotent: true, sideEffects: "none", class: "read_common",
 };
 
 const ctx = (cwd: string) => ({ cwd, run: "r1", agent: "coder" });
@@ -139,7 +139,10 @@ describe("class obrigatória no manifesto (#264)", () => {
 
   test("tool MCP recebe class segura por default", () => {
     const [tool] = mcpTools({
-      registry: { call: async () => ({ content: [] }) } as never,
+      registry: {
+        listTools: () => [{ server: "fs", tool: { name: "read_file", description: "Lê arquivo", inputSchema: { type: "object" } } }],
+        call: async () => ({ content: [] }),
+      } as never,
       servers: { fs: { transport: "stdio", command: "x", timeoutMs: 2000, enabled: true } },
       audit: new Auditor(join(mkdtempSync(join(tmpdir(), "astro-class-")), "audit.jsonl")),
       reserved: [],

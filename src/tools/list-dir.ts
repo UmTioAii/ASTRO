@@ -85,6 +85,7 @@ export const listDirTool: Tool = {
     },
     risk: "low",
     permission: "read",
+    class: "read_common",
     timeoutMs: 10_000,
     retryable: true,
     idempotent: true,

@@ -204,6 +204,7 @@ export function createSpawnAgentTool(deps: SpawnToolDeps): Tool {
       parameters: SPAWN_PARAMETERS,
       risk: "medium",
       permission: "spawn_agent",
+      class: "shell",
       timeoutMs: 5000,
       retryable: false,
       idempotent: false,

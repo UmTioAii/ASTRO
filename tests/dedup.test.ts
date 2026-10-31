@@ -26,7 +26,7 @@ function countingTool(name = "counter"): { tool: Tool; runs: () => number } {
       name, description: "conta execuções",
       parameters: { type: "object", properties: {} },
       risk: "low", permission: "test", timeoutMs: 5000, retryable: false,
-      idempotent: true, sideEffects: "none",
+      idempotent: true, sideEffects: "none", class: "read_common",
     },
     async execute(): Promise<ToolResult> {
       runs++;
@@ -97,7 +97,7 @@ describe("dedup no ToolExecutor (F-03)", () => {
         name: "boomer", description: "sempre falha",
         parameters: { type: "object", properties: {} },
         risk: "low", permission: "test", timeoutMs: 5000, retryable: false,
-        idempotent: true, sideEffects: "none",
+        idempotent: true, sideEffects: "none", class: "read_common",
       },
       async execute(): Promise<ToolResult> {
         runs++;

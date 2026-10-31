@@ -182,6 +182,7 @@ export const editTool: Tool = {
     },
     risk: "high",
     permission: "write",
+    class: "edit",
     timeoutMs: 30_000,
     retryable: false,
     idempotent: false,

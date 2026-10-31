@@ -22,6 +22,7 @@ export const handoffManifest: ToolManifest = {
   },
   risk: "medium",
   permission: "handoff",
+  class: "edit",
   timeoutMs: 5000,
   retryable: false,
   idempotent: true,

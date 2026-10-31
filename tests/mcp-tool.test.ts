@@ -205,6 +205,7 @@ test("manifesto da tool MCP declara risco, permissão, timeout de retry e side e
     retryable: false,
     idempotent: false,
     sideEffects: "process",
+    class: "shell",
   });
 });
 

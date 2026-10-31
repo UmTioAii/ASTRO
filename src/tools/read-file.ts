@@ -85,6 +85,7 @@ export const readFileTool: Tool = {
     },
     risk: "low",
     permission: "read",
+    class: "read_common",
     timeoutMs: 5_000,
     retryable: true,
     idempotent: true,

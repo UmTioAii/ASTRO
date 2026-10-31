@@ -115,7 +115,7 @@ describe("gate no executor (#259)", () => {
   test("ask + approver negando bloqueia a tool e audita", async () => {
     let ran = false;
     const write: Tool = {
-      manifest: { ...manifest, name: "write_probe", permission: "write", sideEffects: "filesystem" },
+      manifest: { ...manifest, name: "write_probe", permission: "write", sideEffects: "filesystem", class: "edit" },
       async execute() {
         ran = true;
         return { output: "ok" };
@@ -136,7 +136,7 @@ describe("gate no executor (#259)", () => {
   test("ask + approver permitindo executa", async () => {
     let ran = false;
     const write: Tool = {
-      manifest: { ...manifest, name: "write_probe", permission: "write", sideEffects: "filesystem" },
+      manifest: { ...manifest, name: "write_probe", permission: "write", sideEffects: "filesystem", class: "edit" },
       async execute() {
         ran = true;
         return { output: "ok" };
@@ -169,6 +169,7 @@ describe("ask sem TTY (#262)", () => {
       manifest: {
         name: "write_probe", description: "x", parameters: { type: "object", properties: {} },
         risk: "low", permission: "write", timeoutMs: 5_000, retryable: false, idempotent: false, sideEffects: "filesystem",
+        class: "edit",
       },
       async execute() {
         ran = true;

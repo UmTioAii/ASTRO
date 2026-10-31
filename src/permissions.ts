@@ -107,15 +107,16 @@ export interface ToolCallLike {
   input: unknown;
 }
 
-/** Classe da ação inferida do manifesto (até PERM-02 declarar `class`). */
+/** Classe da ação: manifesto (`class`) refinado por caminho crítico (PERM-02/#264). */
 export function actionClassOf(tool: Tool, call: ToolCallLike): ActionClass {
-  if (call.name === "run_command" || tool.manifest.permission === "execute") return "shell";
   const path = (call.input as { path?: unknown } | null)?.path;
   const critical = typeof path === "string" && isCriticalPath(path);
-  if (call.name === "read_file") return critical ? "read_critical" : "read_common";
-  if (tool.manifest.permission === "write" || tool.manifest.sideEffects === "filesystem") {
-    return critical ? "critical_write" : "edit";
+  const declared = tool.manifest.class;
+
+  if (declared === "read_common" || declared === "read_critical") {
+    return critical ? "read_critical" : "read_common";
   }
-  if (tool.manifest.sideEffects === "process") return "shell";
-  return "read_common";
+  if (declared === "edit") return critical ? "critical_write" : "edit";
+  if (declared === "identity_swap") return "identity";
+  return declared; // delete | shell
 }
