@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -6,7 +6,7 @@ import { Auditor } from "../src/audit";
 import { ToolExecutor } from "../src/tools/executor";
 import { resolveWithin } from "../src/tools/paths";
 import { readFileTool } from "../src/tools/read-file";
-import { runCommandTool } from "../src/tools/run-command";
+import { runCommandTool, configureRunCommand } from "../src/tools/run-command";
 import type { Tool, ToolResult } from "../src/tools/types";
 import { writeFileTool } from "../src/tools/write-file";
 
@@ -15,6 +15,9 @@ const ctx = (cwd: string) => ({ cwd, run: "r1", agent: "default" });
 const tools = [readFileTool, writeFileTool, runCommandTool];
 const mkExec = (cwd: string) =>
   new ToolExecutor({ tools, allow: tools.map((t) => t.manifest.name), audit: new Auditor(join(cwd, ".astro", "audit.jsonl")) });
+
+// Estes testes executam comandos locais de propósito: opt-out explícito do sandbox.
+beforeEach(() => configureRunCommand({ sandbox: false }));
 
 test("caminho fora do cwd é recusado; dentro é aceito", () => {
   const cwd = dir();

@@ -10,7 +10,7 @@ const MAX_OUTPUT = 10_000;
  * chaves de API, tokens, senhas ou credenciais.
  */
 const SECRET_ENV =
-  /(^|_)[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH|CREDENTIAL|PRIVATE|COOKIE|SESSION)[A-Z0-9_]*$/i;
+  /(^|_)[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PASSPHRASE|PEM|AUTH(?!OR)|CREDENTIAL|PRIVATE|COOKIE|SESSION)[A-Z0-9_]*$/i;
 
 function secretKey(name: string): string {
   return process.platform === "win32" ? name.toLowerCase() : name;
@@ -136,6 +136,14 @@ function minimalHostEnv(): Record<string, string> {
 /** Configura o modo sandbox de run_command (chamado pelo app ao carregar a config). */
 export function configureRunCommand(opts: { sandbox?: boolean }): void {
   sandboxEnabled = opts.sandbox === true;
+}
+
+/**
+ * Sandbox ligado salvo opt-out explícito (`sandbox: false`). Sem Docker,
+ * `run_command` recusa em vez de rodar sem isolamento (I-11).
+ */
+export function resolveSandboxSetting(configured: boolean | undefined): boolean {
+  return configured !== false;
 }
 
 /** Argv do docker run com isolamento: rede off, rootfs read-only, cwd read-write. */

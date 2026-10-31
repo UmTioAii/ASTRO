@@ -27,6 +27,7 @@ function writeRunConfig(dir: string, port: number, tools: string[]): string {
     providers: { a: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${port}/v1`, credentialRef: "KEY_A" } },
     models: [{ provider: "a", id: "m1", tags: ["writing-code"], context: 4096 }],
     agent: { model: "a/m1", maxSteps: 3, tools },
+    tools: { run_command: { sandbox: false } },
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));
   return cfgPath;

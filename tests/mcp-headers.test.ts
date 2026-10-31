@@ -228,6 +228,7 @@ test("runTask não entrega ao run_command a variável referenciada por header", 
     providers: { mock: { kind: "openai-compat", baseUrl: `http://127.0.0.1:${provider.port}/v1`, credentialRef: "TEST_KEY" } },
     models: [{ provider: "mock", id: "mock-1", tags: ["writing-code", "tools"], context: 4096 }],
     agent: { model: "mock/mock-1", maxSteps: 4, tools: ["run_command"] },
+    tools: { run_command: { sandbox: false } },
     mcpServers: { api: { transport: "http", url: "http://127.0.0.1:1/mcp", headers: { Authorization: "env:MCP_HEADER" }, timeoutMs: 300 } },
     paths: { ledger: ".astro/ledger.jsonl", audit: ".astro/audit.jsonl" },
   }));

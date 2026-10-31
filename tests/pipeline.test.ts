@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,12 +6,15 @@ import { Auditor } from "../src/audit";
 import { ToolExecutor } from "../src/tools/executor";
 import { readFileTool } from "../src/tools/read-file";
 import { writeFileTool } from "../src/tools/write-file";
-import { runCommandTool } from "../src/tools/run-command";
+import { runCommandTool, configureRunCommand } from "../src/tools/run-command";
 import { grepTool } from "../src/tools/grep";
 import { editTool } from "../src/tools/edit";
 import { pipelineTool } from "../src/tools/pipeline";
 
 const ALL_TOOLS = [readFileTool, writeFileTool, runCommandTool, grepTool, editTool, pipelineTool];
+
+// O pipeline executa comandos locais de propósito: opt-out explícito do sandbox.
+beforeEach(() => configureRunCommand({ sandbox: false }));
 
 function setup(content: string): { cwd: string; audit: Auditor; executor: ToolExecutor } {
   const cwd = mkdtempSync(join(tmpdir(), "astro-pipe-"));

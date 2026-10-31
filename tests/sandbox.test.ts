@@ -3,7 +3,14 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateConfig, ConfigError } from "../src/config";
-import { runCommandTool, configureRunCommand, detectDockerAvailable, dockerInfoSupportsLinuxContainers } from "../src/tools/run-command";
+import {
+  runCommandTool,
+  configureRunCommand,
+  detectDockerAvailable,
+  dockerInfoSupportsLinuxContainers,
+  resolveSandboxSetting,
+  sanitizedEnv,
+} from "../src/tools/run-command";
 
 const ctx = (cwd: string) => ({ cwd, run: "r1", agent: "coder" });
 
@@ -15,9 +22,24 @@ const baseConfig = {
 };
 
 describe("config tools.run_command.sandbox (F4-6)", () => {
-  test("default: tools ausente → sandbox false", () => {
+  test("sem tools: sandbox efetivo ligado (fail-closed)", () => {
     const cfg = validateConfig(structuredClone(baseConfig));
-    expect(cfg.tools?.run_command?.sandbox ?? false).toBe(false);
+    expect(resolveSandboxSetting(cfg.tools?.run_command?.sandbox)).toBe(true);
+  });
+
+  test("tools.run_command sem sandbox → ligado (opt-out precisa ser explícito)", () => {
+    const raw = structuredClone(baseConfig) as Record<string, unknown>;
+    raw.tools = { run_command: {} };
+    const cfg = validateConfig(raw);
+    expect(cfg.tools?.run_command?.sandbox).toBe(true);
+  });
+
+  test("tools.run_command.sandbox: false é opt-out explícito", () => {
+    const raw = structuredClone(baseConfig) as Record<string, unknown>;
+    raw.tools = { run_command: { sandbox: false } };
+    const cfg = validateConfig(raw);
+    expect(cfg.tools?.run_command?.sandbox).toBe(false);
+    expect(resolveSandboxSetting(cfg.tools?.run_command?.sandbox)).toBe(false);
   });
 
   test("tools.run_command.sandbox: true aceito", () => {
@@ -31,6 +53,23 @@ describe("config tools.run_command.sandbox (F4-6)", () => {
     const raw = structuredClone(baseConfig) as Record<string, unknown>;
     raw.tools = { run_command: { sandbox: "yes" } };
     expect(() => validateConfig(raw)).toThrow(ConfigError);
+  });
+});
+
+describe("sanitizedEnv (I-03)", () => {
+  test("remove DB_PASS, SSH_PEM e PASSPHRASE sem remover nomes inocentes", () => {
+    const env = sanitizedEnv({
+      DB_PASS: "db-secret",
+      SSH_PEM: "pem-secret",
+      DEPLOY_PASSPHRASE: "pass-secret",
+      GIT_AUTHOR_NAME: "autora",
+      PATH: "/usr/bin",
+    });
+    expect(env).not.toHaveProperty("DB_PASS");
+    expect(env).not.toHaveProperty("SSH_PEM");
+    expect(env).not.toHaveProperty("DEPLOY_PASSPHRASE");
+    expect(env.GIT_AUTHOR_NAME).toBe("autora");
+    expect(env.PATH).toBe("/usr/bin");
   });
 });
 
