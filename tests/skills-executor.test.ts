@@ -194,3 +194,14 @@ test("run com skill pedindo tool fora da allowlist falha fechado", async () => {
   expect(auditText).toContain("run.stopped");
   expect(auditText).not.toContain("skill.loaded");
 });
+
+test("loadSkillsFromRoot recusa skill com sha256 divergente do sidecar", () => {
+  const root = mkdtempSync(join(tmpdir(), "astro-skhash-"));
+  const dir = skillDir(root, "commit");
+  writeFileSync(join(dir, ".sha256"), "0".repeat(64) + "\n", "utf8");
+  const warnings: string[] = [];
+  const skills = loadSkillsFromRoot(root, "project", (message) => warnings.push(message));
+
+  expect(skills).toEqual([]);
+  expect(warnings.join("\n")).toMatch(/commit.*sha256/);
+});
