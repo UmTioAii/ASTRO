@@ -1,4 +1,5 @@
 import type { MCPServerConfig } from "../config";
+import { sanitizeExternal } from "../sanitize-external";
 import type { AuditLike, Tool, ToolContext } from "../tools/types";
 import { mcpToolName, type MCPDiscoveredTool } from "./registry";
 import type { MCPToolResult } from "./types";
@@ -95,7 +96,9 @@ export function mcpTools(opts: McpToolsOptions): Tool[] {
         try {
           const result = await opts.registry.call(server, tool.name, input as Record<string, unknown>);
           const failed = result.isError === true;
-          const output = render(result); // antes do audit: falha de render vira um único status error
+          // Saída de servidor MCP é conteúdo externo: redige segredo na origem (I-03). Teto e
+          // artefato ficam no executor (CMP-10); truncar aqui perderia a cauda recuperável.
+          const output = sanitizeExternal(render(result), { maxTokens: Number.POSITIVE_INFINITY }).content; // antes do audit: falha de render vira um único status error
           auditCall(opts.audit, ctx, server, tool.name, started, failed ? "error" : "ok");
           return { output, ...(failed ? { isError: true } : {}) };
         } catch (error) {

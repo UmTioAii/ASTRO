@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { redactSecrets } from "../sanitize-external";
 import { estimateTokens } from "../tokens";
 import { resolveWithin } from "./paths";
 import { ToolError, type Tool, type ToolResult } from "./types";
@@ -96,7 +97,9 @@ export const readFileTool: Tool = {
       const { path, offset } = readInput(input);
       const resolved = resolveWithin(ctx.cwd, path);
       const lines = fileLines(readFileSync(resolved, "utf8"));
-      return { output: page(lines, offset, ctx.outputLimitTokens) };
+      // Arquivo é conteúdo externo: segredo não entra no contexto mesmo que esteja no disco (I-03).
+      // Só redige: paginação e teto de tokens continuam por conta de `page` (S-16).
+      return { output: redactSecrets(page(lines, offset, ctx.outputLimitTokens)) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return failure(`erro ao ler arquivo: ${message}`);
