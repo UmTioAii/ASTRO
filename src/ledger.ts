@@ -1,19 +1,20 @@
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import type { PriceConfig } from "./config";
+import { DEFAULT_LOCK_TIMEOUT_MS, FileLockError, processAlive, withFileLock } from "./file-lock";
 import type { FallbackRecord } from "./provider/types";
 import { handoffId, sanitizeHandoffArtifact, type HandoffArtifactV1 } from "./handoff/types";
 import { appendDurable, jsonlLines, parseJsonl } from "./jsonl";
 import { redactSecrets } from "./sanitize-external";
 
+export { processAlive };
+
 /** Versão do formato do ledger (ADR-0002): inteiro monotônico desde 1. */
 export const LEDGER_SCHEMA_VERSION = 3;
 
-/** Timeout do lock de arquivo (F-26/A4); depois segue em melhor esforço ou falha fechado. */
-const LEDGER_LOCK_TIMEOUT_MS = 1_000;
-/** Lock com dono morto ou ilegível há mais que isso é considerado órfão. */
-const LEDGER_STALE_LOCK_MS = 5_000;
+/** Timeout do lock de arquivo (F-26/A4); depois falha fechado. */
+const LEDGER_LOCK_TIMEOUT_MS = DEFAULT_LOCK_TIMEOUT_MS;
 
 /** Lock de arquivo não pôde ser adquirido e a operação exige exclusividade (A4). */
 export class LedgerLockError extends Error {
@@ -21,17 +22,6 @@ export class LedgerLockError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "LedgerLockError";
-  }
-}
-
-/** O processo ainda existe? Sinal 0 não entrega nada; EPERM também prova vida. */
-export function processAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -213,6 +203,8 @@ export class Ledger {
   private nextSeq: number | undefined;
   /** Aviso de cauda parcial já emitido nesta instância. */
   private warnedPartialTail = false;
+  /** Profundidade do lock desta instância (reentrância do append na seção crítica). */
+  private lockDepth = 0;
 
   constructor(path: string, opts?: { warn?: (msg: string) => void; onRecord?: (entry: LedgerEntry) => void }) {
     this.path = path;
@@ -226,19 +218,26 @@ export class Ledger {
     return createHash("sha256").update(resolve(this.path)).digest("hex");
   }
 
-  /** Consome o próximo `seq`; retoma a numeração de reaberturas do arquivo. */
-  private takeSeq(): number {
-    if (this.nextSeq === undefined) {
+  /**
+   * Aloca `seq` e anexa sob lock de arquivo (I-04): outro processo no mesmo cwd
+   * não repete `seq`. O maior `seq` é lido dentro do lock; o cache local é só
+   * piso monotônico. As entradas nascem com `seq: 0`, substituído aqui.
+   */
+  private appendWithSeq<T extends { seq?: number }>(entry: T): T {
+    return this.withFileLock(() => {
       let max = 0;
       for (const line of this.readLines()) {
         try {
           const e = JSON.parse(line) as { seq?: unknown };
           if (typeof e.seq === "number" && e.seq > max) max = e.seq;
-        } catch { /* linha legada ilegível não tem seq */ }
+        } catch { /* cauda parcial ou linha legada sem seq */ }
       }
-      this.nextSeq = max + 1;
-    }
-    return this.nextSeq++;
+      const seq = Math.max(this.nextSeq ?? 0, max + 1);
+      this.nextSeq = seq + 1;
+      entry.seq = seq;
+      appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+      return entry;
+    }, { failClosed: true });
   }
 
   record(e: Omit<LedgerEntry, "ts" | "costUsd" | "schemaVersion" | "kind">, price?: PriceConfig): LedgerEntry {
@@ -269,9 +268,9 @@ export class Ledger {
       ...(thinking === undefined ? {} : { thinking }),
       ...(stripped === undefined ? {} : { "param.stripped": stripped }),
       costUsd,
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     if (this.onRecord !== undefined) this.onRecord(entry);
     return entry;
   }
@@ -290,9 +289,9 @@ export class Ledger {
       state,
       ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
       ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     return entry;
   }
 
@@ -361,107 +360,33 @@ export class Ledger {
     const safe = sanitizeHandoffArtifact(artifact);
     const id = handoffId(safe);
     if (kind === "handoff.created" || kind === "handoff.received") {
+      // CAS de handoff preserva o melhor esforço documentado no ADR-0006.
       return this.withFileLock(() => {
         const existing = this.readHandoffs().find((e) => e.kind === kind && e.handoff_id === id);
         if (existing !== undefined) return existing;
         return this.appendHandoff(kind, run, safe, id, opts);
-      });
+      }, { failClosed: false });
     }
     return this.appendHandoff(kind, run, safe, id, opts);
   }
 
   /**
    * Serializa uma seção crítica com lock de arquivo (F-26, A4). Erros de
-   * `critical` propagam na hora; a disputa espera até o timeout. O dono grava
-   * o PID: lock de processo morto (ou ilegível há muito tempo) é removido, e
-   * com `failClosed` a ausência de lock vira erro em vez de execução sem
-   * exclusividade.
+   * `critical` propagam na hora; a disputa espera até o timeout. Sem lock vira
+   * erro; melhor esforço só com `failClosed: false` explícito. Reentrante na
+   * mesma instância: o append dentro de uma seção crítica já exclusiva não
+   * tenta pegar o lock de novo.
    */
   withFileLock<T>(critical: () => T, opts: { failClosed?: boolean; timeoutMs?: number } = {}): T {
-    const lockPath = `${this.path}.lock`;
-    const timeoutMs = opts.timeoutMs ?? LEDGER_LOCK_TIMEOUT_MS;
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      let fd: number | undefined;
-      try {
-        fd = openSync(lockPath, "wx"); // exclusivo: falha se outro processo segura o lock
-      } catch {
-        fd = undefined;
-      }
-      if (fd !== undefined) {
-        try {
-          writeSync(fd, String(process.pid));
-          return critical();
-        } finally {
-          try {
-            closeSync(fd);
-          } finally {
-            // Só remove se o lock ainda é nosso: um sucessor não pode ser apagado.
-            this.removeIfOwned(lockPath);
-          }
-        }
-      }
-      const stale = this.staleLock(lockPath, timeoutMs);
-      if (stale !== undefined && this.removeIfUnchanged(lockPath, stale)) continue;
-      if (Date.now() >= deadline) {
-        if (opts.failClosed === true) {
-          throw new LedgerLockError(`lock do ledger "${lockPath}" indisponível após ${timeoutMs}ms`);
-        }
-        return critical(); // compat: CAS de handoff segue em melhor esforço
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); // espera síncrona de 5ms
-    }
-  }
-
-  /** Conteúdo e mtime observados de um lock órfão (token de remoção segura). */
-  private staleLock(
-    lockPath: string,
-    timeoutMs: number,
-  ): { content: string; mtimeMs: number } | undefined {
-    let content: string;
-    let mtimeMs: number;
+    if (this.lockDepth > 0) return critical();
+    this.lockDepth++;
     try {
-      content = readFileSync(lockPath, "utf8").trim();
-      mtimeMs = statSync(lockPath).mtimeMs;
-    } catch {
-      return undefined; // sumiu: o próximo openSync decide
-    }
-    const pid = /^\d+$/.test(content) ? Number(content) : undefined;
-    const stale = pid !== undefined && pid !== process.pid
-      ? !processAlive(pid)
-      // Sem PID (crash entre create e write) ou dono é este processo: só expira.
-      : Date.now() - mtimeMs > Math.max(LEDGER_STALE_LOCK_MS, timeoutMs * 2);
-    return stale ? { content, mtimeMs } : undefined;
-  }
-
-  /**
-   * Remove o lock só se ainda for exatamente o observado. Reconferir conteúdo e
-   * mtime fecha a janela em que outro processo substitui o lock entre a
-   * detecção e o unlink.
-   */
-  private removeIfUnchanged(
-    lockPath: string,
-    observed: { content: string; mtimeMs: number },
-  ): boolean {
-    try {
-      const content = readFileSync(lockPath, "utf8").trim();
-      const mtimeMs = statSync(lockPath).mtimeMs;
-      if (content !== observed.content || mtimeMs !== observed.mtimeMs) return false;
-      rmSync(lockPath, { force: true });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /** No `finally`, só apaga o lock se o conteúdo ainda for o PID deste processo. */
-  private removeIfOwned(lockPath: string): void {
-    try {
-      if (readFileSync(lockPath, "utf8").trim() === String(process.pid)) {
-        rmSync(lockPath, { force: true });
-      }
-    } catch {
-      // já removido por outro caminho
+      return withFileLock(`${this.path}.lock`, critical, opts);
+    } catch (error) {
+      if (error instanceof FileLockError) throw new LedgerLockError(error.message);
+      throw error;
+    } finally {
+      this.lockDepth--;
     }
   }
 
@@ -483,9 +408,9 @@ export class Ledger {
       ...(opts?.agent === undefined ? {} : { agent: redactSecrets(opts.agent) }),
       ...(opts?.receiverAgent === undefined ? {} : { receiver_agent: redactSecrets(opts.receiverAgent), received_at: ts }),
       ...(opts?.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     return entry;
   }
 
@@ -553,9 +478,9 @@ export class Ledger {
       ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
       ...(opts.snapshot_id === undefined ? {} : { snapshot_id: redactSecrets(opts.snapshot_id) }),
       pid: opts.pid ?? process.pid,
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -584,9 +509,9 @@ export class Ledger {
       ...(opts.credentialRef === undefined ? {} : { credentialRef: redactSecrets(opts.credentialRef) }),
       ...(opts.profile === undefined ? {} : { profile: redactSecrets(opts.profile) }),
       ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     return entry;
   }
 
@@ -606,9 +531,9 @@ export class Ledger {
       agent_id: redactSecrets(opts.agent_id),
       session_id: redactSecrets(opts.session_id),
       ...(opts.reason === undefined ? {} : { reason: redactSecrets(opts.reason) }),
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -629,9 +554,9 @@ export class Ledger {
       event: "reserved",
       reserved: opts.reserved,
       ...(opts.detail === undefined ? {} : { detail: redactSecrets(opts.detail) }),
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -652,9 +577,9 @@ export class Ledger {
       event: "released",
       released: opts.released,
       ...(opts.actual_cost === undefined ? {} : { actual_cost: opts.actual_cost }),
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -673,9 +598,9 @@ export class Ledger {
       kind: "budget",
       event: "exceeded",
       exceeded_choice: opts.exceeded_choice,
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -694,9 +619,9 @@ export class Ledger {
       kind: "budget",
       event: "ceiling_hit",
       ceiling_hit: opts.ceiling_hit,
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -715,9 +640,9 @@ export class Ledger {
       kind: "budget",
       event: "non_interactive",
       budget_exceeded_non_interactive: opts.budget_exceeded_non_interactive,
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
@@ -737,9 +662,9 @@ export class Ledger {
       kind: "compaction",
       failure_count: opts.failure_count,
       manual: opts.manual,
-      seq: this.takeSeq(),
+      seq: 0,
     };
-    appendDurable(this.path, `${JSON.stringify(entry)}\n`);
+    this.appendWithSeq(entry);
     // onRecord só é chamado para entradas de uso (kind === "usage")
     return entry;
   }
