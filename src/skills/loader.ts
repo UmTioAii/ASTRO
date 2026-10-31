@@ -209,8 +209,16 @@ export function loadSkillsFromRoot(
       warn(`skill "${entry.name}" ignorada: SKILL.md é link`);
       continue;
     }
+    const sidecar = join(absolute, entry.name, ".sha256");
+    const expected = existsSync(sidecar) ? readFileSync(sidecar, "utf8").trim() : undefined;
     try {
-      skills.push(loadSkillFile(file, source));
+      const skill = loadSkillFile(file, source);
+      // skill instalada carrega o sidecar: conteúdo alterado não entra no contexto (I-03)
+      if (expected !== undefined && expected !== skill.manifest.sha256) {
+        warn(`skill "${entry.name}" ignorada: sha256 não confere com o sidecar`);
+        continue;
+      }
+      skills.push(skill);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       warn(`skill "${entry.name}" ignorada: ${detail}`);

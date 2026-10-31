@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Auditor } from "../audit";
 import { outboundUrlProblem } from "../url-safety";
@@ -44,6 +44,49 @@ export interface VerifyResult {
   reason?: string;
 }
 
+/** Lê o corpo com teto: aborta o stream ao passar de `SKILL_MAX_BYTES`, sem bufferizar tudo. */
+async function readCappedBody(response: Response, source: string): Promise<string> {
+  const declared = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > SKILL_MAX_BYTES) {
+    throw new SkillError(`skill "${source}": maior que ${SKILL_MAX_BYTES} bytes`);
+  }
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > SKILL_MAX_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new SkillError(`skill "${source}": maior que ${SKILL_MAX_BYTES} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(body);
+}
+
+/** Recusa pacote com link (simbólico/junction): copiar o alvo escaparia da raiz instalada. */
+function assertNoLinks(directory: string): void {
+  const pending = [directory];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (entry.name === ".sha256") continue;
+      if (entry.isSymbolicLink()) throw new SkillError(`skill: link simbólico não é instalado (${entry.name})`);
+      if (entry.isDirectory()) pending.push(join(current, entry.name));
+    }
+  }
+}
+
 /** Lê a origem: URL http(s) (teto de 1MB) ou caminho local de SKILL.md/diretório. */
 async function readSource(
   source: string,
@@ -57,8 +100,7 @@ async function readSource(
       throw new SkillError(`falha ao baixar skill "${source}": ${error instanceof Error ? error.message : String(error)}`);
     }
     if (!response.ok) throw new SkillError(`falha ao baixar skill "${source}": HTTP ${response.status}`);
-    const content = await response.text();
-    if (Buffer.byteLength(content) > SKILL_MAX_BYTES) throw new SkillError(`skill "${source}": maior que ${SKILL_MAX_BYTES} bytes`);
+    const content = await readCappedBody(response, source);
     return { content };
   }
 
@@ -89,6 +131,7 @@ export async function installSkill(opts: InstallSkillOptions): Promise<Skill> {
       || (targetId !== null && insideExisting(directory, targetId))
       || (sourceId !== null && insideExisting(targetDir, sourceId));
     if (overlap) throw new SkillError(`skill "${name}": origem e destino se sobrepõem (${directory} x ${targetDir})`);
+    assertNoLinks(directory); // antes de apagar o destino: pacote com link não instala
   }
   if (existsSync(targetDir)) {
     if (opts.force !== true) {
@@ -99,7 +142,7 @@ export async function installSkill(opts: InstallSkillOptions): Promise<Skill> {
 
   if (directory !== undefined) {
     mkdirSync(root, { recursive: true });
-    cpSync(directory, targetDir, { recursive: true, dereference: true, filter: (path) => basename(path) !== ".sha256" });
+    cpSync(directory, targetDir, { recursive: true, dereference: false, filter: (path) => basename(path) !== ".sha256" });
   } else {
     mkdirSync(targetDir, { recursive: true });
     writeFileSync(join(targetDir, "SKILL.md"), content);

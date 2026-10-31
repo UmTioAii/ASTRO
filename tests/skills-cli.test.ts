@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Auditor } from "../src/audit";
@@ -38,8 +38,7 @@ test("installer copia skill local, grava sidecar, audita e verify detecta altera
   expect(verifySkill(target, "commit").ok).toBe(false);
 });
 
-test("installer baixa de URL e exige force para substituir", async () => {
-  const server = Bun.serve({ port: 0, fetch: () => new Response(SKILL) });
+test("installer baixa de URL e exige force para substituir", async () => {  const server = Bun.serve({ port: 0, fetch: () => new Response(SKILL) });
   const target = mkdtempSync(join(tmpdir(), "astro-skurl-"));
   try {
     const url = `http://127.0.0.1:${server.port}/SKILL.md`;
@@ -123,4 +122,41 @@ test("skills install/remove/verify usam a raiz pedida e auditam", async () => {
   expect(await runSkillsCommand(["remove", "deploy", "--user"], opts)).toBe(0);
   expect(verifySkill(userRoot, "deploy").ok).toBe(false);
   expect(await runSkillsCommand(["remove", "deploy"], opts)).toBe(1);
+});
+
+test("installer aborta download acima do teto sem bufferizar o corpo inteiro", async () => {
+  const target = mkdtempSync(join(tmpdir(), "astro-skbig-"));
+  const chunk = new TextEncoder().encode("x".repeat(64 * 1024));
+  const totalChunks = 40; // 2,5 MB: bem acima de SKILL_MAX_BYTES
+  let pulled = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (pulled >= totalChunks) {
+        controller.close();
+        return;
+      }
+      pulled++;
+      controller.enqueue(chunk);
+    },
+  });
+  await expect(installSkill({
+    source: "https://skills.example/commit/SKILL.md",
+    root: target,
+    sourceKind: "user",
+    fetchFn: async () => new Response(body, { status: 200 }),
+  })).rejects.toThrow(/maior que/);
+  expect(pulled).toBeLessThan(totalChunks); // cortou no teto, não leu tudo
+});
+
+test("installer recusa skill com link simbólico em vez de seguir o alvo", async () => {
+  const source = mkdtempSync(join(tmpdir(), "astro-sklink-src-"));
+  const outside = mkdtempSync(join(tmpdir(), "astro-sklink-out-"));
+  const target = mkdtempSync(join(tmpdir(), "astro-sklink-dst-"));
+  skillDir(source, "commit");
+  writeFileSync(join(outside, "segredo.txt"), "conteudo-fora", "utf8");
+  symlinkSync(outside, join(source, "commit", "linked"), "junction");
+
+  await expect(installSkill({ source: join(source, "commit"), root: target, sourceKind: "project" }))
+    .rejects.toThrow(/link/);
+  expect(existsSync(join(target, "commit", "linked"))).toBe(false);
 });
