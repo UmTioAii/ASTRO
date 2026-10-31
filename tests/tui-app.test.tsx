@@ -89,6 +89,22 @@ function frameHas(instance: ReturnType<typeof render>, text: string): boolean {
   return (instance.lastFrame() ?? "").replace(/\s+/g, " ").includes(text);
 }
 
+test("banner no topo mostra versão, provider, modelo, endpoint e estado (#274)", async () => {
+  const session = new FakeSession();
+  const cwd = mkdtempSync(join(tmpdir(), "astro-tui-banner-"));
+  const instance = render(<TuiApp session={session} cwd={cwd} />);
+  try {
+    await waitFor(() => frameHas(instance, "ASTRO v"));
+    const frame = (instance.lastFrame() ?? "").replace(/\s+/g, " ");
+    expect(frame).toContain("ASTRO v");
+    expect(frame).toMatch(/ASTRO v\d+\.\d+\.\d+/);
+    expect(frame).toContain("p · p/m1");
+    expect(frame).toContain("estado:");
+  } finally {
+    instance.unmount();
+  }
+});
+
 test("mostra boas-vindas, status e responde um turno", async () => {
   const session = new FakeSession();
   const instance = render(<TuiApp session={session} cwd="/tmp/astro" branch="main" />);
