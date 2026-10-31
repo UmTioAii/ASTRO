@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateConfig } from "../src/config";
-import { ProviderScreen } from "../src/tui/provider-screen";
+import { ProviderScreen, listActions } from "../src/tui/provider-screen";
 import { ProfileManager } from "../src/provider/profile-manager";
 import { getThemeColors } from "../src/tui/theme";
 import { runCommand } from "../src/tui/commands";
@@ -368,4 +368,68 @@ test("/provider abre a tela pela TUI", async () => {
   expect(add.openProviders).toEqual({ mode: "add" });
   const edit = await runCommand({ kind: "provider", action: "edit", target: "x" }, {} as ChatSession, {});
   expect(edit.openProviders).toEqual({ mode: "edit", target: "x" });
+});
+
+test("listActions monta menu numerado conforme disponibilidade (#272)", () => {
+  const ran: string[] = [];
+  const mk = (name: string) => () => { ran.push(name); };
+  const current = manager().list()[0]!;
+  const full = listActions({
+    current, canTest: true, canLogin: true,
+    add: mk("add"), activate: mk("activate"), edit: mk("edit"),
+    remove: mk("remove"), test: mk("test"), login: mk("login"), close: mk("close"),
+  });
+  expect(full.map((a) => a.label)).toEqual([
+    "Adicionar provider", "Definir como ativo", "Editar", "Remover", "Testar conexão", "Login Codex", "Fechar",
+  ]);
+  expect(full.map((a) => a.key)).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+  full[1]!.run();
+  expect(ran).toEqual(["activate"]);
+
+  const minimal = listActions({
+    current: undefined, canTest: false, canLogin: false,
+    add: mk("add"), activate: mk("activate"), edit: mk("edit"),
+    remove: mk("remove"), test: mk("test"), login: mk("login"), close: mk("close"),
+  });
+  expect(minimal.map((a) => a.label)).toEqual(["Adicionar provider", "Fechar"]);
+});
+
+test("menu de ações abre com m, navega por setas e despacha com enter (#272)", async () => {
+  let activated = "";
+  const instance = render(
+    <ProviderScreen manager={manager()} colors={colors} onClose={() => undefined} onActivate={(id) => { activated = id; }} />,
+  );
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    instance.stdin.write("m");
+    await waitFor(() => instance.lastFrame()?.includes("Ações") === true);
+    const frame = instance.lastFrame() ?? "";
+    expect(frame).toContain("1 Adicionar provider");
+    expect(frame).toContain("2 Definir como ativo");
+    expect(frame).toContain("5 Fechar");
+    instance.stdin.write("\u001b[B"); // ↓ -> "Definir como ativo"
+    await waitFor(() => instance.lastFrame()?.includes("> 2 Definir como ativo") === true);
+    instance.stdin.write("\r");
+    await waitFor(() => activated === "p");
+    expect(instance.lastFrame()).toContain("ativo: p");
+  } finally {
+    instance.unmount();
+  }
+});
+
+test("menu de ações aceita número direto e m fecha o menu (#272)", async () => {
+  const instance = render(
+    <ProviderScreen manager={manager()} colors={colors} onClose={() => undefined} onActivate={() => undefined} />,
+  );
+  try {
+    await waitFor(() => instance.lastFrame()?.includes("Providers") === true);
+    instance.stdin.write("m");
+    await waitFor(() => instance.lastFrame()?.includes("Ações") === true);
+    instance.stdin.write("3"); // Editar -> provider de projeto não é editável pela tela
+    await waitFor(() => instance.lastFrame()?.includes("astro.config.json") === true);
+    instance.stdin.write("m");
+    await waitFor(() => (instance.lastFrame()?.includes("Ações") ?? false) === false);
+  } finally {
+    instance.unmount();
+  }
 });

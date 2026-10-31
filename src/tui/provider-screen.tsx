@@ -46,6 +46,37 @@ function parseModels(text: string, known: readonly ProfileModel[]): ProfileModel
     });
 }
 
+export interface ProviderAction {
+  readonly key: string;
+  readonly label: string;
+  readonly run: () => void;
+}
+
+/** Ações do menu da lista de providers: numeradas (1-9), despachadas por `run`. */
+export function listActions(opts: {
+  current: ProfileView | undefined;
+  canTest: boolean;
+  canLogin: boolean;
+  add: () => void;
+  activate: () => void;
+  edit: () => void;
+  remove: () => void;
+  test: () => void;
+  login: () => void;
+  close: () => void;
+}): ProviderAction[] {
+  const actions: ProviderAction[] = [{ key: "1", label: "Adicionar provider", run: opts.add }];
+  if (opts.current !== undefined) {
+    actions.push({ key: `${actions.length + 1}`, label: "Definir como ativo", run: opts.activate });
+    actions.push({ key: `${actions.length + 1}`, label: "Editar", run: opts.edit });
+    actions.push({ key: `${actions.length + 1}`, label: "Remover", run: opts.remove });
+    if (opts.canTest) actions.push({ key: `${actions.length + 1}`, label: "Testar conexão", run: opts.test });
+    if (opts.canLogin) actions.push({ key: `${actions.length + 1}`, label: "Login Codex", run: opts.login });
+  }
+  actions.push({ key: `${actions.length + 1}`, label: "Fechar", run: opts.close });
+  return actions;
+}
+
 export function ProviderScreen({
   manager, colors, currentModel, initial, onClose, onActivate, onChanged, onTest, onLogin,
 }: ProviderScreenProps): ReactElement {
@@ -96,6 +127,8 @@ export function ProviderScreen({
   const [login, setLogin] = useState<{ target: ProfileView; url: string; userCode: string } | undefined>(undefined);
   const [loginTarget, setLoginTarget] = useState<ProfileView | undefined>(undefined);
   const [loginStarting, setLoginStarting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuIndex, setMenuIndex] = useState(0);
   const probeToken = useRef(0);
   const loginAbort = useRef<AbortController | undefined>(undefined);
   const loginBusy = useRef(false);
@@ -226,6 +259,58 @@ export function ProviderScreen({
       });
   };
 
+  const activateCurrent = (): void => {
+    if (current === undefined) return;
+    try {
+      if (current.source === "global") manager.use(current.id);
+      onActivate(current.id);
+      setMessage(`ativo: ${current.id}`);
+      onChanged?.();
+    } catch (error) {
+      setMessage(messageOf(error));
+    }
+  };
+
+  const testCurrent = (): void => {
+    if (onTest === undefined || current === undefined) return;
+    setMessage(undefined);
+    setTestTarget(current);
+  };
+
+  const loginCurrent = (): void => {
+    if (onLogin === undefined || current === undefined || current.kind !== "codex-oauth") return;
+    setMessage(undefined);
+    setLoginTarget(current);
+  };
+
+  const editCurrent = (): void => {
+    if (current !== undefined) startEdit(current);
+  };
+
+  const removeCurrent = (): void => {
+    if (current === undefined) return;
+    if (current.source !== "global") {
+      setMessage(current.source === "project"
+        ? `provider "${current.id}" está definido no astro.config.json`
+        : `provider "${current.id}" é efêmero (env)`);
+      return;
+    }
+    setView("remove");
+  };
+
+  const actions = listActions({
+    current,
+    canTest: onTest !== undefined,
+    canLogin: onLogin !== undefined && current?.kind === "codex-oauth",
+    add: startAdd,
+    activate: activateCurrent,
+    edit: editCurrent,
+    remove: removeCurrent,
+    test: testCurrent,
+    login: loginCurrent,
+    close: onClose,
+  });
+
   useInput((input, key) => {
     if (key.ctrl && (input === "c" || input === "d")) {
       loginAbort.current?.abort();
@@ -297,46 +382,32 @@ export function ProviderScreen({
       return;
     }
     if (view === "list") {
+      if (menuOpen) {
+        if (key.escape || input === "m") { setMenuOpen(false); return; }
+        if (key.upArrow) { setMenuIndex((value) => (value - 1 + actions.length) % actions.length); return; }
+        if (key.downArrow) { setMenuIndex((value) => (value + 1) % actions.length); return; }
+        const run = key.return
+          ? actions[menuIndex]?.run
+          : input >= "1" && input <= "9"
+            ? actions[Number(input) - 1]?.run
+            : undefined;
+        if (run !== undefined) {
+          setMenuOpen(false);
+          setMenuIndex(0);
+          run();
+        }
+        return;
+      }
       if (key.escape) { onClose(); return; }
       if (key.upArrow) { setSelected((value) => Math.max(0, value - 1)); setMessage(undefined); return; }
       if (key.downArrow) { setSelected((value) => Math.min(list.length - 1, value + 1)); setMessage(undefined); return; }
+      if (input === "m") { setMenuOpen(true); setMenuIndex(0); return; }
       if (input === "a") { startAdd(); return; }
-      if (input === "t") {
-        if (onTest !== undefined && current !== undefined) {
-          setMessage(undefined);
-          setTestTarget(current);
-        }
-        return;
-      }
-      if (input === "l") {
-        if (onLogin !== undefined && current !== undefined && current.kind === "codex-oauth") {
-          setMessage(undefined);
-          setLoginTarget(current);
-        }
-        return;
-      }
-      if (input === "e") { if (current !== undefined) startEdit(current); return; }
-      if (input === "d") {
-        if (current === undefined) return;
-        if (current.source !== "global") {
-          setMessage(current.source === "project"
-            ? `provider "${current.id}" está definido no astro.config.json`
-            : `provider "${current.id}" é efêmero (env)`);
-          return;
-        }
-        setView("remove");
-        return;
-      }
-      if (key.return && current !== undefined) {
-        try {
-          if (current.source === "global") manager.use(current.id);
-          onActivate(current.id);
-          setMessage(`ativo: ${current.id}`);
-          onChanged?.();
-        } catch (error) {
-          setMessage(messageOf(error));
-        }
-      }
+      if (input === "t") { testCurrent(); return; }
+      if (input === "l") { loginCurrent(); return; }
+      if (input === "e") { editCurrent(); return; }
+      if (input === "d") { removeCurrent(); return; }
+      if (key.return) { activateCurrent(); return; }
       return;
     }
 
@@ -516,8 +587,19 @@ export function ProviderScreen({
           cred={profile.credentialRef ?? "sem chave"} [{profile.source}]
         </Text>
       ))}
+      {menuOpen ? (
+        <Box flexDirection="column">
+          <Text bold>Ações</Text>
+          {actions.map((action, index) => (
+            <Text key={action.key} color={index === menuIndex ? colors.accent : undefined}>
+              {index === menuIndex ? "> " : "  "}{action.key} {action.label}
+            </Text>
+          ))}
+          <Text dimColor>↑↓ escolher · enter executar · 1-9 direto · m/esc fechar</Text>
+        </Box>
+      ) : null}
       <Text dimColor>
-        {["a adicionar", "e editar", "d remover",
+        {["m menu", "a adicionar", "e editar", "d remover",
           ...(onTest === undefined ? [] : ["t testar"]),
           ...(onLogin === undefined || current?.kind !== "codex-oauth" ? [] : ["l login"]),
           "enter ativar", "esc voltar"].join(" · ")}
