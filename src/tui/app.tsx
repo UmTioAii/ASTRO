@@ -10,7 +10,7 @@ import { redactSecrets } from "../sanitize-external";
 import { runCommand, type CommandState, type Entry } from "./commands";
 import type { ApprovalBridge } from "./approvals";
 import type { ShellRunner } from "./shell";
-import { COMMANDS, applyCompletion, completionItems } from "./editor";
+import { COMMANDS, applyCompletion, commandDescription, completionItems, suggestionWindow } from "./editor";
 import { indexFiles } from "./files";
 import { Markdown } from "./markdown";
 import { ModelPicker } from "./model-picker";
@@ -443,6 +443,8 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
   const place = branch === undefined ? cwd : `${cwd} (${branch})`;
   const suggestions = question === undefined ? completionItems(input, COMMANDS, files) : [];
   const selectedIndex = suggestions.length === 0 ? 0 : Math.min(selected, suggestions.length - 1);
+  const win = suggestionWindow(suggestions.length, selectedIndex);
+  const visibleSuggestions = suggestions.slice(win.start, win.end);
   return (
     <Box flexDirection="column">
       <Static items={entries}>
@@ -456,11 +458,19 @@ export function TuiApp({ session, cwd, branch, store, approvals, shell, manager,
         <Text>{input}</Text>
         <Text inverse> </Text>
       </Box>
-      {suggestions.map((item, index) => (
-        <Text key={item} {...(index === selectedIndex ? { color: colors.accent } : { dimColor: true })}>
-          {index === selectedIndex ? "> " : "  "}{item}
-        </Text>
-      ))}
+      {win.start > 0 ? <Text dimColor>  …</Text> : null}
+      {visibleSuggestions.map((item, offset) => {
+        const index = win.start + offset;
+        const isSelected = index === selectedIndex;
+        const description = commandDescription(item);
+        return (
+          <Text key={item} {...(isSelected ? { color: colors.accent } : { dimColor: true })}>
+            {isSelected ? "> " : "  "}{item}
+            {description === undefined ? null : <Text dimColor>{`  ${description}`}</Text>}
+          </Text>
+        );
+      })}
+      {win.end < suggestions.length ? <Text dimColor>  …</Text> : null}
       <Text dimColor>
         {place} · {status.model} · {status.turns} turno(s) · {status.tokensIn}/{status.tokensOut} tokens · {money(status.costUsd)} · {session.providerName?.() ?? status.model.split("/")[0]} · saúde: {health?.provider === (session.providerName?.() ?? status.model.split("/")[0]) ? health.state : "n/d"}
       </Text>
