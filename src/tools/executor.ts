@@ -1,6 +1,14 @@
 import type { Auditor } from "../audit";
 import { callId } from "../call-id";
 import { limitToolOutput } from "../output-limit";
+import {
+  actionClassOf,
+  permissionDecision,
+  DEFAULT_PERMISSION_MODE,
+  type ActionClass,
+  type PermissionDecision,
+  type PermissionMode,
+} from "../permissions";
 import { join, relative } from "node:path";
 import type { ToolCall, ToolDef } from "../provider/types";
 import type { Tool, ToolContext, ToolResult } from "./types";
@@ -24,14 +32,32 @@ export class ToolExecutor {
   private readonly allowSet: Set<string>;
   private readonly ceilingSet: Set<string>;
   private readonly auditRef: Auditor;
+  /** Modo do gate por chamada (PERM-01); default `ask`. */
+  private readonly mode: PermissionMode;
+  /** Aprovação humana injetada pela TUI/REPL; ausente = sem prompt (PERM-04/07). */
+  private readonly approveTool?: (request: { name: string; action: ActionClass; mode: PermissionMode }) => boolean;
 
-  constructor(opts: { tools: readonly Tool[]; allow: string[]; audit: Auditor; ceiling?: string[] }) {
+  constructor(opts: {
+    tools: readonly Tool[];
+    allow: string[];
+    audit: Auditor;
+    ceiling?: string[];
+    permissionMode?: PermissionMode;
+    approveTool?: (request: { name: string; action: ActionClass; mode: PermissionMode }) => boolean;
+  }) {
     this.tools = opts.tools;
     this.byName = new Map(opts.tools.map((tool) => [tool.manifest.name, tool]));
     this.allowSet = new Set(opts.allow);
     // Ceiling: teto de escopo para subagents (I-02). Default = allow (sem restrição extra).
     this.ceilingSet = new Set(opts.ceiling ?? opts.allow);
     this.auditRef = opts.audit;
+    this.mode = opts.permissionMode ?? DEFAULT_PERMISSION_MODE;
+    this.approveTool = opts.approveTool;
+  }
+
+  /** Modo de permissão corrente (subagente herda do executor pai). */
+  get permissionMode(): PermissionMode {
+    return this.mode;
   }
 
   /** Todas as tools registradas (para multi-agent session). */
@@ -160,6 +186,9 @@ export class ToolExecutor {
       return failure(`argumentos ilegíveis para a tool "${call.name}": JSON inválido`);
     }
 
+    const blocked = this.permissionGate(ctx, tool, call, input);
+    if (blocked !== undefined) return blocked;
+
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeout = new Promise<typeof TIMEOUT>((resolve) => {
@@ -179,6 +208,47 @@ export class ToolExecutor {
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  /**
+   * Gate por chamada depois do allowlist e do ceiling (PERM-01, I-01). `deny`
+   * bloqueia; `ask` consulta o aprovador injetado pela TUI/REPL. Sem aprovador,
+   * a decisão fica auditada e a chamada segue — PERM-07 nega sem TTY.
+   * O piso fixo (`.astro/`/`protectedPaths`, redação, confinamento) é aplicado
+   * pelas próprias tools e não depende do modo.
+   */
+  private permissionGate(
+    ctx: ToolContext,
+    tool: Tool,
+    call: ToolCall,
+    input: unknown,
+  ): ToolResult | undefined {
+    const action = actionClassOf(tool, { name: call.name, input });
+    const decision = permissionDecision(this.mode, action);
+    let effective: PermissionDecision = decision;
+    if (decision === "ask") {
+      const approved = this.approveTool?.({ name: call.name, action, mode: this.mode });
+      if (approved !== undefined) effective = approved ? "allow" : "deny";
+    }
+    // `allow` automático não gera evento; só o que passou pelo gate fica auditado.
+    if (decision !== "allow") {
+      this.auditRef.append({
+        run: ctx.run,
+        agent: ctx.agent,
+        tipo: "permission.decision",
+        payload: { name: call.name, action, mode: this.mode, decision: effective },
+      });
+    }
+    if (effective !== "deny") return undefined;
+
+    const reason = `permissão negada para a tool "${call.name}" (modo ${this.mode}, ação ${action})`;
+    this.auditRef.append({
+      run: ctx.run,
+      agent: ctx.agent,
+      tipo: "tool.denied",
+      payload: { name: call.name, reason },
+    });
+    return failure(reason);
   }
 
   /** Cap de saída por tool (CMP-10): head+tail+origem, artefato em `.astro/outputs`. */
